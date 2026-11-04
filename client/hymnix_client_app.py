@@ -71,7 +71,7 @@ ZH2EN = {
     "从剪贴板填入": "Paste from clipboard",
     "刷新模型列表": "Refresh model list",
     "已连接": "Connected",
-    "未连接": "Disconnected",
+    T("未连接", "Disconnected"): "Disconnected",
     "保存并应用": "Save and apply",
     "测试连接": "Test connection",
     "关闭": "Close",
@@ -83,6 +83,28 @@ ZH2EN = {
 }
 
 
+LANG = {"cur": "zh"}
+
+
+def T(zh, en):
+    return en if LANG["cur"] == "en" else zh
+
+
+ZH2EN.update({
+    "文件": "File",
+    "工具": "Tools",
+    "服务器": "Server",
+    "帮助": "Help",
+    "就绪": "Ready",
+    "检测硬件": "Detect hardware",
+    "应用": "Apply",
+    "详情": "Details",
+    "Chat历史": "Chat history",
+    "对话历史": "Chat history",
+    "计算设备 · 选 CPU 还是哪张显卡来算": "Compute device - CPU or GPU",
+    "自动（由 Ollama 决定，推荐）": "Auto (decided by Ollama, recommended)",
+})
+
 def detect_language(cfg):
     lang = str((cfg or {}).get("language") or "").strip().lower()
     if lang in ("zh", "en"):
@@ -93,6 +115,54 @@ def detect_language(cfg):
     except Exception:
         loc = ""
     return "zh" if loc.startswith("zh") else "en"
+
+
+
+
+def apply_menu_language(menu, memo, mapping=None):
+    """翻译 tk.Menu（含级联子菜单）"""
+    if menu is None:
+        return
+    mapping = ZH2EN if mapping is None else mapping
+    try:
+        end = menu.index("end")
+    except Exception:
+        return
+    if end is None:
+        return
+    for i in range(end + 1):
+        try:
+            kind = menu.type(i)
+        except Exception:
+            continue
+        if kind in ("command", "cascade", "checkbutton", "radiobutton"):
+            try:
+                label = str(menu.entrycget(i, "label"))
+            except Exception:
+                continue
+            key = ("menu", id(menu), i)
+            if mapping is not None:
+                if key not in memo:
+                    memo[key] = label
+                out = memo[key]
+                for zh in sorted(mapping, key=len, reverse=True):
+                    if zh in out:
+                        out = out.replace(zh, mapping[zh])
+                if out != memo[key]:
+                    try:
+                        menu.entryconfigure(i, label=out)
+                    except Exception:
+                        pass
+            elif key in memo:
+                try:
+                    menu.entryconfigure(i, label=memo[key])
+                except Exception:
+                    pass
+        if kind == "cascade":
+            try:
+                apply_menu_language(menu.nametowidget(menu.entrycget(i, "menu")), memo, mapping)
+            except Exception:
+                pass
 
 
 def apply_zh2en(widget, memo, mapping=None):
@@ -111,8 +181,12 @@ def apply_zh2en(widget, memo, mapping=None):
                 if key not in memo:
                     memo[key] = cur
                 orig = memo[key]
-                if orig in mapping:
-                    widget.configure(text=mapping[orig])
+                out = orig
+                for _zh in sorted(mapping, key=len, reverse=True):
+                    if _zh in out:
+                        out = out.replace(_zh, mapping[_zh])
+                if out != orig:
+                    widget.configure(text=out)
             elif key in memo:
                 widget.configure(text=memo[key])
     except Exception:
@@ -267,8 +341,14 @@ class ClientApp(tk.Tk):
             if not CFG.get("language"):
                 CFG["language"] = detect_language(CFG)
             self._lang = detect_language(CFG)
+            LANG["cur"] = self._lang
             if self._lang == "en":
                 apply_zh2en(self, self._lang_memo)
+                try:
+                    apply_menu_language(self.nametowidget(self["menu"]), self._lang_memo)
+                except Exception:
+                    pass
+                self.after(1500, lambda: apply_zh2en(self, self._lang_memo))
         except Exception:
             pass
         self.after(6000, self._poll_inbox)
@@ -335,9 +415,9 @@ class ClientApp(tk.Tk):
                 d = r.json()
                 ok = bool(d.get("ok")) and bool(d.get("ollama"))
                 self.latency = int((time.time() - t0) * 1000)
-                self._set_state(ok, "已连接 · %d ms" % self.latency if ok else "服务器模型未就绪")
+                self._set_state(ok, T("已连接 · %d ms", "Connected · %d ms") % self.latency if ok else T("服务器模型未就绪", "Server model not ready"))
             except Exception:
-                self._set_state(False, "未连接")
+                self._set_state(False, T("未连接", "Disconnected"))
             time.sleep(5)
 
     def _set_state(self, ok, text):

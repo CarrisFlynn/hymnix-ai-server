@@ -257,6 +257,28 @@ ZH2EN = {
 }
 
 
+LANG = {"cur": "zh"}
+
+
+def T(zh, en):
+    return en if LANG["cur"] == "en" else zh
+
+
+ZH2EN.update({
+    "文件": "File",
+    "工具": "Tools",
+    "服务器": "Server",
+    "帮助": "Help",
+    "就绪": "Ready",
+    "检测硬件": "Detect hardware",
+    "应用": "Apply",
+    "详情": "Details",
+    "Chat历史": "Chat history",
+    "对话历史": "Chat history",
+    "计算设备 · 选 CPU 还是哪张显卡来算": "Compute device - CPU or GPU",
+    "自动（由 Ollama 决定，推荐）": "Auto (decided by Ollama, recommended)",
+})
+
 def detect_language(cfg):
     lang = str((cfg or {}).get("language") or "").strip().lower()
     if lang in ("zh", "en"):
@@ -267,6 +289,54 @@ def detect_language(cfg):
     except Exception:
         loc = ""
     return "zh" if loc.startswith("zh") else "en"
+
+
+
+
+def apply_menu_language(menu, memo, mapping=None):
+    """翻译 tk.Menu（含级联子菜单）"""
+    if menu is None:
+        return
+    mapping = ZH2EN if mapping is None else mapping
+    try:
+        end = menu.index("end")
+    except Exception:
+        return
+    if end is None:
+        return
+    for i in range(end + 1):
+        try:
+            kind = menu.type(i)
+        except Exception:
+            continue
+        if kind in ("command", "cascade", "checkbutton", "radiobutton"):
+            try:
+                label = str(menu.entrycget(i, "label"))
+            except Exception:
+                continue
+            key = ("menu", id(menu), i)
+            if mapping is not None:
+                if key not in memo:
+                    memo[key] = label
+                out = memo[key]
+                for zh in sorted(mapping, key=len, reverse=True):
+                    if zh in out:
+                        out = out.replace(zh, mapping[zh])
+                if out != memo[key]:
+                    try:
+                        menu.entryconfigure(i, label=out)
+                    except Exception:
+                        pass
+            elif key in memo:
+                try:
+                    menu.entryconfigure(i, label=memo[key])
+                except Exception:
+                    pass
+        if kind == "cascade":
+            try:
+                apply_menu_language(menu.nametowidget(menu.entrycget(i, "menu")), memo, mapping)
+            except Exception:
+                pass
 
 
 def apply_zh2en(widget, memo, mapping=None):
@@ -285,8 +355,12 @@ def apply_zh2en(widget, memo, mapping=None):
                 if key not in memo:
                     memo[key] = cur
                 orig = memo[key]
-                if orig in mapping:
-                    widget.configure(text=mapping[orig])
+                out = orig
+                for _zh in sorted(mapping, key=len, reverse=True):
+                    if _zh in out:
+                        out = out.replace(_zh, mapping[_zh])
+                if out != orig:
+                    widget.configure(text=out)
             elif key in memo:
                 widget.configure(text=memo[key])
     except Exception:
@@ -1597,8 +1671,14 @@ class HuimengAIClient:
             if not self.config.get("language"):
                 self.config["language"] = detect_language(self.config)
             self._lang = detect_language(self.config)
+            LANG["cur"] = self._lang
             if self._lang == "en":
                 apply_zh2en(self.root, self._lang_memo)
+                try:
+                    apply_menu_language(self.root.nametowidget(self.root["menu"]), self._lang_memo)
+                except Exception:
+                    pass
+                self.root.after(1500, lambda: apply_zh2en(self.root, self._lang_memo))
         except Exception:
             pass
         self.process_message_queue()
@@ -1788,11 +1868,11 @@ class HuimengAIClient:
         # ── 内置网关状态条：网关 / 隧道 / 模型 + 公网地址 ──
         sbar = ttk.Frame(status_frame, style="Bg.TFrame")
         sbar.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(3, 0))
-        self.host_gw_dot = tk.Label(sbar, text="● 网关", fg="#9AA0A6", bg=THEME["bg"])
+        self.host_gw_dot = tk.Label(sbar, text=T("● 网关", "● Gateway"), fg="#9AA0A6", bg=THEME["bg"])
         self.host_gw_dot.pack(side=tk.LEFT)
-        self.host_tun_dot = tk.Label(sbar, text="● 隧道", fg="#9AA0A6", bg=THEME["bg"])
+        self.host_tun_dot = tk.Label(sbar, text=T("● 隧道", "● Tunnel"), fg="#9AA0A6", bg=THEME["bg"])
         self.host_tun_dot.pack(side=tk.LEFT, padx=(10, 0))
-        self.host_oll_dot = tk.Label(sbar, text="● 模型", fg="#9AA0A6", bg=THEME["bg"])
+        self.host_oll_dot = tk.Label(sbar, text=T("● 模型", "● Model"), fg="#9AA0A6", bg=THEME["bg"])
         self.host_oll_dot.pack(side=tk.LEFT, padx=(10, 0))
         self.host_url_var = tk.StringVar(value="公网地址：启动中…")
         ttk.Label(sbar, textvariable=self.host_url_var, foreground="#71757C",
@@ -4274,7 +4354,7 @@ class HuimengAIClient:
             self._host_srv = gateway_core.start_server()
             threading.Thread(target=self._host_srv.serve_forever, daemon=True).start()
             HOST["ready"] = True
-            self.queue_message("system", "🛰️ 内置网关已启动（端口 %s）" % HOST["port"])
+            self.queue_message("system", T("🛰️ 内置网关已启动（端口 %s）", "🛰️ Gateway started on port %s") % HOST["port"])
         except Exception as e:
             HOST["error"] = str(e)
             self.queue_message("system", "❌ 网关启动失败：%s" % e)
@@ -4283,7 +4363,7 @@ class HuimengAIClient:
             self.start_host_tunnel()
         else:
             HOST["tunnel_state"] = "off"
-            self.queue_message("system", "🌐 公网隧道未分配（需要时点上方「启动隧道」按钮，避免频繁申请被限流）")
+            self.queue_message("system", T("🌐 公网隧道未分配（需要时点上方「启动隧道」按钮，避免频繁申请被限流）", "🌐 Public tunnel not allocated (click Start tunnel when needed)."))
 
     def start_host_tunnel(self):
         mode = str(self.config.get("tunnel_mode", "cloudflared") or "cloudflared").lower()
@@ -4438,25 +4518,25 @@ class HuimengAIClient:
                     _mem = (_g.stdout or "").strip().splitlines()[0] + " MB"
                 except Exception:
                     pass
-                self.side_status.config(text="网关 %s\n隧道 %s\n显存 %s" % (
-                    "在线" if ok else "离线",
-                    "已就绪" if tun_ok else ("分配中" if tun_state == "starting" else "未分配"),
+                self.side_status.config(text=T("网关 %s\n隧道 %s\n显存 %s", "Gateway %s\nTunnel %s\nVRAM %s") % (
+                    T("在线", "online") if ok else T("离线", "offline"),
+                    T("已就绪", "ready") if tun_ok else (T("分配中", "allocating") if tun_state == "starting" else T("未分配", "not allocated")),
                     _mem))
             except Exception:
                 pass
             if HOST.get("url"):
-                self.host_url_var.set("公网地址：%s   ·   在线客户端 %d" % (HOST["url"], clients))
+                self.host_url_var.set(T("公网地址：%s   ·   在线客户端 %d", "Public address: %s   ·   Clients online %d") % (HOST["url"], clients))
             elif tun_state == "starting":
-                self.host_url_var.set("公网地址：正在分配…   ·   在线客户端 %d" % clients)
+                self.host_url_var.set(T("公网地址：正在分配…   ·   在线客户端 %d", "Public address: allocating...   ·   Clients online %d") % clients)
             else:
-                self.host_url_var.set("公网地址：未分配（点「启动隧道」）   ·   在线客户端 %d" % clients)
+                self.host_url_var.set(T("公网地址：未分配（点「启动隧道」）   ·   在线客户端 %d", "Public address: not allocated (click Start tunnel)   ·   Clients online %d") % clients)
             try:
                 if tun_ok:
-                    self.tunnel_btn.configure(text="停止隧道", style="Ghost.TButton")
+                    self.tunnel_btn.configure(text=T("停止隧道", "Stop tunnel"), style="Ghost.TButton")
                 elif tun_state == "starting":
-                    self.tunnel_btn.configure(text="分配中…", style="Ghost.TButton")
+                    self.tunnel_btn.configure(text=T("分配中…", "Allocating..."), style="Ghost.TButton")
                 else:
-                    self.tunnel_btn.configure(text="启动隧道", style="Accent.TButton")
+                    self.tunnel_btn.configure(text=T("启动隧道", "Start tunnel"), style="Accent.TButton")
             except Exception:
                 pass
         except Exception:
@@ -4508,7 +4588,10 @@ class HuimengAIClient:
         tk.Label(side, text="1.0.0", bg="#FFFFFF", fg="#9AA6B4",
                  font=(UI_FONT, 9)).pack(anchor="w", padx=18, pady=(2, 16))
 
-        items = [("终端 · 轨迹", "▤"), ("服务端监控", "◉"), ("API 接口", "⇄"), ("插件", "✧")]
+        items = [(T("终端 · 轨迹", "Terminal · Trace"), "▤"),
+                 (T("服务端监控", "Server Monitor"), "◉"),
+                 (T("API 接口", "API"), "⇄"),
+                 (T("插件", "Plugins"), "✧")]
         self._nav_rows = []
         for idx, (name, glyph) in enumerate(items):
             row = tk.Frame(side, bg="#FFFFFF", cursor="hand2")
@@ -5101,7 +5184,7 @@ class HuimengAIClient:
                 if seen is None:
                     seen = set(_key(x) for x in recs)
                     _dbg("seed %d status=%s" % (len(recs), r.status_code))
-                    self.queue_message("system", "回显线程已启动：监控 %d 条历史，实时跟踪中" % len(recs))
+                    self.queue_message("system", T("回显线程已启动：监控 %d 条历史，实时跟踪中", "Trace thread started: %d history records, live tracking") % len(recs))
                 else:
                     added = 0
                     for rec in recs:

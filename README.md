@@ -14,6 +14,13 @@ Hymnix turns a local [Ollama](https://ollama.com) model into an OpenAI-compatibl
 
 ---
 
+
+## Screenshots
+
+![Server console](docs/images/demo.gif)
+
+![Social preview](docs/images/social-preview.png)
+
 ## Highlights
 
 - **Local models** - anything Ollama can run; 8 GB VRAM is enough for qwen3:8b.
