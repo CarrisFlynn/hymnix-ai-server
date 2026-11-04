@@ -8,7 +8,8 @@ Only the latest release receives security fixes.
 
 **Please do not open a public issue for security problems.**
 
-Use GitHub's *Security -> Report a vulnerability* feature on this repository.
+Use GitHub's *Security -> Report a vulnerability* feature on this repository,
+or email shayhymnix@gmail.com (PGP not required, but please avoid public disclosure).
 
 Include: affected version or commit, steps to reproduce, expected vs actual behaviour, and an optional suggested fix.
 

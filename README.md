@@ -181,6 +181,13 @@ Paid support, custom builds and deployment help are available on request.
 
 Issues and pull requests are welcome - see [CONTRIBUTING.md](CONTRIBUTING.md). Please read [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) first.
 
+
+## Contact
+
+- Email: shayhymnix@gmail.com
+- X / Twitter: [@ShayHymnix](https://x.com/ShayHymnix)
+- Bugs and feature requests: [GitHub Issues](../../issues)
+
 ## License
 
 [AGPL-3.0](LICENSE). If you modify Hymnix and run it as a network service, you must offer the modified source to its users.
