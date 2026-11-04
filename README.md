@@ -15,12 +15,6 @@ Hymnix turns a local [Ollama](https://ollama.com) model into an OpenAI-compatibl
 ---
 
 
-## Screenshots
-
-![Hymnix demo](docs/images/demo-v2.gif)
-
-![Hymnix AI Server](docs/images/preview-v2.png)
-
 
 ## Highlights
 
