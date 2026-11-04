@@ -167,6 +167,16 @@ Requires Windows SDK 10 (makeappx.exe). See [docs/STORE.md](docs/STORE.md).
 | [docs/PRIVACY.md](docs/PRIVACY.md) | What is stored and where |
 | [docs/zh-CN/](docs/zh-CN/) | Chinese translations |
 
+
+## Support this project
+
+Hymnix is free and open source (AGPL-3.0). If it saves you time, you can support development:
+
+- [爱发电 / Afdian](https://afdian.com/a/YOUR-AFDIAN-NAME) - one-time or monthly support
+- Star the repository and share it with someone who runs local models
+
+Paid support, custom builds and deployment help are available on request.
+
 ## Contributing
 
 Issues and pull requests are welcome - see [CONTRIBUTING.md](CONTRIBUTING.md). Please read [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) first.
