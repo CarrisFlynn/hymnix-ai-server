@@ -1,31 +1,45 @@
-# Microsoft Store Readiness (Roadmap)
+# Microsoft Store Readiness
 
-Publishing to the Microsoft Store is possible, but a few architectural changes are needed first.
+The project now ships with the pieces needed to build an MSIX package. What has been done and what remains:
 
-## What the Store requires
+## Done
 
-| Requirement | Current state | Action |
-|---|---|---|
-| MSIX package | Not yet | Add `build-msix.ps1` (MSIX Packaging Tool / Desktop Bridge), sign with Store certificate |
-| No writes next to the exe | Writes configs/logs beside the exe | Move data dir to `%LOCALAPPDATA%\\Hymnix` (must-do) |
-| No admin rights | Already no admin | Keep it that way |
-| Store account | — | One-time developer account fee (~$19) |
-| Privacy policy URL | — | Write one (logs are stored locally for the host) |
-| Age rating / listing | — | Screenshots (EN/zh-CN), description, category (Developer tools / Utilities) |
-| Third-party binaries | Bundles `cloudflared.exe` (~55 MB) | Either download on first run or ship with license notices |
-| AGPL-3.0 | Source available | Store listing must link to source (AGPL compatible) |
-| Auto-update | — | Store handles updates once MSIX is used |
+- ✅ Data directory moved to `%LOCALAPPDATA%\Hymnix` (config, logs, tunnel URL, downloaded helpers) — required for Store installs
+- ✅ No admin rights needed
+- ✅ `cloudflared.exe` is no longer bundled: downloaded on first tunnel start into `%LOCALAPPDATA%\Hymnix\bin`
+- ✅ Privacy policy: [PRIVACY.md](PRIVACY.md)
+- ✅ MSIX manifest: `msix/AppxManifest.xml` (x64, internetClient + runFullTrust)
+- ✅ Store assets: `msix/Assets/` (Square44, Square150, Wide310x150, StoreLogo, Splash)
+- ✅ Packaging script: `build-msix.ps1`
 
-## Known Store review risks
+## Build an MSIX
 
-- **Networking / tunneling**: the app opens a tunnel to expose a local server. That is a legitimate developer tool, but reviewers may ask for a clear purpose statement. Describe it as "local AI server with optional public tunnel for invited users".
-- **Bundled tunnel binary**: `cloudflared.exe` is a third-party binary. Include its license text or download it at runtime from the official source.
-- **Data location**: Store apps must keep user data under the package's local state; the current "write next to exe" behavior will be blocked in an installed package.
+```powershell
+# 1. Build the server exe
+.\build.ps1 -ServerOnly
 
-## Recommended order
+# 2. Pack (requires Windows SDK 10: makeappx.exe)
+.\build-msix.ps1 -Version 1.0.0.0
 
-1. Finish the GitHub release (done — see repo root).
-2. Refactor data directory to `%LOCALAPPDATA%\\Hymnix`.
-3. Add `docs/PRIVACY.md` (what is stored, where, and that it never leaves the machine).
-4. Add MSIX build script + manifest (identity, capabilities: `internetClient` only).
-5. Submit via Partner Center.
+# 3. (optional) sign with your own certificate for local testing
+.\build-msix.ps1 -CertificatePath .\cert.pfx -CertificatePassword YOUR_PASSWORD
+```
+
+Output: `dist\Hymnix-AI-Server_1.0.0.0_x64.msix`
+
+## Remaining before submission
+
+| Item | Notes |
+|---|---|
+| Developer account | Partner Center, one-time fee (~$19) |
+| Publisher name | Must match the certificate: currently placeholder `CN=Hymnix Studio` |
+| Age rating | Complete the IARC questionnaire (utility / developer tool) |
+| Listing assets | Screenshots (1280×800+), description (EN + zh-CN) |
+| Review note | Explain that the tunnel is optional and always user-initiated |
+| Version bump | `msix/AppxManifest.xml` Version and app title |
+
+## Review risks
+
+- **Tunneling**: reviewers may ask why the app opens a network tunnel. State clearly: *"optional, user-initiated; purpose is to let invited friends reach a local AI server."*
+- **Third-party binary download**: cloudflared is fetched from its official GitHub release on first use; the app is functional without it (LAN mode).
+- **Network capability**: only `internetClient` + `runFullTrust` are declared.

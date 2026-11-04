@@ -50,7 +50,28 @@ def apply_remote_settings(cfg):
 _APP_DIR = (os.path.dirname(os.path.abspath(sys.executable))
             if getattr(sys, "frozen", False) else os.path.dirname(os.path.abspath(__file__)))
 _BUNDLE_DIR = getattr(sys, "_MEIPASS", _APP_DIR)
-CONFIG_FILE = os.path.join(_APP_DIR, "huimeng_config.json")
+
+
+def _resolve_data_dir():
+    r"""可写数据目录：环境变量 > %LOCALAPPDATA%\Hymnix > exe 同目录（兜底）"""
+    env = os.environ.get("HYMNIX_DATA_DIR")
+    if env:
+        try:
+            os.makedirs(env, exist_ok=True)
+            return env
+        except Exception:
+            pass
+    base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+    d = os.path.join(base, "Hymnix")
+    try:
+        os.makedirs(d, exist_ok=True)
+        return d
+    except Exception:
+        return _APP_DIR
+
+
+_DATA_DIR = _resolve_data_dir()
+CONFIG_FILE = os.path.join(_DATA_DIR, "huimeng_config.json")
 
 # 内置网关（单 exe：客户端 + 网关 + 隧道 + 监控 一体）
 HOST = {"ready": False, "url": "", "port": 11435, "srv": None, "tunnel": None,
@@ -4035,7 +4056,7 @@ class HuimengAIClient:
 
     # ==================== 内置网关：启动 / 隧道 / 状态 ====================
     def gateway_config_path(self):
-        return os.path.join(_APP_DIR, "gateway_config.json")
+        return os.path.join(_DATA_DIR, "gateway_config.json")
 
     def ensure_gateway_config(self):
         port = int(self.config.get("gateway_port", 11435) or 11435)
@@ -4066,7 +4087,7 @@ class HuimengAIClient:
             return
         try:
             self.ensure_gateway_config()
-            os.environ["HYMNIX_DATA_DIR"] = _APP_DIR
+            os.environ["HYMNIX_DATA_DIR"] = _DATA_DIR
             if _BUNDLE_DIR not in sys.path:
                 sys.path.insert(0, _BUNDLE_DIR)
             import gateway_core
@@ -4097,9 +4118,13 @@ class HuimengAIClient:
             return self._start_ngrok()
         cf = os.path.join(_BUNDLE_DIR, "cloudflared.exe")
         if not os.path.exists(cf):
+            cf = os.path.join(_DATA_DIR, "bin", "cloudflared.exe")
+        if not os.path.exists(cf):
             cf = os.path.join(_APP_DIR, "cloudflared.exe")
         if not os.path.exists(cf):
-            self.queue_message("system", "⚠️ 找不到 cloudflared.exe，公网隧道不可用")
+            cf = self._download_cloudflared()
+        if not cf:
+            self.queue_message("system", "⚠️ 缺少隧道组件 cloudflared，自动下载失败，请检查网络后重试")
             return
         try:
             self._host_tun = subprocess.Popen(
@@ -4127,7 +4152,7 @@ class HuimengAIClient:
                 HOST["url"] = m.group(0)
                 HOST["tunnel_state"] = "up"
                 try:
-                    with open(os.path.join(_APP_DIR, "tunnel_url.txt"), "w", encoding="utf-8") as f:
+                    with open(os.path.join(_DATA_DIR, "tunnel_url.txt"), "w", encoding="utf-8") as f:
                         f.write(HOST["url"])
                 except Exception:
                     pass
@@ -4166,7 +4191,7 @@ class HuimengAIClient:
         HOST["url"] = ""
         HOST["tunnel_state"] = "off"
         try:
-            with open(os.path.join(_APP_DIR, "tunnel_url.txt"), "w", encoding="utf-8") as f:
+            with open(os.path.join(_DATA_DIR, "tunnel_url.txt"), "w", encoding="utf-8") as f:
                 f.write("")
         except Exception:
             pass
@@ -4199,7 +4224,7 @@ class HuimengAIClient:
 
     def open_data_dir(self):
         try:
-            os.startfile(_APP_DIR)
+            os.startfile(_DATA_DIR)
         except Exception:
             pass
 
@@ -4845,7 +4870,7 @@ class HuimengAIClient:
                     HOST["url"] = url
                     HOST["tunnel_state"] = "up"
                     try:
-                        with open(os.path.join(_APP_DIR, "tunnel_url.txt"), "w", encoding="utf-8") as f:
+                        with open(os.path.join(_DATA_DIR, "tunnel_url.txt"), "w", encoding="utf-8") as f:
                             f.write(url)
                     except Exception:
                         pass
@@ -4879,7 +4904,7 @@ class HuimengAIClient:
     def _trace_worker(self):
         def _dbg(msg):
             try:
-                with open(os.path.join(_APP_DIR, "trace_debug.log"), "a", encoding="utf-8") as f:
+                with open(os.path.join(_DATA_DIR, "trace_debug.log"), "a", encoding="utf-8") as f:
                     f.write("%s %s\n" % (time.strftime("%H:%M:%S"), msg))
             except Exception:
                 pass

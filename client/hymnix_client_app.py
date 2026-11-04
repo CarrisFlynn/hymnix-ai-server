@@ -27,7 +27,28 @@ def app_dir():
 
 
 APP_DIR = app_dir()
-CONFIG_PATH = os.path.join(APP_DIR, "hymnix_client.json")
+
+
+def data_dir():
+    """可写数据目录：环境变量 > %LOCALAPPDATA%\\Hymnix > exe 同目录（兜底）"""
+    env = os.environ.get("HYMNIX_DATA_DIR")
+    if env:
+        try:
+            os.makedirs(env, exist_ok=True)
+            return env
+        except Exception:
+            pass
+    base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+    d = os.path.join(base, "Hymnix")
+    try:
+        os.makedirs(d, exist_ok=True)
+        return d
+    except Exception:
+        return APP_DIR
+
+
+DATA_DIR = data_dir()
+CONFIG_PATH = os.path.join(DATA_DIR, "hymnix_client.json")
 ICON_PATH = os.path.join(getattr(sys, "_MEIPASS", APP_DIR), "icon.ico")
 
 FACTORY = {
