@@ -191,7 +191,7 @@ Requires Windows SDK 10 (makeappx.exe). See [docs/STORE.md](docs/STORE.md).
 
 Hymnix is free and open source (AGPL-3.0). If it saves you time, you can support development:
 
-- [爱发电 / Afdian](https://afdian.com/a/YOUR-AFDIAN-NAME) - one-time or monthly support
+- [爱发电 / Afdian](https://ifdian.net/a/hymnixstudio) - one-time or monthly support
 - Star the repository and share it with someone who runs local models
 
 Paid support, custom builds and deployment help are available on request.
