@@ -108,7 +108,7 @@ ZH2EN.update({
 
 def normalize_button_icons(root):
     """统一去掉按钮文字前面的图标符号，保证所有按钮文字居中对齐。"""
-    ICON_RE = re.compile(r"^[\s\u2190-\u21FF\u2300-\u27BF\u2B00-\u2BFF\uFE0F\u2000-\u206F\u2600-\u27BF"
+    ICON_RE = re.compile(r"[\s\u2190-\u21FF\u2300-\u27BF\u2B00-\u2BFF\uFE0F\u2000-\u206F\u2600-\u27BF"
                          r"\U0001F300-\U0001FAFF]+")
     def walk(w):
         try:
@@ -146,7 +146,7 @@ TERMS = {
     "重启": "Restart", "上传附件": "Attach", "发送": "Send", "复制": "Copy",
     "监控": "Monitor", "接口": "API", "插件": "Plugins", "语言": "Language",
     "高级": "Advanced", "基础": "Basic", "默认": "Default", "自动": "Auto",
-    "正在": "Working: ", "完成": "Done", "进行中": "In progress", "已连接": "Connected",
+    "正在": "Working:", "完成": "Done", "进行中": "In progress", "已连接": "Connected",
     "未连接": "Disconnected", "可用": "Available", "不可用": "Unavailable",
     "选择": "Select", "浏览": "Browse", "编辑": "Edit", "添加": "Add",
 }
@@ -475,7 +475,7 @@ class ClientApp(tk.Tk):
         top = ttk.Frame(self, padding=(14, 10, 14, 6))
         top.pack(fill="x")
         ttk.Label(top, text="Hymnix", font=("Microsoft YaHei UI", 16, "bold")).pack(side="left")
-        self.dot = tk.Label(top, text="●", fg="#9A6B12", bg="#F4F5F3", font=("Microsoft YaHei UI", 12))
+        self.dot = tk.Label(top, text="", fg="#9A6B12", bg="#F4F5F3", font=("Microsoft YaHei UI", 12))
         self.dot.pack(side="left", padx=(10, 4))
         self.var_state = tk.StringVar(value="连接中…")
         ttk.Label(top, textvariable=self.var_state, foreground="#71757C").pack(side="left")
@@ -511,7 +511,7 @@ class ClientApp(tk.Tk):
         return CFG["server_url"].rstrip("/")
 
     def headers(self):
-        return {"Authorization": "Bearer " + CFG["api_key"]}
+        return {"Authorization": "Bearer" + CFG["api_key"]}
 
     def _probe_loop(self):
         while True:
@@ -572,7 +572,7 @@ class ClientApp(tk.Tk):
             r = requests.get(self.base() + "/api/inbox", headers=self.headers(), timeout=4)
             if r.status_code == 200:
                 for m in (r.json().get("messages") or []):
-                    self._append("\n📨 服务端消息：" + str(m.get("text", "")) + "\n", "system")
+                    self._append("\n 服务端消息：" + str(m.get("text", "")) + "\n", "system")
         except Exception:
             pass
         self.after(5000, self._poll_inbox)
@@ -702,7 +702,7 @@ class ClientApp(tk.Tk):
             except Exception:
                 msg.set("剪贴板里没有文本")
                 return
-            m = re.search(r"https?://[^\s'\"]+", txt)
+            m = re.search(r"https?://[\s'\"]+", txt)
             if m:
                 v_url.set(m.group(0).strip())
             m2 = re.search(r"(Hymnix[0-9A-Za-z]+)", txt)
