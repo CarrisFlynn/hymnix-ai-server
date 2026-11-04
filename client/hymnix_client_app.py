@@ -246,6 +246,8 @@ def apply_menu_language(menu, memo, mapping=None):
                 for zh in sorted(mapping, key=len, reverse=True):
                     if zh in out:
                         out = out.replace(zh, mapping[zh])
+                if out == memo[key]:
+                    out = _en_text(memo[key])
                 if out != memo[key]:
                     try:
                         menu.entryconfigure(i, label=out)
@@ -283,6 +285,8 @@ def apply_zh2en(widget, memo, mapping=None):
                 for _zh in sorted(mapping, key=len, reverse=True):
                     if _zh in out:
                         out = out.replace(_zh, mapping[_zh])
+                if out == orig:
+                    out = _en_text(orig)
                 if out != orig:
                     widget.configure(text=out)
             elif key in memo:
