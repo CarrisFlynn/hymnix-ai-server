@@ -257,7 +257,7 @@ ZH2EN = {
 }
 
 
-LANG = {"cur": "zh"}
+LANG = {"cur": os.environ.get("HYMNIX_LANG", "zh")}
 
 
 def T(zh, en):
@@ -2092,8 +2092,8 @@ class HuimengAIClient:
         return "   ·   ".join(bits)
 
     # ==================== 计算设备（CPU / 显卡 选择）====================
-    DEVICE_AUTO_TEXT = "自动（由 Ollama 决定，推荐）"
-    DEVICE_CPU_TEXT = "CPU（纯 CPU 推理，不占显存）"
+    DEVICE_AUTO_TEXT = T("自动（由 Ollama 决定，推荐）", "Auto (decided by Ollama, recommended)")
+    DEVICE_CPU_TEXT = T("CPU（纯 CPU 推理，不占显存）", "CPU only (no VRAM)")
 
     def build_device_bar(self, parent, row):
         """计算设备条：无边框卡片，靠底色差异分层"""
@@ -2160,7 +2160,8 @@ class HuimengAIClient:
         self.hw_summary_var.set("CPU: %s（%d 核 / %d 线程 @ %d MHz）   |   显卡 %d 张：%s   |   内存 %.1f GB" % (
             cpu.get("name", "未知"), cpu.get("cores", 0), cpu.get("threads", 0), cpu.get("mhz", 0),
             len(gpus), gpu_txt, data.get("ram_gb", 0)))
-        self.queue_message("system", "🖥️ 硬件: %s，检测到 %d 张显卡" % (cpu.get("name", "未知"), len(gpus)))
+        self.queue_message("system", T("🖥️ 硬件: %s，检测到 %d 张显卡" % (cpu.get("name", "未知"), len(gpus)),
+                "🖥️ Hardware: %s, %d GPU(s) detected" % (cpu.get("name", "Unknown"), len(gpus))))
         if current.startswith("gpu:"):
             self.update_device_hint("⚠️ 配置里记着上次选的 GPU，但当前 Ollama 服务不一定绑定了它，点『✔ 应用』可重新绑定")
         elif current == "cpu":
@@ -2312,13 +2313,13 @@ class HuimengAIClient:
             return
 
         def check_task():
-            self.queue_message("system", "🔍 检查环境中...")
+            self.queue_message("system", T("🔍 检查环境中...", "🔍 Checking environment..."))
             if not self.ollama_manager.is_ollama_installed():
                 self.queue_message("system", "❌ 未检测到Ollama")
                 self.root.after(1000, self.ask_install_ollama)
                 return
             if self.ollama_manager.is_service_running():
-                self.queue_message("system", "✅ Ollama服务正在运行")
+                self.queue_message("system", T("✅ Ollama服务正在运行", "✅ Ollama is running"))
                 self.update_connection_status(True)
                 self.refresh_models()
                 self.update_status("🟢 就绪")
@@ -2658,7 +2659,7 @@ class HuimengAIClient:
                 self.config["last_model"] = models[0]
                 self.save_config()
             self.update_model_info()
-            self.queue_message("system", f"📋 找到 {len(models)} 个模型")
+            self.queue_message("system", T("📋 找到 %d 个模型" % len(models), "📋 %d models found" % len(models)))
         else:
             self.model_combo["values"] = ["无可用模型"]
             self.model_var.set("无可用模型")
