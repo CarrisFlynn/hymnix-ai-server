@@ -381,6 +381,63 @@ def _en_text(value):
     return out
 
 
+
+def _strip_icons(text):
+    import unicodedata
+    out = []
+    for ch in str(text):
+        cp = ord(ch)
+        cat = unicodedata.category(ch)
+        if cp in (0xFE0F, 0x200D, 0x20E3, 0xFE0E):
+            continue
+        if cat in ("So", "Sk", "Cs", "Co", "Cf"):
+            continue
+        if 0x1F000 <= cp <= 0x1FAFF:
+            continue
+        if 0x2100 <= cp <= 0x214F:
+            continue
+        if 0x2190 <= cp <= 0x2BFF:
+            continue
+        if 0x2300 <= cp <= 0x23FF:
+            continue
+        if 0x25A0 <= cp <= 0x25FF:
+            continue
+        out.append(ch)
+    return re.sub(r"\s{2,}", " ", "".join(out)).strip()
+
+
+def install_button_icon_hooks():
+    try:
+        import tkinter as _tk
+        from tkinter import ttk as _ttk
+    except Exception:
+        return
+    for cls in (_tk.Button, _ttk.Button):
+        try:
+            if getattr(cls, "_hymnix_icon_hook", False):
+                continue
+            orig = cls.configure
+
+            def make(orig):
+                def conf(self, cnf=None, **kw):
+                    try:
+                        if LANG.get("cur") == "en":
+                            if isinstance(cnf, dict) and "text" in cnf:
+                                cnf = dict(cnf)
+                                cnf["text"] = _strip_icons(cnf["text"])
+                            if "text" in kw:
+                                kw["text"] = _strip_icons(kw["text"])
+                    except Exception:
+                        pass
+                    return orig(self, cnf, **kw)
+                return conf
+
+            cls.configure = make(orig)
+            cls._hymnix_icon_hook = True
+        except Exception:
+            pass
+
+
 def install_runtime_i18n():
     """Install global hooks so dynamically generated strings are translated too."""
     try:
@@ -1690,6 +1747,7 @@ class HuimengAIClient:
         self.root = root
         try:
             install_runtime_i18n()
+            install_button_icon_hooks()
         except Exception:
             pass
         try:
