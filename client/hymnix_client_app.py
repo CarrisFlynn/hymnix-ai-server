@@ -130,6 +130,79 @@ def normalize_button_icons(root):
             pass
     walk(root)
 
+
+TERMS = {
+    "网关": "Gateway", "隧道": "Tunnel", "模型": "Model", "客户端": "Client",
+    "在线": "Online", "离线": "Offline", "未分配": "Not allocated", "已就绪": "Ready",
+    "分配中": "Allocating", "启动": "Start", "停止": "Stop", "刷新": "Refresh",
+    "下载": "Download", "上传": "Upload", "管理": "Manage", "保存": "Save",
+    "加载": "Load", "清空": "Clear", "导出": "Export", "设置": "Settings",
+    "帮助": "Help", "关于": "About", "历史": "History", "记录": "Records",
+    "请求": "Requests", "对话": "Chat", "服务": "Service", "延迟": "Latency",
+    "耗时": "Time", "显存": "VRAM", "内存": "RAM", "显卡": "GPU", "功耗": "Power",
+    "能耗": "Energy", "状态": "Status", "清理": "Clean up", "删除": "Delete",
+    "取消": "Cancel", "确定": "OK", "关闭": "Close", "提示": "Notice",
+    "错误": "Error", "成功": "Success", "失败": "Failed", "重试": "Retry",
+    "重启": "Restart", "上传附件": "Attach", "发送": "Send", "复制": "Copy",
+    "监控": "Monitor", "接口": "API", "插件": "Plugins", "语言": "Language",
+    "高级": "Advanced", "基础": "Basic", "默认": "Default", "自动": "Auto",
+    "正在": "Working: ", "完成": "Done", "进行中": "In progress", "已连接": "Connected",
+    "未连接": "Disconnected", "可用": "Available", "不可用": "Unavailable",
+    "选择": "Select", "浏览": "Browse", "编辑": "Edit", "添加": "Add",
+}
+
+def _en_text(value):
+    if not isinstance(value, str) or not value.strip():
+        return value
+    key = value.strip()
+    if key in ZH2EN:
+        out = ZH2EN[key]
+        prefix = value[:len(value) - len(value.lstrip())]
+        return prefix + out
+    out = value
+    for zh in sorted(TERMS, key=len, reverse=True):
+        if zh in out:
+            out = out.replace(zh, TERMS[zh])
+    return out
+
+
+def install_runtime_i18n():
+    """Install global hooks so dynamically generated strings are translated too."""
+    try:
+        import tkinter as _tk
+        if not getattr(_tk.StringVar, "_hymnix_patched", False):
+            _orig_set = _tk.StringVar.set
+
+            def _set(self, value):
+                if LANG.get("cur") == "en":
+                    try:
+                        value = _en_text(value)
+                    except Exception:
+                        pass
+                return _orig_set(self, value)
+
+            _tk.StringVar.set = _set
+            _tk.StringVar._hymnix_patched = True
+    except Exception:
+        pass
+    try:
+        from tkinter import messagebox as _mb
+        for _name in ("showinfo", "showwarning", "showerror", "askyesno"):
+            _orig = getattr(_mb, _name)
+
+            def _wrap(orig):
+                def _fn(title=None, message=None, **kw):
+                    if LANG.get("cur") == "en":
+                        title = _en_text(title) if isinstance(title, str) else title
+                        message = _en_text(message) if isinstance(message, str) else message
+                    return orig(title, message, **kw)
+                return _fn
+
+            setattr(_mb, _name, _wrap(_orig))
+    except Exception:
+        pass
+
+
 def detect_language(cfg):
     lang = str((cfg or {}).get("language") or "").strip().lower()
     if lang in ("zh", "en"):
