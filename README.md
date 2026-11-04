@@ -1,81 +1,102 @@
-# Hymnix Local AI Server
+![License](https://img.shields.io/badge/license-AGPL--3.0-blue)
+![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey)
+![Python](https://img.shields.io/badge/python-3.11%2B-3776AB)
 
-Run a private AI gateway on your own computer, expose it through a tunnel, and let your friends' apps use your local model — while you keep a live view of every request.
+# Hymnix AI Server
 
-- 🖥 **Local-first**: models run on your machine via [Ollama](https://ollama.com). No cloud account required.
-- 🔐 **Key-based access**: every request needs an API key you control.
-- 🌍 **Shareable**: built-in Cloudflare Tunnel (default) or ngrok support gives friends a public HTTPS endpoint.
-- 📊 **Live console**: terminal trace, request monitor, per-request GPU / energy / latency metrics.
-- 🧰 **OpenAI-compatible**: `POST /v1/chat/completions`, including tool calling — works with any OpenAI-style client.
-- 🤖 **Client included**: a ready-to-use desktop client for the people you invite.
-- 🔌 **AI interface**: the client can point at this server or at any other OpenAI-compatible endpoint.
+**Run a private AI gateway on your own computer, share it with people you trust, and see every request they make.**
 
-## Quick start (5 minutes)
+Hymnix turns a local [Ollama](https://ollama.com) model into an OpenAI-compatible API, wraps it in a clean Windows desktop app, and optionally exposes it through a public tunnel. A friend can use your GPU from anywhere while you keep a live console of every prompt, tool call and reply.
 
-### 1. Install Ollama and pull a model
+**Local-first.** No accounts, no cloud, no telemetry. The only traffic that leaves your machine is what you explicitly tunnel to invited users.
+
+---
+
+## Highlights
+
+- **Local models** - anything Ollama can run; 8 GB VRAM is enough for qwen3:8b.
+- **OpenAI-compatible API** - /v1/chat/completions, streaming and non-streaming, tool calling included.
+- **Live console** - terminal trace, request monitor, latency, tokens, GPU utilisation, VRAM, power and estimated cost per request.
+- **Optional public access** - Cloudflare Tunnel (default) or ngrok, started on demand.
+- **Desktop client included** - a ready-to-use app for the people you invite; it can also point at any OpenAI-compatible service.
+- **Idle-aware** - the model is unloaded from VRAM after 60 seconds of inactivity (configurable).
+- **Safe defaults** - gateway binds to localhost, API keys are generated locally, logs stay on the host.
+
+## Quick start
+
+### 1. Install Ollama
 
 ```powershell
 winget install Ollama.Ollama
 ollama pull qwen3:8b
 ```
 
-> 8 GB VRAM is enough for `qwen3:8b` at 16K context. Any Ollama model works; smaller models are faster.
+### 2. Get the server
 
-### 2. Start the server
+**Option A - prebuilt:** download Hymnix-AI-Server.exe from the Releases page.
 
-- **Windows (recommended)**: download the latest `Hymnix-AI-Server.exe` from the *Releases* page and double-click it.
-- **From source**:
-  ```powershell
-  pip install pyinstaller
-  .\build.ps1
-  ```
+**Option B - from source:**
 
-The server listens on `127.0.0.1:11435` and writes its config, keys and logs next to the executable.
+```powershell
+git clone https://github.com/YOUR-ACCOUNT/hymnix-ai-server.git
+cd hymnix-ai-server
+pip install -r client/requirements.txt pyinstaller
+.\build.ps1
+```
 
-### 3. Start the tunnel and share
+### 3. Start it
 
-1. Click **Start Tunnel** (启动隧道) in the app's status bar.
-2. Wait for the public address to appear, then click **Copy** — it copies the URL **and** the API key.
-3. Send that to your friend.
+The server listens on 127.0.0.1:11435. Configuration, keys and logs live in:
 
-The tunnel is **on-demand on purpose**: every new tunnel costs a public hostname, so the app does not create one on startup.
+```
+%LOCALAPPDATA%\Hymnix\
+```
 
-### 4. Friend side
+On first run a random API key and admin key are generated into gateway_config.json.
 
-Send them `Hymnix-Client.exe` (Releases) plus the URL and key. In the client: **Settings → AI interface**, fill in:
+### 4. Invite someone
+
+1. In the status bar click **Start Tunnel**.
+2. When the address appears, click **Copy** - URL and API key are copied together.
+3. Send the client plus that text to your friend.
+
+The tunnel is **manual on purpose**: every new tunnel allocates a public hostname, so creating one at startup wastes quota and may be rate-limited.
+
+### 5. Connect the client
+
+In Hymnix-Client.exe open **Settings -> AI interface**:
 
 | Field | Value |
 |---|---|
-| Endpoint | `https://<your-tunnel>/v1` |
-| API key | the key copied from the server |
-| Model | `qwen3:8b` (or any model you pulled) |
+| Endpoint | https://YOUR-TUNNEL/v1 |
+| API key | the key from step 4 |
+| Model | qwen3:8b (or any model you pulled) |
 
-Then chat. Requests show up on your server console in real time.
-
-## Repository layout
+## Architecture
 
 ```
-server/    Desktop server (gateway + tunnel + monitor), Tkinter
-client/    Desktop client for invited users
-config/    Example configuration files
-examples/  curl / Python / Node API examples
-docs/      Setup, client, security and FAQ guides
-build.ps1  One-click build for both executables
+ Hymnix-Client.exe                      Hymnix-AI-Server.exe
+ +--------------+   HTTPS (tunnel)    +---------------------+
+ | chat UI      | ------------------> | gateway (11435)     |
+ | tools        | <------------------ |  - OpenAI-compatible|
+ +--------------+                     |  - compat modes     |
+                                      |  - request logging  |
+                                      |  - metrics / energy |
+                                      +----------+----------+
+                                                 | HTTP
+                                      +----------v----------+
+                                      | Ollama (11434)      |
+                                      |  qwen3:8b, ...      |
+                                      +---------------------+
 ```
 
-## How it works
+- The gateway is a standard-library Python HTTP server: no framework, no database.
+- Conversations are appended to JSONL files under %LOCALAPPDATA%\Hymnix\logs\.
+- compat_mode adapts to different clients: auto, openai, text_tools, plain, json_only.
 
-```
-Friend's client ──HTTPS──> Cloudflare tunnel
-                              │
-                        Hymnix gateway (127.0.0.1:11435)
-                              │
-                         Ollama (127.0.0.1:11434)
-```
+More detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-The gateway exposes an OpenAI-compatible API, forwards requests to Ollama, and records a per-request trace (prompt, tools, reply, tokens, GPU usage, energy). The tunel is optional — on a LAN you can connect directly to `http://<host>:11435`.
-
-## API (OpenAI-compatible)
+## API
 
 ```bash
 curl https://YOUR-TUNNEL/v1/chat/completions \
@@ -84,22 +105,72 @@ curl https://YOUR-TUNNEL/v1/chat/completions \
   -d '{"model":"qwen3:8b","messages":[{"role":"user","content":"Hello"}]}'
 ```
 
-Also available: `GET /health`, `GET /api/tags`, `POST /api/chat` (Ollama native), `POST /api/generate`, and admin endpoints protected by a separate admin key.
+| Path | Auth | Description |
+|---|---|---|
+| GET /health | none | Server and model status |
+| GET /api/tags | api key | List Ollama models |
+| POST /api/chat | api key | Ollama-native chat |
+| POST /v1/chat/completions | api key | OpenAI-compatible chat (+ tools, streaming) |
+| GET /admin/status | admin key | Clients, stats, recent requests |
+| POST /admin/cleanup | admin key | Filtered log cleanup (archives first) |
 
+Examples: [examples/](examples/).
 
-> **Where data lives:** configs, keys, logs and the downloaded tunnel helper are stored in `%LOCALAPPDATA%\Hymnix\` (required for Store packaging). Delete that folder to remove all app data.
+## Configuration
+
+Edit %LOCALAPPDATA%\Hymnix\gateway_config.json and restart:
+
+| Key | Default | Meaning |
+|---|---|---|
+| listen_port | 11435 | Gateway port |
+| api_key / admin_key | generated | Client key / admin key |
+| model_aliases | {} | Map client model names to real Ollama models |
+| compat_mode | auto | Client compatibility strategy |
+| idle_unload_seconds | 60 | Unload model from VRAM after idle |
+| keep_alive_agent | 300 | Keep-alive for tool-using agents |
+| prompt_char_limit | 26000 | Prompt trimming budget (system prompts always kept) |
+| ctx_expand_threshold | 45000 | Auto-expand context when prompt and tools exceed this |
 
 ## Security
 
-- The gateway binds to localhost only; friends reach it through the tunnel.
-- API keys and admin keys are generated on first run and stored in `gateway_config.json`.
-- **Never commit `gateway_config.json`, `huimeng_config.json`, `logs/` or `tunnel_url.txt`.**
-- Logs contain full conversations. Treat them as private data and clean them with the built-in filtered cleanup.
+- The gateway binds to 127.0.0.1; friends reach it only through the tunnel you start.
+- Never share admin_key - it unlocks monitoring, logs and cleanup.
+- Conversation logs contain full prompts and replies; they are private data.
+- See [SECURITY.md](SECURITY.md) and [docs/PRIVACY.md](docs/PRIVACY.md).
 
-See [docs/SECURITY.md](docs/SECURITY.md) for details.
+## Build from source
+
+```powershell
+.\build.ps1               # both executables -> dist/
+.\build.ps1 -ServerOnly
+.\build.ps1 -ClientOnly
+```
+
+Microsoft Store package (MSIX):
+
+```powershell
+.\build.ps1 -ServerOnly
+.\build-msix.ps1 -Version 1.0.0.0
+```
+
+Requires Windows SDK 10 (makeappx.exe). See [docs/STORE.md](docs/STORE.md).
+
+## Documentation
+
+| Document | Contents |
+|---|---|
+| [docs/SETUP.md](docs/SETUP.md) | Install, run, tunnel, LAN mode, ports |
+| [docs/CLIENT.md](docs/CLIENT.md) | Client usage and AI endpoint settings |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How the gateway works internally |
+| [docs/FAQ.md](docs/FAQ.md) | Common problems |
+| [docs/STORE.md](docs/STORE.md) | Microsoft Store packaging |
+| [docs/PRIVACY.md](docs/PRIVACY.md) | What is stored and where |
+| [docs/zh-CN/](docs/zh-CN/) | Chinese translations |
+
+## Contributing
+
+Issues and pull requests are welcome - see [CONTRIBUTING.md](CONTRIBUTING.md). Please read [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) first.
 
 ## License
 
-AGPL-3.0. See [LICENSE](LICENSE).
-
-If you modify and deploy this software as a network service, the AGPL requires you to publish your modified source.
+[AGPL-3.0](LICENSE). If you modify Hymnix and run it as a network service, you must offer the modified source to its users.

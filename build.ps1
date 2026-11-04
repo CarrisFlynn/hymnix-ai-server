@@ -16,24 +16,32 @@ if ($Clean) {
 function Build-Server {
     Write-Host "==> Building Hymnix AI Server" -ForegroundColor Cyan
     Push-Location "$root\server"
-    & $python -m PyInstaller --noconfirm --clean --onefile --windowed `
-        --name "Hymnix-AI-Server" --icon "icon.ico" --splash "splash.png" `
-        --add-data "dashboard.html;." --add-data "icon.ico;." --add-data "icon.png;." `
-        --add-data "key1.wav;." --add-data "key2.wav;." --add-data "key3.wav;." `
-        --hidden-import gateway_core --paths "." "hymnix_main.py"
+    $args = @(
+        "-m", "PyInstaller", "--noconfirm", "--clean", "--onefile", "--windowed",
+        "--name", "Hymnix-AI-Server", "--icon", "assets/icon.ico", "--splash", "assets/splash.png",
+        "--add-data", "dashboard.html;.", "--add-data", "assets/icon.ico;.",
+        "--add-data", "assets/icon.png;.", "--add-data", "assets/key1.wav;.",
+        "--add-data", "assets/key2.wav;.", "--add-data", "assets/key3.wav;.",
+        "--hidden-import", "gateway_core", "--paths", ".", "hymnix_main.py"
+    )
+    & $python @args
     Pop-Location
-    Copy-Item "$root\server\dist\Hymnix-AI-Server.exe" "$root\dist\" -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory "$root\dist" -Force | Out-Null
+    Copy-Item "$root\server\dist\Hymnix-AI-Server.exe" "$root\dist\" -Force
 }
 
 function Build-Client {
     Write-Host "==> Building Hymnix Client" -ForegroundColor Cyan
     Push-Location "$root\client"
-    & $python -m PyInstaller --noconfirm --clean --onefile --windowed `
-        --name "Hymnix-Client" --icon "icon.ico" --add-data "icon.ico;." `
-        "hymnix_client_app.py"
+    $args = @(
+        "-m", "PyInstaller", "--noconfirm", "--clean", "--onefile", "--windowed",
+        "--name", "Hymnix-Client", "--icon", "assets/icon.ico",
+        "--add-data", "assets/icon.ico;.", "hymnix_client_app.py"
+    )
+    & $python @args
     Pop-Location
-    if (!(Test-Path "$root\dist")) { New-Item -ItemType Directory "$root\dist" | Out-Null }
-    Copy-Item "$root\client\dist\Hymnix-Client.exe" "$root\dist\" -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory "$root\dist" -Force | Out-Null
+    Copy-Item "$root\client\dist\Hymnix-Client.exe" "$root\dist\" -Force
 }
 
 if (-not $ClientOnly) { Build-Server }

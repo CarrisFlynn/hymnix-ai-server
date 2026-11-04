@@ -1,0 +1,49 @@
+name: Build
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pip install -r client/requirements.txt
+
+      - name: Syntax check
+        run: |
+          python -m py_compile server/hymnix_main.py server/gateway_core.py client/hymnix_client_app.py
+
+      - name: Build server
+        run: |
+          cd server
+          pyinstaller --noconfirm --clean --onefile --windowed --name "Hymnix-AI-Server" --icon "assets/icon.ico" --splash "assets/splash.png" --add-data "dashboard.html;." --add-data "assets/icon.ico;." --add-data "assets/icon.png;." --add-data "assets/key1.wav;." --add-data "assets/key2.wav;." --add-data "assets/key3.wav;." --hidden-import gateway_core --paths "." "hymnix_main.py"
+
+      - name: Build client
+        run: |
+          cd client
+          pyinstaller --noconfirm --clean --onefile --windowed --name "Hymnix-Client" --icon "assets/icon.ico" --add-data "assets/icon.ico;." "hymnix_client_app.py"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: hymnix-windows
+          path: |
+            server/dist/Hymnix-AI-Server.exe
+            client/dist/Hymnix-Client.exe
