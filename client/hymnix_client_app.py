@@ -20,6 +20,156 @@ DEFAULT_KEY = ""
 DEFAULT_MODEL = ""   # empty = use the first model installed on the server
 
 
+
+# ==================== Language / 语言 ====================
+ZH2EN = {
+    "终端 · 轨迹": "Terminal · Trace",
+    "服务端监控": "Server Monitor",
+    "API 接口": "API",
+    "插件": "Plugins",
+    "就绪": "Ready",
+    "网关": "Gateway",
+    "隧道": "Tunnel",
+    "模型": "Model",
+    "公网地址": "Public address",
+    "在线客户端": "Clients online",
+    "复制地址": "Copy address",
+    "看监控": "Open monitor",
+    "启动隧道": "Start tunnel",
+    "停止隧道": "Stop tunnel",
+    "分配中…": "Allocating...",
+    "建立中…": "Starting...",
+    "刷新模型": "Refresh models",
+    "下载模型": "Download models",
+    "启动服务": "Start service",
+    "停止服务": "Stop service",
+    "模型管理": "Manage models",
+    "保存": "Save",
+    "加载": "Load",
+    "清空": "Clear",
+    "导出": "Export",
+    "发送": "Send",
+    "设置": "Settings",
+    "清理历史…": "Clean up history...",
+    "客户端连接": "Clients",
+    "对话记录（点一条看完整内容）": "Conversations (click a row for details)",
+    "全部": "All",
+    "今天": "Today",
+    "最近1小时": "Last hour",
+    "全部IP": "All IPs",
+    "关键词": "Keyword",
+    "插件与能力": "Plugins & capabilities",
+    "模型接口": "Model API",
+    "在线": "Online",
+    "离线": "Offline",
+    "已就绪": "Ready",
+    "未分配": "Not allocated",
+    "分配中": "Allocating",
+    "连接设置": "Connection settings",
+    "服务器地址": "Server URL",
+    "连接密钥": "API key",
+    "从剪贴板填入": "Paste from clipboard",
+    "刷新模型列表": "Refresh model list",
+    "已连接": "Connected",
+    "未连接": "Disconnected",
+    "保存并应用": "Save and apply",
+    "测试连接": "Test connection",
+    "关闭": "Close",
+    "输入消息…": "Type a message...",
+    "对话": "Chat",
+    "清屏": "Clear screen",
+    "复制最后回复": "Copy last reply",
+    "导出对话": "Export chat",
+}
+
+
+def detect_language(cfg):
+    lang = str((cfg or {}).get("language") or "").strip().lower()
+    if lang in ("zh", "en"):
+        return lang
+    try:
+        import locale
+        loc = (locale.getdefaultlocale()[0] or "").lower()
+    except Exception:
+        loc = ""
+    return "zh" if loc.startswith("zh") else "en"
+
+
+def apply_zh2en(widget, memo, mapping=None):
+    """把界面里已知的中文文案换成英文；memo 保存原文用于切回。mapping None=恢复中文"""
+    mapping = ZH2EN if mapping is None else mapping
+    try:
+        cls = widget.winfo_class()
+    except Exception:
+        return
+    try:
+        if cls in ("Label", "Button", "Checkbutton", "Radiobutton", "TLabel", "TButton",
+                   "TCheckbutton", "TRadiobutton", "TLabelframe"):
+            cur = str(widget.cget("text"))
+            key = ("text", id(widget))
+            if mapping is not None:
+                if key not in memo:
+                    memo[key] = cur
+                orig = memo[key]
+                if orig in mapping:
+                    widget.configure(text=mapping[orig])
+            elif key in memo:
+                widget.configure(text=memo[key])
+    except Exception:
+        pass
+    try:
+        if cls == "TNotebook":
+            n = widget.index("end")
+            key = ("tabs", id(widget))
+            if mapping is not None:
+                if key not in memo:
+                    memo[key] = [widget.tab(i, "text") for i in range(n)]
+                orig = memo[key]
+                for i, txt in enumerate(orig[:n]):
+                    new = mapping.get(txt.strip())
+                    if new:
+                        widget.tab(i, text=txt.replace(txt.strip(), new))
+            elif key in memo:
+                for i, txt in enumerate(memo[key]):
+                    if i < n:
+                        widget.tab(i, text=txt)
+    except Exception:
+        pass
+    try:
+        if cls == "Treeview":
+            cols = widget["columns"]
+            key = ("tree", id(widget))
+            if mapping is not None:
+                if key not in memo:
+                    memo[key] = {c: str(widget.heading(c)["text"]) for c in cols}
+                for c in cols:
+                    orig = memo[key].get(c, "")
+                    if orig in mapping:
+                        widget.heading(c, text=mapping[orig])
+            elif key in memo:
+                for c in cols:
+                    widget.heading(c, text=memo[key].get(c, ""))
+    except Exception:
+        pass
+    try:
+        if cls == "TCombobox":
+            key = ("combo", id(widget))
+            if mapping is not None:
+                vals = [str(v) for v in widget["values"]]
+                if key not in memo:
+                    memo[key] = vals
+                new = [mapping.get(v, v) for v in memo[key]]
+                widget.configure(values=new)
+            elif key in memo:
+                widget.configure(values=memo[key])
+    except Exception:
+        pass
+    try:
+        for child in widget.winfo_children():
+            apply_zh2en(child, memo, mapping)
+    except Exception:
+        pass
+
 def app_dir():
     if getattr(sys, "frozen", False):
         return os.path.dirname(os.path.abspath(sys.executable))
@@ -112,6 +262,15 @@ class ClientApp(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self.destroy)
         threading.Thread(target=self._probe_loop, daemon=True).start()
         threading.Thread(target=self._poll_models, daemon=True).start()
+        try:
+            self._lang_memo = {}
+            if not CFG.get("language"):
+                CFG["language"] = detect_language(CFG)
+            self._lang = detect_language(CFG)
+            if self._lang == "en":
+                apply_zh2en(self, self._lang_memo)
+        except Exception:
+            pass
         self.after(6000, self._poll_inbox)
         self.after(60, self._drain)
         if selftest:
@@ -319,7 +478,7 @@ class ClientApp(tk.Tk):
     def open_settings(self):
         win = tk.Toplevel(self)
         win.title("连接设置")
-        win.geometry("520x260")
+        win.geometry("520x310")
         win.transient(self)
         win.grab_set()
         ttk.Label(win, text="服务器地址").grid(row=0, column=0, sticky="w", padx=16, pady=10)
@@ -344,8 +503,12 @@ class ClientApp(tk.Tk):
             threading.Thread(target=worker, daemon=True).start()
 
         ttk.Button(win, text="刷新模型列表", command=refresh_models).grid(row=2, column=2, padx=6)
+        ttk.Label(win, text="语言 / Language").grid(row=3, column=0, sticky="w", padx=16, pady=6)
+        v_lang = tk.StringVar(value="English" if detect_language(CFG) == "en" else "中文")
+        ttk.Combobox(win, textvariable=v_lang, values=["中文", "English"],
+                     state="readonly", width=42).grid(row=3, column=1, pady=6)
         msg = tk.StringVar(value="")
-        ttk.Label(win, textvariable=msg, foreground="#2E7D5B").grid(row=3, column=0, columnspan=2)
+        ttk.Label(win, textvariable=msg, foreground="#2E7D5B").grid(row=4, column=0, columnspan=2)
 
         def import_clip():
             try:
@@ -366,13 +529,14 @@ class ClientApp(tk.Tk):
             CFG["server_url"] = v_url.get().strip().rstrip("/")
             CFG["api_key"] = v_key.get().strip()
             CFG["model"] = v_model.get().strip() or CFG["model"]
+            CFG["language"] = "en" if v_lang.get() == "English" else "zh"
             try:
                 with open(CONFIG_PATH, "w", encoding="utf-8") as f:
                     json.dump(CFG, f, ensure_ascii=False, indent=2)
             except Exception as e:
                 msg.set("保存失败：%s" % e)
                 return
-            msg.set("已保存")
+            msg.set("已保存（语言重启后生效）" if CFG.get("language") == "en" else "已保存（语言重启后生效）")
             self.var_model.set(CFG["model"])
             threading.Thread(target=self._poll_models, daemon=True).start()
 

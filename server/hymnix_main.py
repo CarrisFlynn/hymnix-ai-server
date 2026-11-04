@@ -194,6 +194,156 @@ THEME = {
 }
 WIN7_STYLE = THEME  # 旧名别名，防止漏改的引用报错
 
+
+# ==================== Language / 语言 ====================
+ZH2EN = {
+    "终端 · 轨迹": "Terminal · Trace",
+    "服务端监控": "Server Monitor",
+    "API 接口": "API",
+    "插件": "Plugins",
+    "就绪": "Ready",
+    "网关": "Gateway",
+    "隧道": "Tunnel",
+    "模型": "Model",
+    "公网地址": "Public address",
+    "在线客户端": "Clients online",
+    "复制地址": "Copy address",
+    "看监控": "Open monitor",
+    "启动隧道": "Start tunnel",
+    "停止隧道": "Stop tunnel",
+    "分配中…": "Allocating...",
+    "建立中…": "Starting...",
+    "刷新模型": "Refresh models",
+    "下载模型": "Download models",
+    "启动服务": "Start service",
+    "停止服务": "Stop service",
+    "模型管理": "Manage models",
+    "保存": "Save",
+    "加载": "Load",
+    "清空": "Clear",
+    "导出": "Export",
+    "发送": "Send",
+    "设置": "Settings",
+    "清理历史…": "Clean up history...",
+    "客户端连接": "Clients",
+    "对话记录（点一条看完整内容）": "Conversations (click a row for details)",
+    "全部": "All",
+    "今天": "Today",
+    "最近1小时": "Last hour",
+    "全部IP": "All IPs",
+    "关键词": "Keyword",
+    "插件与能力": "Plugins & capabilities",
+    "模型接口": "Model API",
+    "在线": "Online",
+    "离线": "Offline",
+    "已就绪": "Ready",
+    "未分配": "Not allocated",
+    "分配中": "Allocating",
+    "连接设置": "Connection settings",
+    "服务器地址": "Server URL",
+    "连接密钥": "API key",
+    "从剪贴板填入": "Paste from clipboard",
+    "刷新模型列表": "Refresh model list",
+    "已连接": "Connected",
+    "未连接": "Disconnected",
+    "保存并应用": "Save and apply",
+    "测试连接": "Test connection",
+    "关闭": "Close",
+    "输入消息…": "Type a message...",
+    "对话": "Chat",
+    "清屏": "Clear screen",
+    "复制最后回复": "Copy last reply",
+    "导出对话": "Export chat",
+}
+
+
+def detect_language(cfg):
+    lang = str((cfg or {}).get("language") or "").strip().lower()
+    if lang in ("zh", "en"):
+        return lang
+    try:
+        import locale
+        loc = (locale.getdefaultlocale()[0] or "").lower()
+    except Exception:
+        loc = ""
+    return "zh" if loc.startswith("zh") else "en"
+
+
+def apply_zh2en(widget, memo, mapping=None):
+    """把界面里已知的中文文案换成英文；memo 保存原文用于切回。mapping None=恢复中文"""
+    mapping = ZH2EN if mapping is None else mapping
+    try:
+        cls = widget.winfo_class()
+    except Exception:
+        return
+    try:
+        if cls in ("Label", "Button", "Checkbutton", "Radiobutton", "TLabel", "TButton",
+                   "TCheckbutton", "TRadiobutton", "TLabelframe"):
+            cur = str(widget.cget("text"))
+            key = ("text", id(widget))
+            if mapping is not None:
+                if key not in memo:
+                    memo[key] = cur
+                orig = memo[key]
+                if orig in mapping:
+                    widget.configure(text=mapping[orig])
+            elif key in memo:
+                widget.configure(text=memo[key])
+    except Exception:
+        pass
+    try:
+        if cls == "TNotebook":
+            n = widget.index("end")
+            key = ("tabs", id(widget))
+            if mapping is not None:
+                if key not in memo:
+                    memo[key] = [widget.tab(i, "text") for i in range(n)]
+                orig = memo[key]
+                for i, txt in enumerate(orig[:n]):
+                    new = mapping.get(txt.strip())
+                    if new:
+                        widget.tab(i, text=txt.replace(txt.strip(), new))
+            elif key in memo:
+                for i, txt in enumerate(memo[key]):
+                    if i < n:
+                        widget.tab(i, text=txt)
+    except Exception:
+        pass
+    try:
+        if cls == "Treeview":
+            cols = widget["columns"]
+            key = ("tree", id(widget))
+            if mapping is not None:
+                if key not in memo:
+                    memo[key] = {c: str(widget.heading(c)["text"]) for c in cols}
+                for c in cols:
+                    orig = memo[key].get(c, "")
+                    if orig in mapping:
+                        widget.heading(c, text=mapping[orig])
+            elif key in memo:
+                for c in cols:
+                    widget.heading(c, text=memo[key].get(c, ""))
+    except Exception:
+        pass
+    try:
+        if cls == "TCombobox":
+            key = ("combo", id(widget))
+            if mapping is not None:
+                vals = [str(v) for v in widget["values"]]
+                if key not in memo:
+                    memo[key] = vals
+                new = [mapping.get(v, v) for v in memo[key]]
+                widget.configure(values=new)
+            elif key in memo:
+                widget.configure(values=memo[key])
+    except Exception:
+        pass
+    try:
+        for child in widget.winfo_children():
+            apply_zh2en(child, memo, mapping)
+    except Exception:
+        pass
+
 UI_FONT = "Microsoft YaHei"
 
 
@@ -1442,6 +1592,15 @@ class HuimengAIClient:
         self.model_caps = set()
         self.create_menu()
         self.setup_ui()
+        try:
+            self._lang_memo = {}
+            if not self.config.get("language"):
+                self.config["language"] = detect_language(self.config)
+            self._lang = detect_language(self.config)
+            if self._lang == "en":
+                apply_zh2en(self.root, self._lang_memo)
+        except Exception:
+            pass
         self.process_message_queue()
         self.start_host_server()
         self.check_environment()
@@ -1527,7 +1686,11 @@ class HuimengAIClient:
         server_menu.add_separator()
         server_menu.add_command(label="重启公网隧道", command=self.restart_host_tunnel)
         server_menu.add_command(label="打开数据目录", command=self.open_data_dir)
+        _lang_menu = tk.Menu(menubar, tearoff=0)
+        _lang_menu.add_command(label="中文", command=lambda: self.set_language("zh"))
+        _lang_menu.add_command(label="English", command=lambda: self.set_language("en"))
         settings_menu = tk.Menu(menubar, tearoff=0, bg=WIN7_STYLE['bg_color'], fg=WIN7_STYLE['label_fg'])
+        settings_menu.add_cascade(label="语言 / Language", menu=_lang_menu)
         menubar.add_cascade(label="设置", menu=settings_menu)
         settings_menu.add_command(label="程序设置", command=self.open_settings)
         settings_menu.add_command(label="个性化设置", command=self.open_personalization)
@@ -3512,6 +3675,16 @@ class HuimengAIClient:
 
         ttk.Button(button_frame, text="保存", command=save_personalization).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="取消", command=dialog.destroy).pack(side=tk.LEFT, padx=5)
+
+    def set_language(self, lang):
+        self.config["language"] = lang
+        try:
+            self.save_config()
+        except Exception:
+            pass
+        messagebox.showinfo("语言 / Language",
+                            "重启程序后生效 / Restart the app to apply.",
+                            parent=self.root)
 
     def reset_window(self):
         if messagebox.askyesno("重置窗口", "确定要重置窗口位置和大小吗？", parent=self.root):
