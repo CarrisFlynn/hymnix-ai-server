@@ -10,7 +10,7 @@ Open **Settings → AI interface** and fill in:
 |---|---|---|
 | Endpoint | `https://abc-def.trycloudflare.com/v1` | Must end with `/v1` |
 | API key | `Hymnix...` | Sent as `Authorization: Bearer` |
-| Model | `qwen3:8b` | Any model the server has |
+| Model | `qwen3:8b` | Any model installed on the server; the list refreshes from it |
 
 Click **Test connection**, then **Save**.
 

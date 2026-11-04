@@ -11,6 +11,8 @@
 
 ## 2. Install a model
 
+Any model works - pick what fits your hardware. Hymnix never forces a specific model.
+
 ```powershell
 ollama pull qwen3:8b
 ```

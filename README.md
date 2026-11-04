@@ -6,11 +6,11 @@
 
 # Hymnix AI Server
 
-**Run a private AI gateway on your own computer, share it with people you trust, and see every request they make.**
+**Run a private AI gateway on your own computer, share it with people you trust, and keep a clear picture of what your shared endpoint is doing.**
 
-Hymnix turns a local [Ollama](https://ollama.com) model into an OpenAI-compatible API, wraps it in a clean Windows desktop app, and optionally exposes it through a public tunnel. A friend can use your GPU from anywhere while you keep a live console of every prompt, tool call and reply.
+Hymnix turns a local [Ollama](https://ollama.com) model into an OpenAI-compatible API, wraps it in a clean Windows desktop app, and optionally exposes it through a public tunnel. People you invite can use your GPU from anywhere, while you keep a console for troubleshooting and resource tracking.
 
-**Local-first.** No accounts, no cloud, no telemetry. The only traffic that leaves your machine is what you explicitly tunnel to invited users.
+**Local-first.** No accounts, no cloud, no telemetry. Only people you invite can connect, and only while the tunnel is running. They should know their requests are processed on your machine and logged locally - you can clear those logs at any time.
 
 ---
 
@@ -18,7 +18,7 @@ Hymnix turns a local [Ollama](https://ollama.com) model into an OpenAI-compatibl
 
 - **Local models** - anything Ollama can run; 8 GB VRAM is enough for qwen3:8b.
 - **OpenAI-compatible API** - /v1/chat/completions, streaming and non-streaming, tool calling included.
-- **Live console** - terminal trace, request monitor, latency, tokens, GPU utilisation, VRAM, power and estimated cost per request.
+- **Live console** - a request log for troubleshooting and resource tracking: latency, tokens, GPU utilisation, VRAM, power and estimated cost.
 - **Optional public access** - Cloudflare Tunnel (default) or ngrok, started on demand.
 - **Desktop client included** - a ready-to-use app for the people you invite; it can also point at any OpenAI-compatible service.
 - **Idle-aware** - the model is unloaded from VRAM after 60 seconds of inactivity (configurable).
@@ -117,6 +117,16 @@ curl https://YOUR-TUNNEL/v1/chat/completions \
 | POST /admin/cleanup | admin key | Filtered log cleanup (archives first) |
 
 Examples: [examples/](examples/).
+
+## Models
+
+Hymnix does not force any particular model. The client sends model: <name> and the gateway forwards it to Ollama unchanged (unless you configure aliases).
+
+- List installed models: ollama list, or GET /api/tags on the gateway.
+- Pick the model in the client: Settings -> AI interface -> model (refreshes from the server).
+- Use a default when a client omits the model: set default_model in gateway_config.json.
+- Map a client model name to a different local model: model_aliases, for example {"gpt-4o-mini": "qwen3:8b"}.
+- If the model is not installed, Ollama returns "model not found" - pull it, or map it.
 
 ## Configuration
 
@@ -231,9 +241,9 @@ Issues and pull requests are welcome - see [CONTRIBUTING.md](CONTRIBUTING.md). P
 
 然后「测试连接」→「保存」。
 
-## 四、查看请求
+## 四、排障视图（服务端监控）
 
-切到「服务端监控」：
+这里只用于你自己排查问题和看资源占用。被邀请的人知道请求会经你的电脑处理，日志也可以随时清理。切到「服务端监控」：
 
 - 左列：已连接客户端（IP、请求数、最近活跃）
 - 右表：每条请求一行，点开可看完整提示词、思考、工具调用、回复、能耗
@@ -248,7 +258,17 @@ Issues and pull requests are welcome - see [CONTRIBUTING.md](CONTRIBUTING.md). P
 
 归档目录不删，数据就一直保留。
 
-## 六、切换模型
+## 六、模型选择
+
+Hymnix 不强制任何模型：客户端传什么模型名，就发给 Ollama 什么模型（只有配了别名才会映射）。
+
+- 看已装模型：ollama list，或网关的 GET /api/tags
+- 客户端里选：设置 → AI 接口 → 模型（会从服务器刷新列表）
+- 客户端不传模型时的默认值：在 gateway_config.json 里配 default_model
+- 映射到别的本地模型：model_aliases，例如 {"gpt-4o-mini": "qwen3:8b"}
+- 模型没装会报 model not found：先 ollama pull，或加映射
+
+## 七、切换模型
 
 - 左侧「模型」下拉切换已装模型
 - 「刷新模型」重新扫描 Ollama
@@ -257,7 +277,7 @@ Issues and pull requests are welcome - see [CONTRIBUTING.md](CONTRIBUTING.md). P
 
 空闲 60 秒后模型会自动从显存卸载（配置项 idle_unload_seconds）。
 
-## 七、改端口 / 密钥
+## 八、改端口 / 密钥
 
 编辑 %LOCALAPPDATA%\Hymnix\gateway_config.json 后重启：
 
@@ -269,7 +289,7 @@ Issues and pull requests are welcome - see [CONTRIBUTING.md](CONTRIBUTING.md). P
 | model_aliases | 映射客户端传来的模型名 |
 | compat_mode | auto / openai / text_tools / plain / json_only |
 
-## 八、常用操作
+## 九、常用操作
 
 | 想做什么 | 怎么做 |
 |---|---|

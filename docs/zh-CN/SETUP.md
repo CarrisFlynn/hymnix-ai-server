@@ -11,6 +11,8 @@
 
 ## 2. 装模型
 
+任何模型都可以，按你的硬件选；Hymnix 不会强制某个模型。
+
 ```powershell
 ollama pull qwen3:8b
 ```

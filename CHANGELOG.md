@@ -9,6 +9,8 @@ All notable changes are documented here. Format follows [Keep a Changelog](https
 - English documentation; Chinese translations under docs/zh-CN
 
 ### Changed
+- Model selection is fully client-driven: no forced default model, optional default_model and model_aliases
+- Documentation reworded to describe the console as a troubleshooting view, not surveillance
 - Repository reorganised into server/, client/, docs/, packaging/, examples/
 
 ## [1.0.0] - 2026-11-05

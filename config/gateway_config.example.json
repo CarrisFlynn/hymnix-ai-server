@@ -7,5 +7,7 @@
   "online_timeout_s": 120,
   "keep_log_days": 30,
   "api_key": "<RUN-THE-APP-TO-GENERATE-OR-PUT-YOUR-OWN>",
-  "admin_key": "<RUN-THE-APP-TO-GENERATE-OR-PUT-YOUR-OWN>"
+  "admin_key": "<RUN-THE-APP-TO-GENERATE-OR-PUT-YOUR-OWN>",
+  "model_aliases": {},
+  "default_model": ""
 }

@@ -17,7 +17,7 @@ APP_VER = "1.0.0"
 
 DEFAULT_SERVER = "http://127.0.0.1:11435/v1"
 DEFAULT_KEY = ""
-DEFAULT_MODEL = "qwen3:8b"
+DEFAULT_MODEL = ""   # empty = use the first model installed on the server
 
 
 def app_dir():
@@ -212,7 +212,9 @@ class ClientApp(tk.Tk):
 
     def _apply_models(self, names):
         try:
-            combo = [w for w in self.winfo_children()]
+            cb = getattr(self, "_settings_model_combo", None)
+            if cb is not None:
+                cb.configure(values=names)
         except Exception:
             pass
         if CFG["model"] not in names and names:
@@ -328,8 +330,20 @@ class ClientApp(tk.Tk):
         ttk.Entry(win, textvariable=v_key, width=46, show="*").grid(row=1, column=1)
         ttk.Label(win, text="模型").grid(row=2, column=0, sticky="w", padx=16, pady=10)
         v_model = tk.StringVar(value=CFG["model"])
-        ttk.Combobox(win, textvariable=v_model, values=self.models or [CFG["model"]],
-                     width=44).grid(row=2, column=1, pady=10)
+        cb_model = ttk.Combobox(win, textvariable=v_model, values=self.models or [CFG["model"]],
+                                width=44)
+        cb_model.grid(row=2, column=1, pady=10)
+        self._settings_model_combo = cb_model
+
+        def refresh_models():
+            def worker():
+                self._poll_models()
+                names = list(self.models)
+                self.after(0, lambda: cb_model.configure(values=names or [CFG["model"]])
+                           or (not CFG["model"] and names and v_model.set(names[0])))
+            threading.Thread(target=worker, daemon=True).start()
+
+        ttk.Button(win, text="刷新模型列表", command=refresh_models).grid(row=2, column=2, padx=6)
         msg = tk.StringVar(value="")
         ttk.Label(win, textvariable=msg, foreground="#2E7D5B").grid(row=3, column=0, columnspan=2)
 

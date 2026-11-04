@@ -46,6 +46,7 @@ DEFAULT_CONFIG = {
     "online_timeout_s": 120,
     "keep_log_days": 30,
     "model_aliases": {},
+    "default_model": "",
     "inject_time": True,
     "compat_mode": "auto",
     "prompt_char_limit": 26000,
@@ -97,6 +98,16 @@ def _tools_to_text(tools):
         keys = ", ".join((params.get("properties") or {}).keys()) if isinstance(params, dict) else ""
         lines.append("- %s%s%s" % (name, ("：" + desc[:120]) if desc else "", ("（参数：%s）" % keys) if keys else ""))
     return "\n".join(lines)
+
+
+def _resolve_model(payload):
+    """返回 (requested, real_model)。不做任何"强制到某个模型"的行为。"""
+    requested = str((payload or {}).get("model") or "").strip()
+    if not requested:
+        requested = str(CFG.get("default_model") or "").strip()
+    aliases = CFG.get("model_aliases") or {}
+    real = aliases.get(requested, requested)
+    return requested, str(real or "").strip()
 
 
 def _client_profile(ua, payload, path):
@@ -890,13 +901,16 @@ class Handler(BaseHTTPRequestHandler):
     def _openai_tools_inner(self, payload, ua):
         """OpenAI 兼容 + tools 的补丁：内部转成 Ollama 原生 /api/chat，再把 tool_calls 转回标准格式"""
         ip = self._ip()
-        model = payload.get("model", "")
+        model, real_model = _resolve_model(payload)
+        if not real_model:
+            return self._json(400, {"error": {
+                "message": "no model specified",
+                "code": "model",
+                "hint": "pass \"model\": <name>; list installed models with GET /api/tags"}})
         stream = bool(payload.get("stream", False))
         client = touch_client(ip, ua, model=model)
         with LOCK:
             STATS["requests"] += 1
-        alias_map = CFG.get("model_aliases") or {}
-        real_model = alias_map.get(model, model)
         payload, compat_used2 = _apply_compat(payload, ua, "/v1/chat/completions")
         LAST_ACTIVITY[0] = time.time()
         msgs = list(payload.get("messages") or [])

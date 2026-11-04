@@ -1,5 +1,5 @@
 {
-  "last_model": "all-minilm:latest",
+  "last_model": "",
   "history_files": [],
   "auto_start_service": true,
   "auto_download_model": true,

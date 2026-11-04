@@ -10,7 +10,7 @@
 |---|---|---|
 | 接口地址 | `https://abc-def.trycloudflare.com/v1` | 必须以 `/v1` 结尾 |
 | API Key | `Hymnix...` | 以 `Authorization: Bearer` 发送 |
-| 模型 | `qwen3:8b` | 服务器上有的任意模型 |
+| 模型 | `qwen3:8b` | 服务器上装的任意模型；列表会从服务器刷新 |
 
 填完点 **测试连接**，再点 **保存**。
 
