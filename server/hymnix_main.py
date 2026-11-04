@@ -294,6 +294,31 @@ ZH2EN.update({
     "检测硬件": "Detect",
 })
 
+
+def normalize_button_icons(root):
+    """统一去掉按钮文字前面的图标符号，保证所有按钮文字居中对齐。"""
+    ICON_RE = re.compile(r"^[\s\u2190-\u21FF\u2300-\u27BF\u2B00-\u2BFF\uFE0F\u2000-\u206F\u2600-\u27BF"
+                         r"\U0001F300-\U0001FAFF]+")
+    def walk(w):
+        try:
+            cls = w.winfo_class()
+        except Exception:
+            return
+        if cls in ("TButton",):
+            try:
+                txt = str(w.cget("text") or "")
+                clean = ICON_RE.sub("", txt).strip()
+                if clean and clean != txt:
+                    w.configure(text=clean)
+            except Exception:
+                pass
+        try:
+            for c in w.winfo_children():
+                walk(c)
+        except Exception:
+            pass
+    walk(root)
+
 def detect_language(cfg):
     lang = str((cfg or {}).get("language") or "").strip().lower()
     if lang in ("zh", "en"):
@@ -1601,6 +1626,10 @@ class HuimengAIClient:
                 except Exception:
                     pass
                 self.root.after(1500, lambda: apply_zh2en(self.root, self._lang_memo))
+        except Exception:
+            pass
+        try:
+            normalize_button_icons(self.root)
         except Exception:
             pass
         self.process_message_queue()
