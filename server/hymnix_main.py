@@ -265,6 +265,10 @@ def T(zh, en):
 
 
 ZH2EN.update({
+    "使用帮助": "Help",
+    "更新日志": "Changelog",
+    "检查更新": "Check for updates",
+    "本次更新": "What's new",
     "文件": "File",
     "工具": "Tools",
     "服务器": "Server",
@@ -1622,6 +1626,10 @@ class HuimengAIClient:
             if self._lang == "en":
                 apply_zh2en(self.root, self._lang_memo)
                 try:
+                    normalize_button_icons(self.root)
+                except Exception:
+                    pass
+                try:
                     apply_menu_language(self.root.nametowidget(self.root["menu"]), self._lang_memo)
                 except Exception:
                     pass
@@ -1728,13 +1736,13 @@ class HuimengAIClient:
         settings_menu.add_separator()
         settings_menu.add_command(label="重置窗口", command=self.reset_window)
         help_menu = tk.Menu(menubar, tearoff=0, bg=WIN7_STYLE['bg_color'], fg=WIN7_STYLE['label_fg'])
-        menubar.add_cascade(label="帮助", menu=help_menu)
-        help_menu.add_command(label="本次更新（26W07a-R2）", command=self.show_update_notes)
-        help_menu.add_command(label="更新日志", command=self.show_changelog)
-        help_menu.add_command(label="使用帮助", command=self.show_help)
-        help_menu.add_command(label="检查更新", command=self.check_updates)
+        menubar.add_cascade(label=T("帮助", "Help"), menu=help_menu)
+        help_menu.add_command(label=T("本次更新", "What's new"), command=self.show_update_notes)
+        help_menu.add_command(label=T("更新日志", "Changelog"), command=self.show_changelog)
+        help_menu.add_command(label=T("使用帮助", "Help"), command=self.show_help)
+        help_menu.add_command(label=T("检查更新", "Check for updates"), command=self.check_updates)
         help_menu.add_separator()
-        help_menu.add_command(label="关于", command=self.show_about)
+        help_menu.add_command(label=T("关于", "About"), command=self.show_about)
 
     def load_config(self):
         default_config = {
