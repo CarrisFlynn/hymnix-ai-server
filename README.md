@@ -86,6 +86,9 @@ curl https://YOUR-TUNNEL/v1/chat/completions \
 
 Also available: `GET /health`, `GET /api/tags`, `POST /api/chat` (Ollama native), `POST /api/generate`, and admin endpoints protected by a separate admin key.
 
+
+> **Where data lives:** configs, keys, logs and the downloaded tunnel helper are stored in `%LOCALAPPDATA%\Hymnix\` (required for Store packaging). Delete that folder to remove all app data.
+
 ## Security
 
 - The gateway binds to localhost only; friends reach it through the tunnel.

@@ -25,9 +25,10 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 _BUNDLE_DIR = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
-BASE_DIR = os.environ.get("HYMNIX_DATA_DIR") or (
-    os.path.dirname(os.path.abspath(sys.executable)) if getattr(sys, "frozen", False)
-    else os.path.dirname(os.path.abspath(__file__)))
+_EXE_DIR = (os.path.dirname(os.path.abspath(sys.executable)) if getattr(sys, "frozen", False)
+            else os.path.dirname(os.path.abspath(__file__)))
+BASE_DIR = os.environ.get("HYMNIX_DATA_DIR") or os.path.join(
+    os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "Hymnix")
 if not os.path.isdir(BASE_DIR):
     os.makedirs(BASE_DIR, exist_ok=True)
 CONFIG_PATH = os.path.join(BASE_DIR, "gateway_config.json")
