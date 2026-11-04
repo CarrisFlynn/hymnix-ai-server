@@ -71,7 +71,7 @@ ZH2EN = {
     "从剪贴板填入": "Paste from clipboard",
     "刷新模型列表": "Refresh model list",
     "已连接": "Connected",
-    T("未连接", "Disconnected"): "Disconnected",
+    "未连接": "Disconnected",
     "保存并应用": "Save and apply",
     "测试连接": "Test connection",
     "关闭": "Close",
