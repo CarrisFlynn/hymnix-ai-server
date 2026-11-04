@@ -300,19 +300,39 @@ ZH2EN.update({
 
 
 def normalize_button_icons(root):
-    """统一去掉按钮文字前面的图标符号，保证所有按钮文字居中对齐。"""
-    ICON_RE = re.compile(r"^[\s\u2190-\u21FF\u2300-\u27BF\u2B00-\u2BFF\uFE0F\u2000-\u206F\u2600-\u27BF"
-                         r"\U0001F300-\U0001FAFF]+")
+    """Remove emoji/symbol icons from every button label (both languages)."""
+    import unicodedata
+
+    def strip_icons(text):
+        out = []
+        for ch in str(text):
+            cp = ord(ch)
+            cat = unicodedata.category(ch)
+            if cp in (0xFE0F, 0x200D, 0x20E3, 0xFE0E):
+                continue
+            if cat in ("So", "Sk", "Cs", "Co", "Cf"):
+                continue
+            if 0x1F000 <= cp <= 0x1FAFF:
+                continue
+            if 0x2190 <= cp <= 0x2BFF:
+                continue
+            if 0x2300 <= cp <= 0x23FF:
+                continue
+            if 0x25A0 <= cp <= 0x25FF:
+                continue
+            out.append(ch)
+        return re.sub(r"\s{2,}", " ", "".join(out)).strip()
+
     def walk(w):
         try:
             cls = w.winfo_class()
         except Exception:
             return
-        if cls in ("TButton",):
+        if cls in ("TButton", "Button"):
             try:
                 txt = str(w.cget("text") or "")
-                clean = ICON_RE.sub("", txt).strip()
-                if clean and clean != txt:
+                clean = strip_icons(txt)
+                if clean != txt:
                     w.configure(text=clean)
             except Exception:
                 pass
@@ -321,7 +341,9 @@ def normalize_button_icons(root):
                 walk(c)
         except Exception:
             pass
+
     walk(root)
+
 
 def detect_language(cfg):
     lang = str((cfg or {}).get("language") or "").strip().lower()
