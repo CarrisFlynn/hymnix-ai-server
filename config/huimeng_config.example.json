@@ -1,0 +1,17 @@
+{
+  "last_model": "all-minilm:latest",
+  "history_files": [],
+  "auto_start_service": true,
+  "auto_download_model": true,
+  "font_size": 10,
+  "user_name": "You",
+  "ai_name": "AI助手",
+  "api_timeout": 60,
+  "enable_sound": true,
+  "auto_scroll": true,
+  "max_history": 100,
+  "compute_device": "auto",
+  "download_dir": "",
+  "download_sources": [],
+  "server_mode": "local"
+}

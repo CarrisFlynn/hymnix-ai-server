@@ -1,0 +1,9 @@
+REM Windows CMD example
+REM 1) list models
+curl.exe https://YOUR-TUNNEL-ADDRESS/v1/models -H "Authorization: Bearer YOUR_API_KEY"
+
+REM 2) chat (OpenAI compatible)
+curl.exe https://YOUR-TUNNEL-ADDRESS/v1/chat/completions -H "Authorization: Bearer YOUR_API_KEY" -H "Content-Type: application/json" -d "{\"model\":\"qwen3:8b\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}]}"
+
+REM 3) native Ollama-style endpoint
+curl.exe https://YOUR-TUNNEL-ADDRESS/api/chat -H "Authorization: Bearer YOUR_API_KEY" -H "Content-Type: application/json" -d "{\"model\":\"qwen3:8b\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}],\"stream\":false}"

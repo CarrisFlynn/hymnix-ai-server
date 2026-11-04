@@ -1,0 +1,20 @@
+# runtime data — never commit
+logs/
+tunnel_url.txt
+trace_debug.log
+*.log
+dist/
+build/
+*.spec
+__pycache__/
+*.pyc
+.env
+
+# local configs (generated on first run, contain keys)
+gateway_config.json
+huimeng_config.json
+hymnix_client.json
+
+# binaries
+cloudflared.exe
+ngrok.exe

@@ -1,0 +1,11 @@
+{
+  "listen_host": "0.0.0.0",
+  "listen_port": 11435,
+  "upstream_host": "127.0.0.1",
+  "upstream_port": 11434,
+  "max_body_mb": 32,
+  "online_timeout_s": 120,
+  "keep_log_days": 30,
+  "api_key": "<RUN-THE-APP-TO-GENERATE-OR-PUT-YOUR-OWN>",
+  "admin_key": "<RUN-THE-APP-TO-GENERATE-OR-PUT-YOUR-OWN>"
+}
