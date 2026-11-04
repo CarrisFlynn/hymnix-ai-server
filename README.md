@@ -2,6 +2,8 @@
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey)
 ![Python](https://img.shields.io/badge/python-3.11%2B-3776AB)
 
+<p id="lang-switch"><a href="#english">English</a> | <a href="#chinese">简体中文</a></p>
+
 # Hymnix AI Server
 
 **Run a private AI gateway on your own computer, share it with people you trust, and see every request they make.**
@@ -161,7 +163,6 @@ Requires Windows SDK 10 (makeappx.exe). See [docs/STORE.md](docs/STORE.md).
 |---|---|
 | [docs/SETUP.md](docs/SETUP.md) | Install, run, tunnel, LAN mode, ports |
 | [docs/CLIENT.md](docs/CLIENT.md) | Client usage and AI endpoint settings |
-| [docs/GUIDE.md](docs/GUIDE.md) | Step-by-step operation guide |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How the gateway works internally |
 | [docs/FAQ.md](docs/FAQ.md) | Common problems |
 | [docs/STORE.md](docs/STORE.md) | Microsoft Store packaging |
@@ -188,6 +189,96 @@ Issues and pull requests are welcome - see [CONTRIBUTING.md](CONTRIBUTING.md). P
 - Email: shayhymnix@gmail.com
 - X / Twitter: [@ShayHymnix](https://x.com/ShayHymnix)
 - Bugs and feature requests: [GitHub Issues](../../issues)
+
+---
+
+# 中文操作指南
+
+<p id="chinese"></p>
+
+[English version above](#hymnix-ai-server) · **简体中文**
+
+## 一、第一次运行
+
+1. 安装 Ollama：winget install Ollama.Ollama（或从 ollama.com 下载）
+2. 拉模型：ollama pull qwen3:8b
+3. 双击 Hymnix-AI-Server.exe
+4. 等状态栏「网关」「模型」两个圆点变绿
+5. 配置和日志在 %LOCALAPPDATA%\Hymnix\，可通过「文件 → 打开数据目录」打开
+
+## 二、启动公网隧道
+
+隧道是手动申请的——每开一次都会占用一个公网地址。
+
+1. 点状态栏的「启动隧道」
+2. 第一次会自动下载 cloudflared（约 55MB）
+3. 地址出现后点「复制地址」（会把地址和 API Key 一起复制）
+4. 把这段文字发给朋友
+
+不想分享时点「停止隧道」，地址立即失效。
+
+## 三、邀请朋友
+
+发给他两样东西：Hymnix-Client.exe + 刚才复制的文字。
+
+他在客户端里打开「设置 → AI 接口」填：
+
+| 字段 | 填什么 |
+|---|---|
+| 接口地址 | 复制的地址 + /v1 |
+| API Key | 复制的密钥 |
+| 模型 | qwen3:8b |
+
+然后「测试连接」→「保存」。
+
+## 四、查看请求
+
+切到「服务端监控」：
+
+- 左列：已连接客户端（IP、请求数、最近活跃）
+- 右表：每条请求一行，点开可看完整提示词、思考、工具调用、回复、能耗
+- 筛选：时间范围、来源 IP、关键词
+
+## 五、清理日志
+
+1. 点「清理历史…」
+2. 选日期范围、IP、关键词（至少给一个条件）
+3. 「预览」看匹配多少条
+4. 「执行清理」：先归档到 logs/archive/，再移除
+
+归档目录不删，数据就一直保留。
+
+## 六、切换模型
+
+- 左侧「模型」下拉切换已装模型
+- 「刷新模型」重新扫描 Ollama
+- 「下载模型」打开模型货架（搜索 / 体积 / 显存要求）
+- 计算设备条上「应用」可绑定 GPU 或强制 CPU
+
+空闲 60 秒后模型会自动从显存卸载（配置项 idle_unload_seconds）。
+
+## 七、改端口 / 密钥
+
+编辑 %LOCALAPPDATA%\Hymnix\gateway_config.json 后重启：
+
+| 字段 | 说明 |
+|---|---|
+| listen_port | 网关端口 |
+| api_key | 朋友用的密钥 |
+| admin_key | 你的监控/管理密钥，绝不外发 |
+| model_aliases | 映射客户端传来的模型名 |
+| compat_mode | auto / openai / text_tools / plain / json_only |
+
+## 八、常用操作
+
+| 想做什么 | 怎么做 |
+|---|---|
+| 看谁连着 | 服务端监控 → 左列 |
+| 查公网地址 | 状态栏 |
+| 马上停止分享 | 停止隧道 |
+| 立刻释放显存 | 等 60 秒，或重启程序 |
+| 开关界面音效 | 插件页 → 界面音效 |
+| 打开数据目录 | 文件 → 打开数据目录 |
 
 ## License
 
