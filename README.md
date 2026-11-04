@@ -161,6 +161,7 @@ Requires Windows SDK 10 (makeappx.exe). See [docs/STORE.md](docs/STORE.md).
 |---|---|
 | [docs/SETUP.md](docs/SETUP.md) | Install, run, tunnel, LAN mode, ports |
 | [docs/CLIENT.md](docs/CLIENT.md) | Client usage and AI endpoint settings |
+| [docs/GUIDE.md](docs/GUIDE.md) | Step-by-step operation guide |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How the gateway works internally |
 | [docs/FAQ.md](docs/FAQ.md) | Common problems |
 | [docs/STORE.md](docs/STORE.md) | Microsoft Store packaging |
