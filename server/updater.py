@@ -92,9 +92,12 @@ def pick_asset(release: Mapping, patterns: Optional[object] = None) -> Optional[
     candidates = [a for a in assets if Path(str(a.get("name", ""))).suffix.lower() in (".exe", ".zip")]
     if not candidates:
         return None
-    def score(a: Mapping) -> tuple[int, int, int]:
+    def score(a: Mapping) -> tuple[int, int, int, int]:
         name = str(a.get("name", "")).lower()
-        return (0 if name.endswith(".exe") else 1, 0 if ("win" in name or "windows" in name) else 1, len(name))
+        # Prefer the server executable (this app) over the bundled desktop client.
+        kind = 0 if "server" in name else (2 if "client" in name else 1)
+        return (0 if name.endswith(".exe") else 1, kind,
+                0 if ("win" in name or "windows" in name) else 1, len(name))
     selected = sorted(candidates, key=score)[0]
     checks = next((a for a in assets if str(a.get("name", "")).lower().endswith((".sha256", ".sha256sum")) or "checksum" in str(a.get("name", "")).lower()), None)
     digest = _digest(selected)

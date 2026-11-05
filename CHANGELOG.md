@@ -83,6 +83,7 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Version strings unified; the internal development codename no longer appears in
   the public build.
 - The window no longer opens maximised by default.
+- Update checks always select the server executable instead of the bundled client.
 
 ## [1.0.0] - 2026-11-05
 
