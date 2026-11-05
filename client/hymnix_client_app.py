@@ -249,9 +249,9 @@ def install_widget_text_hooks():
     # ---- combobox values ----
     try:
         if not getattr(_ttk.Combobox, "_hymnix_values", False):
-            _orig = _ttk.Combobox.configure
+            _orig_combo = _ttk.Combobox.configure
 
-            def _conf(self, cnf=None, **kw):
+            def _conf(self, cnf=None, _orig=_orig_combo, **kw):
                 vals = kw.get("values")
                 if vals is None and isinstance(cnf, dict):
                     vals = cnf.get("values")
