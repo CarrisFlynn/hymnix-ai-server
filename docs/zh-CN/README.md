@@ -14,7 +14,7 @@
 
 ![Hymnix 1.1.0](images/preview.png)
 
-![功能一览：对话 / 550C 终端 / 服务端监控 / 插件与云端 API](images/features.png)
+![功能一览：对话 / 550C 终端 / 服务端监控 / 插件与云端 API](images/feature-overview.png)
 
 <details>
 <summary>550C 终端控制台（点开）</summary>

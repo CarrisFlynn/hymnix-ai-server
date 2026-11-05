@@ -20,7 +20,7 @@ Hymnix turns a local [Ollama](https://ollama.com) model into an OpenAI-compatibl
 
 ![Hymnix AI Server 1.1.0](docs/images/preview.png)
 
-![Feature overview: chat, 550C terminal, server monitor, plugins and cloud API](docs/images/features.png)
+![Feature overview: chat, 550C terminal, server monitor, plugins and cloud API](docs/images/feature-overview.png)
 
 <p align="center"><i>The 550C terminal console - status chips, live log, telemetry and 19 commands, all inside its own tab.</i></p>
 
