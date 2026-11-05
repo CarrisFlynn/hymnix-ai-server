@@ -5215,39 +5215,6 @@ class HuimengAIClient:
             lambda: _wb.open(self.AFDIAN_URL),
         )
 
-        qr_box = tk.Frame(cards, bg="#FFFFFF", highlightbackground="#D8E0EA", highlightthickness=1)
-        qr_box.pack(side="left", padx=(0, 18), ipadx=20, ipady=16)
-        tk.Label(qr_box, text=T("微信 / 支付宝", "WeChat / Alipay"), bg="#FFFFFF",
-                 fg="#1C2430", font=(UI_FONT, 13, "bold")).pack(anchor="w")
-        qr_path = ""
-        try:
-            base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
-            cands = []
-            for name in ("wechat.png", "sponsor_wechat.png", "qr.png"):
-                cands.append(os.path.join(base, "assets", name))
-                try:
-                    cands.append(os.path.join(BASE_DIR, name))
-                except Exception:
-                    pass
-            for cand in cands:
-                if os.path.exists(cand):
-                    qr_path = cand
-                    break
-        except Exception:
-            pass
-        if qr_path:
-            try:
-                self._qr_image = tk.PhotoImage(file=qr_path)
-                tk.Label(qr_box, image=self._qr_image, bg="#FFFFFF").pack(pady=(8, 4))
-            except Exception:
-                tk.Label(qr_box, text=T("收款码加载失败", "Failed to load QR code"),
-                         bg="#FFFFFF", fg="#C0392B").pack(pady=(8, 4))
-        else:
-            tk.Label(qr_box, text=T("把微信收款码保存为 assets/wechat.png，这里会自动显示",
-                                    "Save your WeChat QR code as assets/wechat.png to show it here"),
-                     bg="#FFFFFF", fg="#8A97A8", font=(UI_FONT, 9),
-                     justify="left", wraplength=300).pack(anchor="w", pady=(8, 4))
-
         ttk.Label(outer, text=T("赞助名单：感谢每一位支持者，名字会列在这里。",
                                 "Supporters: thank you. Names will be listed here."),
                   style="BgMuted.TLabel").pack(anchor="w", pady=(22, 0))
