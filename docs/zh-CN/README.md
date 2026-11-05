@@ -10,6 +10,19 @@
 - 🤖 **配套客户端**：给被邀请的人用的桌面客户端
 - 🔌 **AI 接口**：客户端可以指向本服务器，也可以填任何 OpenAI 兼容服务
 
+## 界面截图
+
+![Hymnix 1.1.0](images/preview.png)
+
+![功能一览：对话 / 550C 终端 / 服务端监控 / 插件与云端 API](images/features.png)
+
+<details>
+<summary>550C 终端控制台（点开）</summary>
+
+![550C 终端](images/terminal.png)
+
+</details>
+
 ## 快速开始（约 5 分钟）
 
 ### 1. 安装 Ollama 并拉模型
