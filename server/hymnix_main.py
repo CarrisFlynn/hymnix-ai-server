@@ -3730,7 +3730,7 @@ class HuimengAIClient:
         self.message_queue.put(("trace", "%s  REQ   model=%s  msgs=%d  ctx≤%d  temp=%.2f  max_tok=%d  tools=%s" % (
             self._now_ts(), self.current_model, len(msgs), num_ctx, temp, num_predict,
             ("%d 个" % len(tools)) if tools else "关闭")))
-        self.message_queue.put(("trace", "%s  PATH  本机输入 → gateway:11435 → ollama:11434 → %s 推理" % (
+        self.message_queue.put(("trace", T("%s  PATH  本机输入 → gateway:11435 → ollama:11434 → %s 推理", "%s  PATH  local input -> gateway:11435 -> ollama:11434 -> %s inference") % (
             self._now_ts(), "GPU" if device != "cpu" else "CPU")))
         t0 = time.time()
         final_answer = ""
@@ -3775,7 +3775,7 @@ class HuimengAIClient:
                         if piece:
                             if first_at is None:
                                 first_at = time.time()
-                                self.message_queue.put(("trace", "%s  ◀     首字 %.0f ms" % (
+                                self.message_queue.put(("trace", T("%s  ◀     首字 %.0f ms", "%s  ◀     first token %.0f ms") % (
                                     self._now_ts(), (first_at - t0) * 1000)))
                             collected.append(piece)
                             self.message_queue.put(("chunk", piece))
@@ -3800,7 +3800,7 @@ class HuimengAIClient:
                 ptok = final.get("prompt_eval_count") or 0
                 etok = final.get("eval_count") or len(text)
                 tps = (etok / eval_dur) if eval_dur else 0
-                self.message_queue.put(("trace", "%s  ✓     完成 %.2fs · 输出 %d tok · %.1f tok/s · 输入 %d tok" % (
+                self.message_queue.put(("trace", T("%s  ✓     完成 %.2fs · 输出 %d tok · %.1f tok/s · 输入 %d tok", "%s  ✓     done %.2fs · output %d tok · %.1f tok/s · input %d tok") % (
                     self._now_ts(), total, etok, tps, ptok)))
                 if text:
                     self.conversation_history.append({"role": "assistant", "content": text})
@@ -3948,7 +3948,7 @@ class HuimengAIClient:
         timeout = int(self.config.get("api_timeout", 300) or 300)
         self.message_queue.put(("trace", "%s  REQ   model=%s  msgs=%d  ctx≤%d  temp=%.2f  max_tok=%d" % (
             self._now_ts(), self.current_model, len(self.conversation_history), num_ctx, temp, num_predict)))
-        self.message_queue.put(("trace", "%s  PATH  本机输入 → gateway:11435 → ollama:11434 → %s 推理" % (
+        self.message_queue.put(("trace", T("%s  PATH  本机输入 → gateway:11435 → ollama:11434 → %s 推理", "%s  PATH  local input -> gateway:11435 -> ollama:11434 -> %s inference") % (
             self._now_ts(), "GPU" if device != "cpu" else "CPU")))
         collected = []
         final = {}
@@ -3984,7 +3984,7 @@ class HuimengAIClient:
                     if piece:
                         if first_at is None:
                             first_at = time.time()
-                            self.message_queue.put(("trace", "%s  ◀     首字 %.0f ms" % (
+                            self.message_queue.put(("trace", T("%s  ◀     首字 %.0f ms", "%s  ◀     first token %.0f ms") % (
                                 self._now_ts(), (first_at - t0) * 1000)))
                         collected.append(piece)
                         self.message_queue.put(("chunk", piece))
@@ -3999,7 +3999,7 @@ class HuimengAIClient:
             ptok = final.get("prompt_eval_count") or 0
             etok = final.get("eval_count") or len(answer)
             tps = (etok / eval_dur) if eval_dur else 0
-            self.message_queue.put(("trace", "%s  ✓     完成 %.2fs · 输出 %d tok · %.1f tok/s · 输入 %d tok · 上下文 %d" % (
+            self.message_queue.put(("trace", T("%s  ✓     完成 %.2fs · 输出 %d tok · %.1f tok/s · 输入 %d tok · 上下文 %d", "%s  ✓     done %.2fs · output %d tok · %.1f tok/s · input %d tok · context %d") % (
                 self._now_ts(), total, etok, tps, ptok,
                 (final.get("prompt_eval_count") or 0) + (final.get("eval_count") or 0))))
         except requests.exceptions.Timeout:
@@ -5185,7 +5185,7 @@ class HuimengAIClient:
         tk.Frame(outer, bg=self.C_LINE, height=1).pack(fill="x")
 
         # ---- 状态栏：链路 / 隧道 / 进程 ----
-        self.trace_tunnel_status = tk.StringVar(value="未启动")
+        self.trace_tunnel_status = tk.StringVar(value=T("未启动", "not started"))
         self.trace_tunnel_url = tk.StringVar(value="未分配")
         self.trace_tunnel_pid = tk.StringVar(value="PID -")
         stat = tk.Frame(outer, bg=self.C_PANEL)
@@ -5309,7 +5309,7 @@ class HuimengAIClient:
         tk.Label(foot, textvariable=self.trace_hint, bg=self.C_BG, fg=self.C_ACC,
                  font=("Consolas", 9), anchor="w").pack(fill="x")
         self.trace_hint.set(
-            "命令: help · status · models · model <名称> · tunnel on|off · quota <n> · service · export · ps")
+            T("命令: help · status · models · model <名称> · tunnel on|off · quota <n> · service · export · ps", "commands: help · status · models · model <name> · tunnel on|off · quota <n> · service · export · ps"))
 
         self._reset_trace_model_values()
         self._sync_trace_model_label()
@@ -5373,7 +5373,9 @@ class HuimengAIClient:
     def _refresh_trace_tunnel(self):
         try:
             state = HOST.get("tunnel_state") or ("online" if HOST.get("url") else "未启动")
-            self.trace_tunnel_status.set({"up":"在线", "starting":"连接中", "off":"未启动"}.get(state, state))
+            _raw = {"在线": "up", "未启动": "off", "连接中": "starting"}.get(state, state)
+            _map = {"up": T("在线", "online"), "starting": T("连接中", "connecting"), "off": T("未启动", "not started")}
+            self.trace_tunnel_status.set(_map.get(_raw, T(state, state)))
             self.trace_tunnel_url.set(HOST.get("url") or "未分配")
             proc=getattr(self, "_host_tun", None)
             self.trace_tunnel_pid.set("PID %s" % (getattr(proc, "pid", "-") if proc else "-"))
