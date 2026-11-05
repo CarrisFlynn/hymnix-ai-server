@@ -2149,7 +2149,7 @@ class HuimengAIClient:
         except Exception:
             pass
         self.root.title("Hymnix 1.1.0")
-        self.root.geometry(self._geo(1200, 870))
+        self.root.geometry(self._geo(1200, 800))
         Theme.apply(root)
         self.setup_icon()
         self.config = self.load_config()
@@ -2376,7 +2376,7 @@ class HuimengAIClient:
         return "%dx%d" % (pw, ph)
 
     def setup_ui(self):
-        self.root.geometry(self._geo(1200, 870))
+        self.root.geometry(self._geo(1200, 800))
         self.root.minsize(int(900 * _DPI_SCALE), int(700 * _DPI_SCALE))
 
         self.root.columnconfigure(0, weight=1)
@@ -4483,7 +4483,7 @@ class HuimengAIClient:
 
     def reset_window(self):
         if messagebox.askyesno("重置窗口", "确定要重置窗口位置和大小吗？", parent=self.root):
-            self.root.geometry(self._geo(1200, 870))
+            self.root.geometry(self._geo(1200, 800))
             self.queue_message("system", "🔄 窗口已重置")
 
     def show_changelog(self):
