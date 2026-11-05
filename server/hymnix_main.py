@@ -324,6 +324,16 @@ def T(zh, en=None):
     return en if lang.startswith("en") else en if lang not in ("zh",) else zh
 
 
+def AI_NAME(cfg):
+    """Display name for the assistant; the built-in default follows the UI language."""
+    value = str((cfg or {}).get("ai_name") or "").strip()
+    if not value:
+        value = "AI助手"
+    if LANG.get("cur") == "en" and value == "AI助手":
+        return "AI assistant"
+    return value
+
+
 ZH2EN.update({
     "使用帮助": "Help",
     "更新日志": "Changelog",
@@ -425,6 +435,52 @@ TERMS = {
     "未连接": "Disconnected", "可用": "Available", "不可用": "Unavailable",
     "选择": "Select", "浏览": "Browse", "编辑": "Edit", "添加": "Add",
 }
+
+ZH2EN.update({
+    "AI助手": "AI assistant",
+    "您": "You",
+    "对话来源": "Chat source",
+    "本地模型": "Local model",
+    "云端 API": "Cloud API",
+    "配置云端 API": "Configure cloud API",
+    "云端 · OpenAI": "Cloud - OpenAI",
+    "正在初始化...": "Initializing...",
+    "正在初始化…": "Initializing…",
+    "检测 CPU / GPU ...": "Detecting CPU / GPU ...",
+    "检测 CPU / GPU …": "Detecting CPU / GPU …",
+    "系统": "System",
+    "在线客户端": "Clients online",
+    "本地": "Local",
+    "云端": "Cloud",
+    "分享给朋友的模型": "Model shared with friends",
+    "保存限额": "Save limit",
+    "计费": "Billing",
+    "每日限额(tokens, 0=不限)": "Daily limit (tokens, 0 = unlimited)",
+    "🟡 正在初始化...": "Initializing...",
+    "🟡 正在初始化…": "Initializing…",
+    "🟢 模型已就绪": "Model ready",
+    "正在检测 CPU / 显卡 ...": "Detecting CPU / GPU ...",
+    "正在检测 CPU / 显卡 …": "Detecting CPU / GPU …",
+    "公共隧道未分配（需要时点上方「启动隧道」按钮，避免频繁申请被限流）":
+        "Public tunnel not allocated - use Start tunnel when needed to avoid rate limits",
+})
+
+TERMS.update({
+    "AI助手": "AI assistant",
+    "正在初始化": "Initializing",
+    "检测 CPU / 显卡": "Detecting CPU / GPU",
+    "检测 CPU / GPU": "Detecting CPU / GPU",
+    "系统": "System",
+    "本地": "Local",
+    "云端": "Cloud",
+    "在线客户端": "Clients online",
+})
+
+_MON_KEY_BACK = {"All": "全部", "Today": "今天", "Last hour": "最近1小时", "All IPs": "全部IP"}
+
+
+def _mon_key(value):
+    return _MON_KEY_BACK.get(str(value).strip(), value)
 
 def _en_text(value):
     if not isinstance(value, str) or not value.strip():
@@ -1057,18 +1113,18 @@ CHANGELOG = [
         "time": "2026-11-05",
         "title": "终端 HUD · 一键更新 · 扁平化界面 · 启动提速",
         "items": [
-            "[新增] 终端页重做为深色 HUD 控制台：LINK/TUN/PROC 状态芯片、信号波形、遥测条、分级着色实时日志",
-            "[新增] 终端内置 19 条命令：help / status / version / models / model / sharemodel / config / path / tunnel / quota / billing / lang / service / hardware / export / history / logtail / clear / ps",
-            "[新增] 终端支持 ↑↓ 历史、Tab 补全、Ctrl+L 清屏，危险命令二次确认",
-            "[新增] 隧道详情整合进终端页（公网地址、二维码、cloudflared / ngrok 切换、最近日志），首页入口保留",
-            "[新增] 客户端内一键检查更新、下载、sha256 校验、安装重启（GitHub Releases）",
-            "[优化] 全局扁平化：8/12/16px 圆角、1px 描边、无阴影，去掉系统凸起灰边控件",
-            "[优化] 换页动画 280ms 缓出；首次进入插件页 / 赞助页不再错位抖动",
-            "[优化] 小字统一为微软雅黑 / Segoe UI，不再使用仿宋",
-            "[优化] 侧栏深色 H 图标、分组标题字距修正；默认以窗口模式启动",
-            "[优化] 启动去掉端口绑定的反向 DNS 解析，冷启动约 2.0s → 0.7s",
-            "[修复] 终端内容溢出标签页、底部命令行与页脚被裁切",
-            "[修复] 版本号统一为公版 v1.1.0，内部快照号全部移除",
+            "[新增] 终端页新的深色控制台：状态芯片、信号波形、遥测条、分级着色实时日志",
+            "[新增] 终端内置 19 条命令（help 查看全部），支持 ↑↓ 历史、Tab 补全、Ctrl+L 清屏",
+            "[新增] 破坏性操作二次确认",
+            "[新增] 隧道详情整合进终端页：公网地址、二维码、cloudflared / ngrok 切换、最近日志；首页入口保留",
+            "[新增] 一键更新：检查新版本、下载、SHA-256 校验、安装并重启",
+            "[优化] 全局扁平化：统一圆角与 1px 描边，界面更干净",
+            "[优化] 换页动画 280ms 缓出；插件页 / 赞助页首次进入不再错位",
+            "[优化] 小字统一为微软雅黑 / Segoe UI，显示更清晰",
+            "[优化] 侧栏图标与分组标题调整，默认以窗口模式启动",
+            "[优化] 冷启动更快（约 2.0s → 0.7s）",
+            "[修复] 终端内容限制在标签页内，底部命令行与页脚不再被裁切",
+            "[修复] 窗口按屏幕 DPI 与可用区域自适应，高缩放下不超出屏幕",
         ],
     },
     {
@@ -1082,7 +1138,7 @@ CHANGELOG = [
             "[新增] 界面语言扩到五种：中文 / English / Français / Русский / Español",
             "[新增] 云端 API 页可用：保存配置、测试连接、拉取模型列表、费用估算",
             "[新增] 用量统计：请求数、prompt/reply tokens、费用，按今日/累计汇总",
-            "[新增] 首次启动欢迎页：选择界面语言，本地模式直接使用（GitHub 登录预留）",
+            "[新增] 首次启动欢迎页：选择界面语言，本地模式直接使用",
             "[优化] 按钮去掉前置图标，对齐统一；移除冗余面板",
             "[优化] 状态栏、弹窗、菜单接入新的翻译体系",
             "[修复] 长对话裁剪保留全部 system 提示；同源请求串行处理",
@@ -2157,7 +2213,7 @@ class HuimengAIClient:
             import i18n as _i18n
             if not self.config.get("language"):
                 self.config["language"] = detect_language(self.config)
-            LANG["cur"] = self.config.get("language") or "zh"
+            LANG["cur"] = os.environ.get("HYMNIX_LANG") or self.config.get("language") or "zh"
             _i18n.init(LANG["cur"])
         except Exception:
             pass
@@ -2186,7 +2242,7 @@ class HuimengAIClient:
         try:
             if not self.config.get("language"):
                 self.config["language"] = detect_language(self.config)
-            self._lang = detect_language(self.config)
+            self._lang = os.environ.get("HYMNIX_LANG") or detect_language(self.config)
             LANG["cur"] = self._lang
             if self._lang == "en":
                 apply_zh2en(self.root, self._lang_memo)
@@ -2659,7 +2715,7 @@ class HuimengAIClient:
         if snap.get("ai_cpu") is not None:
             cores = snap.get("ai_cores") or 0.0
             if cores >= 0.05:
-                bits.append("AI %.0f%%（%.1f 核）" % (snap["ai_cpu"], cores))
+                bits.append(T("AI %.0f%%（%.1f 核）", "AI %.0f%% (%.1f cores)") % (snap["ai_cpu"], cores))
             else:
                 bits.append("AI %.0f%%" % snap["ai_cpu"])
         if snap.get("sys_cpu") is not None:
@@ -3784,9 +3840,9 @@ class HuimengAIClient:
             return
         self.chat_text.config(state=tk.NORMAL)
         if not getattr(self, "_stream_open", False):
-            ai_name = self.config.get("ai_name", "AI助手")
+            ai_name = AI_NAME(self.config)
             self._stream_start = self.chat_text.index("end-1c")
-            self.chat_text.insert(tk.END, "%s\n" % (self.config.get("ai_name") or "Hymnix"), "assistant")
+            self.chat_text.insert(tk.END, "%s\n" % (AI_NAME(self.config)), "assistant")
             self._stream_open = True
         self._stream_chars = int(getattr(self, "_stream_chars", 0)) + len(text)
         if getattr(self, "_t_first", None) is None:
@@ -3833,7 +3889,7 @@ class HuimengAIClient:
             uname = self.config.get("user_name") or "你"
             self._term("%s\n%s\n\n" % (uname, content), "user")
         elif role == "assistant":
-            aname = self.config.get("ai_name") or "Hymnix"
+            aname = AI_NAME(self.config)
             self._term("%s\n%s\n\n" % (aname, content), "assistant")
         else:
             bad = any(k in str(content) for k in ("❌", "失败", "错误", "异常", "超时", "未响应", "无效"))
@@ -3845,7 +3901,7 @@ class HuimengAIClient:
         try:
             self.chat_text.config(state=tk.NORMAL)
             if not getattr(self, "_stream_open", False):
-                self.chat_text.insert(tk.END, "%s\n" % (self.config.get("ai_name") or "Hymnix"), "assistant")
+                self.chat_text.insert(tk.END, "%s\n" % (AI_NAME(self.config)), "assistant")
                 self._stream_open = True
                 self._stream_chars = 0
             self._stream_chars = int(getattr(self, "_stream_chars", 0)) + len(text)
@@ -4070,7 +4126,7 @@ class HuimengAIClient:
                 self.chat_text.config(state=tk.DISABLED)
                 self.conversation_history = data.get("history", [])
                 user_name = self.config.get("user_name", "您")
-                ai_name = self.config.get("ai_name", "AI助手")
+                ai_name = AI_NAME(self.config)
                 for msg in self.conversation_history:
                     role = msg.get("role", "")
                     content = msg.get("content", "")
@@ -4159,7 +4215,7 @@ class HuimengAIClient:
             return
         try:
             user_name = self.config.get("user_name", "您")
-            ai_name = self.config.get("ai_name", "AI助手")
+            ai_name = AI_NAME(self.config)
             if fmt == "txt":
                 with open(filename, 'w', encoding='utf-8') as f:
                     f.write(f"对话记录 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
@@ -5664,26 +5720,26 @@ class HuimengAIClient:
 
         top = ttk.Frame(outer, style="Bg.TFrame")
         top.pack(fill="x")
-        self.mon_status_var = tk.StringVar(value="正在读取服务器状态…")
+        self.mon_status_var = tk.StringVar(value=T("正在读取服务器状态…", "Reading server status..."))
         ttk.Label(top, textvariable=self.mon_status_var, style="Status.TLabel").pack(side="left")
         self.mon_url_var = tk.StringVar(value="")
         ttk.Label(top, textvariable=self.mon_url_var, foreground="#71757C").pack(side="right")
 
         bar2 = ttk.Frame(outer, style="Bg.TFrame")
         bar2.pack(fill="x", pady=(6, 0))
-        self.mon_time_var = tk.StringVar(value="全部")
-        ttk.Combobox(bar2, textvariable=self.mon_time_var, values=["全部", "今天", "最近1小时"],
+        self.mon_time_var = tk.StringVar(value=T("全部", "All"))
+        ttk.Combobox(bar2, textvariable=self.mon_time_var, values=[T("全部", "All"), T("今天", "Today"), T("最近1小时", "Last hour")],
                      state="readonly", width=10).pack(side="left")
-        self.mon_ip_var = tk.StringVar(value="全部IP")
-        self.mon_ip_box = ttk.Combobox(bar2, textvariable=self.mon_ip_var, values=["全部IP"],
+        self.mon_ip_var = tk.StringVar(value=T("全部IP", "All IPs"))
+        self.mon_ip_box = ttk.Combobox(bar2, textvariable=self.mon_ip_var, values=[T("全部IP", "All IPs")],
                                        state="readonly", width=18)
         self.mon_ip_box.pack(side="left", padx=(8, 0))
-        ttk.Label(bar2, text="关键词", style="BgMuted.TLabel").pack(side="left", padx=(10, 4))
+        ttk.Label(bar2, text=T("关键词", "Keyword"), style="BgMuted.TLabel").pack(side="left", padx=(10, 4))
         self.mon_kw_var = tk.StringVar(value="")
         ttk.Entry(bar2, textvariable=self.mon_kw_var, width=18).pack(side="left")
-        ttk.Button(bar2, text="清理历史…", style="Ghost.TButton",
+        ttk.Button(bar2, text=T("清理历史…", "Clean history..."), style="Ghost.TButton",
                    command=self.open_cleanup_dialog).pack(side="right")
-        send_btn = ttk.Button(bar2, text="给客户端发消息（暂停）", style="Ghost.TButton")
+        send_btn = ttk.Button(bar2, text=T("给客户端发消息（暂停）", "Message a client (paused)"), style="Ghost.TButton")
         send_btn.state(["disabled"])
         send_btn.pack(side="right", padx=(0, 8))
 
@@ -5693,7 +5749,7 @@ class HuimengAIClient:
         left = ttk.Frame(body, style="Bg.TFrame", width=270)
         left.pack(side="left", fill="y")
         left.pack_propagate(False)
-        ttk.Label(left, text="客户端连接", style="SideCaption.TLabel").pack(anchor="w", pady=(0, 4))
+        ttk.Label(left, text=T("客户端连接", "Clients"), style="SideCaption.TLabel").pack(anchor="w", pady=(0, 4))
         self.mon_clients = tk.Text(left, width=30, height=12, wrap="word", relief="flat",
                                    bg=THEME["card"], fg=THEME["text"], font=(UI_FONT, 9),
                                    padx=8, pady=6, state="disabled")
@@ -5701,9 +5757,9 @@ class HuimengAIClient:
 
         right = ttk.Frame(body, style="Bg.TFrame")
         right.pack(side="left", fill="both", expand=True, padx=(12, 0))
-        ttk.Label(right, text="对话记录（点一条看完整内容）", style="SideCaption.TLabel").pack(anchor="w", pady=(0, 4))
+        ttk.Label(right, text=T("对话记录（点一条看完整内容）", "Conversations (click a row for details)"), style="SideCaption.TLabel").pack(anchor="w", pady=(0, 4))
         cols = ("time", "ip", "model", "ms", "q")
-        heads = ("时间", "来源", "模型", "耗时", "用户说了什么")
+        heads = (T("时间", "Time"), T("来源", "Source"), T("模型", "Model"), T("耗时", "Latency"), T("用户说了什么", "User said"))
         widths = (70, 140, 100, 70, 420)
         self.mon_tree = ttk.Treeview(right, columns=cols, show="headings", height=11)
         for c, h, w in zip(cols, heads, widths):
@@ -5716,7 +5772,7 @@ class HuimengAIClient:
                                                     bg=THEME["input_bg"], fg=THEME["text"],
                                                     font=(UI_FONT, 9), relief="flat", padx=8, pady=6)
         self.mon_detail.pack(fill="both", expand=False, pady=(6, 0))
-        self.mon_detail.insert("1.0", "选中上面一条记录，这里显示完整输入（含系统提示词）和回复。")
+        self.mon_detail.insert("1.0", T("选中上面一条记录，这里显示完整输入（含系统提示词）和回复。", "Select a row above to see the full input (with system prompt) and the reply."))
         self.mon_detail.config(state="disabled")
         self._mon_records = []
         self.root.after(2200, self.refresh_monitor)
@@ -5814,14 +5870,14 @@ class HuimengAIClient:
                     txt.append("   “%s”" % c["last_prompt"][:40])
                 txt.append("────────────────")
             if not txt:
-                txt = ["还没有客户端连接。", "", "把公网地址和密钥发给朋友，", "他连上来之后这里会出现。"]
+                txt = [T("还没有客户端连接。", "No clients connected yet."), "", T("把公网地址和密钥发给朋友，", "Send the public address and key to a friend;"), T("他连上来之后这里会出现。", "their connection will show up here.")]
             self.mon_clients.config(state="normal")
             self.mon_clients.delete("1.0", "end")
             self.mon_clients.insert("1.0", chr(10).join(txt))
             self.mon_clients.config(state="disabled")
 
             recs_all = data.get("recent") or []
-            ips = ["全部IP"] + sorted(set(str(r.get("ip", "")) for r in recs_all if r.get("ip")))
+            ips = [T("全部IP", "All IPs")] + sorted(set(str(r.get("ip", "")) for r in recs_all if r.get("ip")))
             try:
                 self.mon_ip_box.configure(values=ips)
             except Exception:
@@ -6262,6 +6318,12 @@ class HuimengAIClient:
                                   font=(SIDEBAR_FONT, NAV_FONT_PT, "bold") if active else (SIDEBAR_FONT, NAV_FONT_PT))
                     bar.configure(bg="#2563EB" if active else bg)
             self._ui_click("tab")
+            try:
+                if LANG.get("cur") == "en":
+                    page = self.notebook.nametowidget(self.notebook.select())
+                    apply_zh2en(page, {})
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -6398,7 +6460,7 @@ class HuimengAIClient:
     # ==================== 监控筛选 / 历史清理 ====================
     def _mon_match(self, rec):
         try:
-            scope = self.mon_time_var.get()
+            scope = _mon_key(self.mon_time_var.get())
             if scope == "今天":
                 if not str(rec.get("t", "")).startswith(datetime.now().strftime("%Y-%m-%d")):
                     return False
@@ -6408,7 +6470,7 @@ class HuimengAIClient:
                         return False
                 except Exception:
                     return False
-            ip = self.mon_ip_var.get()
+            ip = _mon_key(self.mon_ip_var.get())
             if ip and ip != "全部IP" and str(rec.get("ip", "")) != ip:
                 return False
             kw = self.mon_kw_var.get().strip().lower()

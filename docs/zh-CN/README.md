@@ -12,14 +12,14 @@
 
 ## 界面截图
 
-![Hymnix 1.1.0](images/preview.png)
+![Hymnix 1.1.0](images/zh/preview.png)
 
-![功能一览：对话 / 终端控制台 / 服务端监控 / 插件与云端 API](images/feature-overview.png)
+![功能一览：对话 / 终端控制台 / 服务端监控 / 插件与云端 API](images/zh/feature-overview.png)
 
 <details>
 <summary>终端控制台（点开）</summary>
 
-![终端控制台](images/terminal-console.png)
+![终端控制台](images/zh/terminal-console.png)
 
 </details>
 
