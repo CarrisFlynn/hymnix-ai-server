@@ -14,6 +14,15 @@
 
 ![Hymnix 1.1.0](images/preview.png)
 
+![功能一览：对话 / 终端控制台 / 服务端监控 / 插件与云端 API](images/feature-overview.png)
+
+<details>
+<summary>终端控制台（点开）</summary>
+
+![终端控制台](images/terminal-console.png)
+
+</details>
+
 ## 快速开始（约 5 分钟）
 
 ### 1. 安装 Ollama 并拉模型
