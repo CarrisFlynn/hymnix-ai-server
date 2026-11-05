@@ -334,6 +334,16 @@ def AI_NAME(cfg):
     return value
 
 
+def USER_NAME(cfg):
+    """Display name for the local user; the built-in default follows the UI language."""
+    value = str((cfg or {}).get("user_name") or "").strip()
+    if not value:
+        value = "您"
+    if LANG.get("cur") == "en" and value == "您":
+        return "You"
+    return value
+
+
 ZH2EN.update({
     "使用帮助": "Help",
     "更新日志": "Changelog",
@@ -2507,7 +2517,7 @@ class HuimengAIClient:
         self.tunnel_btn = ttk.Button(sbar, text="启动隧道", style="Accent.TButton",
                                      command=self.toggle_host_tunnel)
         self.tunnel_btn.pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Button(sbar, text=T("复制连接信息", "Copy connection info"), style="Ghost.TButton",
+        ttk.Button(sbar, text=T("复制信息", "Copy info"), style="Ghost.TButton",
                    command=self.copy_host_url).pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(sbar, text="看监控", style="Ghost.TButton",
                    command=self.show_monitor_tab).pack(side=tk.LEFT, padx=(6, 0))
@@ -2792,12 +2802,14 @@ class HuimengAIClient:
                 break
         self.device_var.set(shown)
         if gpus:
-            gpu_txt = "、".join("%s %.1fG" % (g["name"], g["vram_gb"]) for g in gpus)
+            gpu_txt = T("、", ", ").join("%s %.1fG" % (g["name"], g["vram_gb"]) for g in gpus)
         else:
-            gpu_txt = "未检测到独立显卡，只能用 CPU"
-        self.hw_summary_var.set("CPU: %s（%d 核 / %d 线程 @ %d MHz）   |   显卡 %d 张：%s   |   内存 %.1f GB" % (
-            cpu.get("name", "未知"), cpu.get("cores", 0), cpu.get("threads", 0), cpu.get("mhz", 0),
-            len(gpus), gpu_txt, data.get("ram_gb", 0)))
+            gpu_txt = T("未检测到独立显卡，只能用 CPU", "no discrete GPU detected, CPU only")
+        self.hw_summary_var.set(
+            T("CPU: %s（%d 核 / %d 线程 @ %d MHz）   |   显卡 %d 张：%s   |   内存 %.1f GB",
+              "CPU: %s  (%d cores / %d threads @ %d MHz)   |   GPUs: %d - %s   |   RAM %.1f GB") % (
+                cpu.get("name", "未知"), cpu.get("cores", 0), cpu.get("threads", 0), cpu.get("mhz", 0),
+                len(gpus), gpu_txt, data.get("ram_gb", 0)))
         self.queue_message("system", T("🖥️ 硬件: %s，检测到 %d 张显卡" % (cpu.get("name", "未知"), len(gpus)),
                 "🖥️ Hardware: %s, %d GPU(s) detected" % (cpu.get("name", "Unknown"), len(gpus))))
         if current.startswith("gpu:"):
@@ -2894,12 +2906,15 @@ class HuimengAIClient:
                     if size <= 0:
                         return
                     if vram >= size * 0.9:
-                        txt = "🟢 本次实际: GPU 推理（显存 %.2f GB / 模型 %.2f GB）" % (vram / (1024.0 ** 3), size / (1024.0 ** 3))
+                        txt = T("🟢 本次实际: GPU 推理（显存 %.2f GB / 模型 %.2f GB）",
+                                "🟢 This run: GPU inference (VRAM %.2f GB / model %.2f GB)") % (vram / (1024.0 ** 3), size / (1024.0 ** 3))
                     elif vram > 0:
-                        txt = "🟡 本次实际: GPU+CPU 混合（显存 %.2f GB，内存 %.2f GB）" % (
+                        txt = T("🟡 本次实际: GPU+CPU 混合（显存 %.2f GB，内存 %.2f GB）",
+                                "🟡 This run: GPU+CPU split (VRAM %.2f GB, RAM %.2f GB)") % (
                             vram / (1024.0 ** 3), (size - vram) / (1024.0 ** 3))
                     else:
-                        txt = "🔵 本次实际: CPU 推理（模型 %.2f GB 全在内存）" % (size / (1024.0 ** 3))
+                        txt = T("🔵 本次实际: CPU 推理（模型 %.2f GB 全在内存）",
+                                "🔵 This run: CPU inference (model %.2f GB in RAM)") % (size / (1024.0 ** 3))
                     self.root.after(0, lambda t=txt: self.update_device_hint(t))
                     return
             except Exception:
@@ -3303,8 +3318,8 @@ class HuimengAIClient:
             self.model_var.set("无可用模型")
             self.model_info_var.set("请下载模型")
 
-    TAG_NAMES = {"cn": "中文", "tools": "工具", "vision": "看图", "think": "思考",
-                 "code": "代码", "embed": "向量"}
+    TAG_NAMES = {"cn": T("中文", "Chinese"), "tools": T("工具", "tools"), "vision": T("看图", "vision"),
+                 "think": T("思考", "thinking"), "code": T("代码", "code"), "embed": T("向量", "embeddings")}
 
     def update_model_info(self):
         current = self.model_var.get()
@@ -3345,9 +3360,9 @@ class HuimengAIClient:
         self.model_caps = caps
         marks = []
         if "vision" in caps:
-            marks.append("👁 能看图")
+            marks.append(T("👁 能看图", "👁 vision"))
         if "tools" in caps:
-            marks.append("🛠 能调工具")
+            marks.append(T("🛠 能调工具", "🛠 tool calls"))
         base = self.model_info_var.get() or model
         if marks:
             self.model_info_var.set(base + "　" + " ".join(marks))
@@ -3428,7 +3443,7 @@ class HuimengAIClient:
         if not use_cloud and self.current_model in ["无可用模型", "请先启动Ollama服务"]:
             self.queue_message("system", "⚠️ 请选择有效模型")
             return
-        user_name = self.config.get("user_name", "您")
+        user_name = USER_NAME(self.config)
         msg = {"role": "user", "content": self._compose_user_content(user_input)}
         images = [a["b64"] for a in self.attachments if a.get("kind") == "image"]
         if images:
@@ -4125,7 +4140,7 @@ class HuimengAIClient:
                 self.chat_text.delete(1.0, tk.END)
                 self.chat_text.config(state=tk.DISABLED)
                 self.conversation_history = data.get("history", [])
-                user_name = self.config.get("user_name", "您")
+                user_name = USER_NAME(self.config)
                 ai_name = AI_NAME(self.config)
                 for msg in self.conversation_history:
                     role = msg.get("role", "")
@@ -4214,7 +4229,7 @@ class HuimengAIClient:
         if not filename:
             return
         try:
-            user_name = self.config.get("user_name", "您")
+            user_name = USER_NAME(self.config)
             ai_name = AI_NAME(self.config)
             if fmt == "txt":
                 with open(filename, 'w', encoding='utf-8') as f:
@@ -4490,7 +4505,7 @@ class HuimengAIClient:
         settings_frame = ttk.Frame(dialog)
         settings_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
         ttk.Label(settings_frame, text="用户名称:").grid(row=0, column=0, sticky=tk.W, pady=5)
-        user_name_var = tk.StringVar(value=self.config.get("user_name", "您"))
+        user_name_var = tk.StringVar(value=USER_NAME(self.config))
         ttk.Entry(settings_frame, textvariable=user_name_var, width=15).grid(row=0, column=1, sticky=tk.W, pady=5)
         ttk.Label(settings_frame, text="AI助手名称:").grid(row=1, column=0, sticky=tk.W, pady=5)
         ai_name_var = tk.StringVar(value=self.config.get("ai_name", "AI助手"))
@@ -4955,7 +4970,7 @@ class HuimengAIClient:
         btns.grid(row=0, column=1, rowspan=3, sticky="e", padx=16)
         ttk.Button(btns, text=T("启动隧道", "Start tunnel"), style="Accent.TButton",
                    command=self.toggle_host_tunnel).pack(side="left")
-        ttk.Button(btns, text=T("复制连接信息", "Copy connection info"), style="Ghost.TButton",
+        ttk.Button(btns, text=T("复制信息", "Copy info"), style="Ghost.TButton",
                    command=self.copy_host_url).pack(side="left", padx=8)
         ttk.Button(btns, text=T("打开监控", "Open monitor"), style="Ghost.TButton",
                    command=self.show_monitor_tab).pack(side="left")
