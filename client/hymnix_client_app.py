@@ -2369,7 +2369,7 @@ class ClientApp(tk.Tk):
             match = re.search(r"https?://[^\s'\"<>]+", text or "")
             if match:
                 url_var.set(match.group(0).rstrip("/"))
-            key_match = re.search(r"(Hymnix[0-9A-Za-z\-]+)", text or "")
+            key_match = re.search(r"(Hymnix[0-9A-Za-z_\-]+)", text or "")
             if key_match:
                 key_var.set(key_match.group(1))
             if match or key_match:

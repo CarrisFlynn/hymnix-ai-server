@@ -228,7 +228,7 @@ ZH2EN = {
     "模型": "Model",
     "公网地址": "Public address",
     "在线客户端": "Clients online",
-    "复制地址": "Copy address",
+    "复制地址": "Copy connection info",
     "看监控": "Open monitor",
     "启动隧道": "Start tunnel",
     "停止隧道": "Stop tunnel",
@@ -2507,7 +2507,7 @@ class HuimengAIClient:
         self.tunnel_btn = ttk.Button(sbar, text="启动隧道", style="Accent.TButton",
                                      command=self.toggle_host_tunnel)
         self.tunnel_btn.pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Button(sbar, text="复制地址", style="Ghost.TButton",
+        ttk.Button(sbar, text=T("复制连接信息", "Copy connection info"), style="Ghost.TButton",
                    command=self.copy_host_url).pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(sbar, text="看监控", style="Ghost.TButton",
                    command=self.show_monitor_tab).pack(side=tk.LEFT, padx=(6, 0))
@@ -4955,7 +4955,7 @@ class HuimengAIClient:
         btns.grid(row=0, column=1, rowspan=3, sticky="e", padx=16)
         ttk.Button(btns, text=T("启动隧道", "Start tunnel"), style="Accent.TButton",
                    command=self.toggle_host_tunnel).pack(side="left")
-        ttk.Button(btns, text=T("复制地址", "Copy address"), style="Ghost.TButton",
+        ttk.Button(btns, text=T("复制连接信息", "Copy connection info"), style="Ghost.TButton",
                    command=self.copy_host_url).pack(side="left", padx=8)
         ttk.Button(btns, text=T("打开监控", "Open monitor"), style="Ghost.TButton",
                    command=self.show_monitor_tab).pack(side="left")
@@ -5197,6 +5197,7 @@ class HuimengAIClient:
         self._console_chip(left, "PROC", self.trace_tunnel_pid, self.C_DIM).pack(side="left", padx=(14, 0))
         btns = tk.Frame(stat, bg=self.C_PANEL)
         btns.pack(side="right", padx=(0, 8), pady=6)
+        self._cbtn(btns, "SHARE", self.show_share_dialog).pack(side="left", padx=3)
         self._cbtn(btns, "COPY", self.copy_trace_tunnel_url).pack(side="left", padx=3)
         self._cbtn(btns, "OPEN", self.open_trace_tunnel_url).pack(side="left", padx=3)
         self._cbtn(btns, "LINK", self.toggle_host_tunnel, accent=True).pack(side="left", padx=(3, 0))
@@ -6071,6 +6072,120 @@ class HuimengAIClient:
         HOST["url"] = ""
         self.queue_message("system", "🔄 正在重建公网隧道…")
         self.start_host_tunnel()
+
+    def show_share_dialog(self):
+        """发给朋友的连接信息：公网地址 + 连接密钥，可查看 / 复制 / 自定义 / 重新生成"""
+        try:
+            import secrets as _secrets
+            import gateway_core as _gw
+        except Exception:
+            _gw = None
+            import secrets as _secrets
+
+        win = tk.Toplevel(self.root)
+        win.title(T("发给朋友的连接信息", "Connection info for a friend"))
+        try:
+            win.configure(bg=THEME["bg"])
+        except Exception:
+            pass
+        win.transient(self.root)
+        try:
+            win.geometry("760x400")
+            win.minsize(700, 380)
+        except Exception:
+            pass
+        body = ttk.Frame(win, padding=18)
+        body.pack(fill="both", expand=True)
+
+        ttk.Label(body, wraplength=700, justify="left",
+                  text=T("把下面这段发给朋友，他装 Hymnix Client 后粘贴即可连上。",
+                         "Send the block below to a friend; paste it into Hymnix Client to connect."),
+                  style="BgMuted.TLabel").pack(anchor="w", fill="x")
+
+        url_var = tk.StringVar(value=(HOST.get("url") or T("（隧道未启动，先点「启动隧道」）", "(tunnel not started yet)")))
+        key_var = tk.StringVar(value=(HOST.get("api_key") or self.config.get("api_key") or ""))
+
+        grid = ttk.Frame(body)
+        grid.pack(fill="x", pady=(12, 0))
+        ttk.Label(grid, text=T("服务器地址", "Server address")).grid(row=0, column=0, sticky="w", pady=4)
+        e_url = ttk.Entry(grid, textvariable=url_var, width=58, state="readonly")
+        e_url.grid(row=0, column=1, sticky="we", padx=(10, 0), pady=4)
+        ttk.Label(grid, text=T("连接密钥", "Connection key")).grid(row=1, column=0, sticky="w", pady=4)
+        e_key = ttk.Entry(grid, textvariable=key_var, width=58, show="*")
+        e_key.grid(row=1, column=1, sticky="we", padx=(10, 0), pady=4)
+        show_var = tk.BooleanVar(value=False)
+
+        def _toggle_show():
+            show_var.set(not show_var.get())
+            e_key.configure(show="" if show_var.get() else "*")
+            btn_show.configure(text=T("隐藏", "Hide") if show_var.get() else T("显示", "Show"))
+
+        btn_show = ttk.Button(grid, text=T("显示", "Show"), style="Ghost.TButton", command=_toggle_show)
+        btn_show.grid(row=1, column=2, padx=(8, 0), pady=4)
+        grid.columnconfigure(1, weight=1)
+
+        def _save_key(new_key):
+            new_key = (new_key or "").strip()
+            if not new_key:
+                messagebox.showwarning(T("无效的密钥", "Invalid key"), T("密钥不能为空。", "The key cannot be empty."), parent=win)
+                return
+            try:
+                if _gw is not None:
+                    _gw.CFG["api_key"] = new_key
+                    _gw.API_KEY = new_key
+                    try:
+                        import json as _json
+                        with open(_gw.CONFIG_PATH, "w", encoding="utf-8") as _f:
+                            _json.dump(_gw.CFG, _f, ensure_ascii=False, indent=2)
+                    except Exception:
+                        pass
+                self.config["api_key"] = new_key
+                HOST["api_key"] = new_key
+                try:
+                    self.config["admin_key"] = self.config.get("admin_key") or (HOST.get("admin_key") or "")
+                except Exception:
+                    pass
+                self.save_config()
+            except Exception as _e:
+                messagebox.showerror(T("保存失败", "Save failed"), str(_e), parent=win)
+                return
+            key_var.set(new_key)
+            self._tterm("  KEY    connection key updated (share the new key)\n", "system")
+            self.queue_message("system", T("🔑 连接密钥已更新，记得把新信息重新发给朋友。",
+                                           "🔑 Connection key updated. Send the new info to your friend."))
+
+        def _copy():
+            text = ("Hymnix 服务器连接信息\n" if LANG.get("cur") == "zh" else "Hymnix server connection info\n")
+            text += T("服务器地址：%s\n连接密钥：%s\n", "Server: %s\nKey: %s\n") % (url_var.get(), key_var.get())
+            self.root.clipboard_clear()
+            self.root.clipboard_append(text)
+            self._tterm("  已在剪贴板：地址 + 密钥\n", "system")
+            self.queue_message("system", T("📋 连接信息已复制（地址 + 密钥），直接发给朋友即可",
+                                           "📋 Connection info copied (address + key)"))
+
+        def _regen():
+            if not messagebox.askyesno(T("重新生成密钥", "Regenerate key"),
+                                       T("旧密钥会立刻失效，已经连上的朋友需要换新的。继续？",
+                                         "The old key stops working immediately. Continue?"), parent=win):
+                return
+            _save_key("Hymnix" + _secrets.token_urlsafe(24))
+
+        bar = ttk.Frame(body)
+        bar.pack(fill="x", pady=(16, 0))
+        ttk.Button(bar, text=T("复制连接信息", "Copy connection info"), style="Accent.TButton",
+                   command=_copy).pack(side="left")
+        ttk.Button(bar, text=T("保存这个密钥", "Save this key"), style="Ghost.TButton",
+                   command=lambda: _save_key(key_var.get())).pack(side="left", padx=8)
+        ttk.Button(bar, text=T("重新生成", "Regenerate"), style="Ghost.TButton",
+                   command=_regen).pack(side="left")
+        ttk.Button(bar, text=T("关闭", "Close"), style="Ghost.TButton",
+                   command=win.destroy).pack(side="right")
+
+        ttk.Label(body, wraplength=700, justify="left",
+                  text=T("朋友端：Hymnix Client → 设置 → 粘贴连接信息 → 保存。",
+                         "On the friend's side: Hymnix Client -> Settings -> Paste connection info -> Save."),
+                  style="BgMuted.TLabel").pack(anchor="w", fill="x", pady=(14, 0))
+        win.after(80, lambda: win.lift())
 
     def copy_host_url(self):
         url = HOST.get("url") or ""
