@@ -1,1 +1,1 @@
-# Hymnix AI Server uses the Python standard library only.
+requests>=2.28

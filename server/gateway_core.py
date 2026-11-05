@@ -33,7 +33,7 @@ if not os.path.isdir(BASE_DIR):
     os.makedirs(BASE_DIR, exist_ok=True)
 CONFIG_PATH = os.path.join(BASE_DIR, "gateway_config.json")
 LOG_DIR = os.path.join(BASE_DIR, "logs")
-VERSION = "26W08a Beta"
+VERSION = "1.1.0"
 
 DEFAULT_CONFIG = {
     "listen_host": "0.0.0.0",
@@ -100,9 +100,44 @@ def _tools_to_text(tools):
     return "\n".join(lines)
 
 
+# 运行时设置（由服务端 UI 的「终端」页实时同步）
+RUNTIME = {"share_model": "", "billing_enabled": True, "daily_quota_tokens": 0}
+_IP_USAGE = {}
+
+
+def _today_str():
+    return time.strftime("%Y-%m-%d")
+
+
+def _quota_used(ip):
+    rec = _IP_USAGE.get(ip) or {}
+    if rec.get("day") != _today_str():
+        return 0
+    return int(rec.get("tokens") or 0)
+
+
+def _quota_add(ip, tokens):
+    try:
+        day = _today_str()
+        rec = _IP_USAGE.get(ip)
+        if not rec or rec.get("day") != day:
+            rec = {"day": day, "tokens": 0}
+        rec["tokens"] = int(rec.get("tokens") or 0) + max(0, int(tokens or 0))
+        _IP_USAGE[ip] = rec
+    except Exception:
+        pass
+
+
+def _quota_block(ip):
+    q = int(RUNTIME.get("daily_quota_tokens") or 0)
+    return q > 0 and _quota_used(ip) >= q
+
+
 def _resolve_model(payload):
     """返回 (requested, real_model)。不做任何"强制到某个模型"的行为。"""
     requested = str((payload or {}).get("model") or "").strip()
+    if not requested:
+        requested = str(RUNTIME.get("share_model") or "").strip()
     if not requested:
         requested = str(CFG.get("default_model") or "").strip()
     aliases = CFG.get("model_aliases") or {}
@@ -365,6 +400,23 @@ def _now_iso():
 
 def _today():
     return datetime.now().strftime("%Y%m%d")
+
+
+
+
+# ==================== 用量统计 ====================
+_USAGE_STORE = None
+
+
+def _usage_store():
+    global _USAGE_STORE
+    if _USAGE_STORE is None:
+        try:
+            import usage as _usage_mod
+            _USAGE_STORE = _usage_mod.UsageStore()
+        except Exception:
+            _USAGE_STORE = False
+    return _USAGE_STORE if _USAGE_STORE is not False else None
 
 
 def append_log(filename, record):
@@ -901,6 +953,11 @@ class Handler(BaseHTTPRequestHandler):
     def _openai_tools_inner(self, payload, ua):
         """OpenAI 兼容 + tools 的补丁：内部转成 Ollama 原生 /api/chat，再把 tool_calls 转回标准格式"""
         ip = self._ip()
+        if _quota_block(ip):
+            return self._json(429, {"error": {
+                "message": "已达到今日使用限额",
+                "code": "quota_exceeded",
+                "hint": "联系服务端管理员调整限额（终端页 quota 命令）"}})
         model, real_model = _resolve_model(payload)
         if not real_model:
             return self._json(400, {"error": {
@@ -1076,6 +1133,15 @@ class Handler(BaseHTTPRequestHandler):
             log_event("client_disconnect", ip=ip, path="/v1/chat/completions")
         finally:
             text = "".join(text_parts)
+            if not usage.get("prompt_tokens") and not usage.get("completion_tokens"):
+                try:
+                    _pchars = sum(len(str(m.get("content") or "")) for m in (meta.get("messages") or []))
+                    usage = {"prompt_tokens": max(1, _pchars // 4),
+                             "completion_tokens": max(1, len(text) // 4)}
+                    usage["total_tokens"] = usage["prompt_tokens"] + usage["completion_tokens"]
+                    usage["estimated"] = True
+                except Exception:
+                    pass
             meta.update({"reply": text, "reply_chars": len(text),
                          "thinking": "".join(think_parts)[:20000],
                          "prompt_tokens": usage.get("prompt_tokens"),
@@ -1138,6 +1204,11 @@ class Handler(BaseHTTPRequestHandler):
         ip = self._ip()
         ua = self.headers.get("User-Agent", "")
         target = path + ("?" + query if query else "")
+        if path in ("/api/chat", "/v1/chat/completions", "/api/generate") and _quota_block(ip):
+            return self._json(429, {"error": {
+                "message": "已达到今日使用限额",
+                "code": "quota_exceeded",
+                "hint": "联系服务端管理员调整限额（终端页 quota 命令）"}})
 
         is_chat = path in ("/api/chat", "/v1/chat/completions", "/api/generate")
         payload = {}
@@ -1151,6 +1222,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._openai_tools(payload, ua)
 
         model = payload.get("model", "")
+        if is_chat and isinstance(payload, dict) and not str(model or "").strip():
+            model = RUNTIME.get("share_model") or CFG.get("default_model") or ""
+            if model:
+                payload["model"] = model
+                body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         alias_map = CFG.get("model_aliases") or {}
         if isinstance(payload, dict) and is_chat and payload.get("model") in alias_map:
             real = alias_map[payload["model"]]
@@ -1282,6 +1358,24 @@ class Handler(BaseHTTPRequestHandler):
                 last_user = m.get("content") or ""
                 break
         rec["_ts"] = time.time()
+        try:
+            st = _usage_store()
+            if st is not None:
+                st.record(
+                    kind="chat",
+                    model=rec.get("model") or "",
+                    prompt_tokens=int(rec.get("prompt_tokens") or 0),
+                    reply_tokens=int(rec.get("reply_tokens") or 0),
+                    elapsed_ms=float(rec.get("elapsed_ms") or 0),
+                    provider="local",
+                )
+        except Exception:
+            pass
+        try:
+            _quota_add(rec.get("ip") or "", int(rec.get("prompt_tokens") or 0)
+                       + int(rec.get("reply_tokens") or 0))
+        except Exception:
+            pass
         with LOCK:
             STATS["conversations"] += 1
             if client is not None:
@@ -1320,6 +1414,25 @@ def load_recent_history():
         STATS["conversations"] = len(rows)
 
 
+class _FastHTTPServer(ThreadingHTTPServer):
+    """ThreadingHTTPServer without the reverse-DNS lookup done by server_bind().
+
+    socketserver calls socket.getfqdn() while binding, which blocks for 1-2s on
+    Windows machines without a responsive DNS/reverse lookup. The server name is
+    never used by this gateway, so binding directly removes the startup freeze.
+    """
+
+    daemon_threads = True
+    allow_reuse_address = True
+
+    def server_bind(self):
+        import socketserver as _socketserver
+        _socketserver.TCPServer.server_bind(self)
+        host, port = self.server_address[:2]
+        self.server_name = str(host)
+        self.server_port = port
+
+
 def start_server():
     try:
         threading.Thread(target=_idle_unloader, daemon=True).start()
@@ -1328,7 +1441,7 @@ def start_server():
     """在当前线程中启动 HTTP 服务（供 GUI 调用）"""
     host = CFG["listen_host"]
     port = int(CFG["listen_port"])
-    srv = ThreadingHTTPServer((host, port), Handler)
+    srv = _FastHTTPServer((host, port), Handler)
     srv.daemon_threads = True
     log_event("gateway_start", port=port, version=VERSION)
     return srv

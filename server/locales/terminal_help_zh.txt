@@ -1,0 +1,21 @@
+Hymnix 终端命令速查（在终端页输入 help 可查看）
+
+help                               Show command guide
+clear                              Clear terminal output
+status                             Show gateway and tunnel status
+version                            Show application version
+models                             List installed models
+model <name>                       Set active model
+sharemodel <name>                  Set shared model
+config get|set <key> [value]       Read or update configuration
+path [set <dir>]                   Show or change working path
+tunnel on|off|restart|status       Control public tunnel
+quota <n>                          Set daily token quota
+billing on|off                     Enable or disable billing
+lang <zh|en|fr|ru|es>              Set interface language
+service start|stop|restart         Control local gateway service
+hardware                           Show hardware information
+export [file]                      Export terminal transcript
+history                            Show command history
+logtail <n>                        Show recent tunnel logs
+ps                                 List Hymnix processes

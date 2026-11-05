@@ -1,12 +1,12 @@
 import tkinter as tk
-from tkinter import ttk, scrolledtext, messagebox, filedialog
+from tkinter import ttk, scrolledtext, messagebox, filedialog, font as tkfont
 import threading
 import json
 import os
 import sys
 import subprocess
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 import requests
 from queue import Queue, Empty
 import tempfile
@@ -51,6 +51,27 @@ _APP_DIR = (os.path.dirname(os.path.abspath(sys.executable))
             if getattr(sys, "frozen", False) else os.path.dirname(os.path.abspath(__file__)))
 _BUNDLE_DIR = getattr(sys, "_MEIPASS", _APP_DIR)
 
+# ==================== 发行版标识 ====================
+APP_NAME = "Hymnix"
+APP_VERSION = "1.1.0"
+APP_BUILD_DATE = "2026-11-05"
+
+
+def app_version():
+    """当前程序版本：优先读同目录 VERSION 文件（自动更新会改写它）。"""
+    try:
+        with open(os.path.join(_APP_DIR, "VERSION"), "r", encoding="utf-8") as fh:
+            v = fh.read().strip()
+        if v:
+            return v
+    except Exception:
+        pass
+    return APP_VERSION
+
+
+def app_version_line():
+    return "%s · %s" % (app_version(), APP_BUILD_DATE)
+
 
 def _resolve_data_dir():
     r"""可写数据目录：环境变量 > %LOCALAPPDATA%\Hymnix > exe 同目录（兜底）"""
@@ -70,7 +91,7 @@ def _resolve_data_dir():
         return _APP_DIR
 
 
-_DATA_DIR = _resolve_data_dir()
+_DATA_DIR = _APP_DIR  # personal build: keep data next to exe
 CONFIG_FILE = os.path.join(_DATA_DIR, "huimeng_config.json")
 
 # 内置网关（单 exe：客户端 + 网关 + 隧道 + 监控 一体）
@@ -164,33 +185,33 @@ MODEL_CATEGORIES = ["全部", "中文", "通用", "轻量", "视觉", "代码", 
 # ==================== 设计令牌（无边框 · 微对比色阶）====================
 # 分层逻辑：窗口底 → 侧栏 → 卡片 → 输入底，相邻只差 1%~3% 明度，不画任何边框线。
 THEME = {
-    "bg":         "#E9EEF5",   # 窗口底：冷灰蓝
-    "surface":    "#F2F5F9",   # 侧栏 / 次层
+    "bg":         "#F3F5FA",   # 窗口底
+    "surface":    "#F8FAFD",   # 侧栏 / 次层
     "card":       "#FFFFFF",   # 主卡片
     "input_bg":   "#FBFCFE",   # 对话区 / 输入底
-    "text":       "#1C2430",
-    "text_muted": "#6B7684",
-    "text_dim":   "#9AA6B4",
-    "accent":     "#2B7DE1",
-    "accent_soft": "#E3EDFB",
-    "accent_press": "#CFE0F8",
-    "btn":        "#E7ECF3",
-    "btn_hover":  "#DCE4EE",
-    "btn_press":  "#CBD6E3",
-    "btn_text":   "#1C2430",
-    "ok":         "#1F7A55",
-    "warn":       "#B07714",
-    "err":        "#B23A32",
-    "sep":        "#C9D3DE",
+    "text":       "#101828",
+    "text_muted": "#667085",
+    "text_dim":   "#98A2B3",
+    "accent":     "#2563EB",
+    "accent_soft": "#EFF6FF",
+    "accent_press": "#DBEAFE",
+    "btn":        "#EEF2F7",
+    "btn_hover":  "#E4E9F1",
+    "btn_press":  "#D7DEE9",
+    "btn_text":   "#101828",
+    "ok":         "#12B76A",
+    "warn":       "#F79009",
+    "err":        "#F04438",
+    "sep":        "#E4E7EC",
     # 兼容旧键名
     "bg_color": "#E9EEF5", "frame_bg": "#F2F5F9", "button_bg": "#E7ECF3",
     "button_fg": "#1C2430", "button_active": "#DCE4EE", "entry_bg": "#FBFCFE",
     "entry_fg": "#1C2430", "text_bg": "#FBFCFE", "text_fg": "#1C2430",
     "label_bg": "#F2F5F9", "label_fg": "#1C2430", "combo_bg": "#FFFFFF",
     "combo_fg": "#1C2430", "scroll_bg": "#DCE4EE", "scroll_active": "#C9D3DE",
-    "border_color": "#C9D3DE", "highlight_color": "#2B7DE1",
+    "border_color": "#E4E7EC", "highlight_color": "#2563EB",
     "success_color": "#1F7A55", "error_color": "#B23A32",
-    "warning_color": "#B07714", "info_color": "#2B7DE1",
+    "warning_color": "#B07714", "info_color": "#2563EB",
 }
 WIN7_STYLE = THEME  # 旧名别名，防止漏改的引用报错
 
@@ -260,8 +281,47 @@ ZH2EN = {
 LANG = {"cur": os.environ.get("HYMNIX_LANG", "zh")}
 
 
-def T(zh, en):
-    return en if LANG["cur"] == "en" else zh
+_ZH2KEY = None
+
+
+def _zh_to_key():
+    """把 locales/zh.json 反转成 中文原文 -> key，供 T() 使用。"""
+    global _ZH2KEY
+    if _ZH2KEY is not None:
+        return _ZH2KEY
+    _ZH2KEY = {}
+    try:
+        import i18n as _i18n
+        base = getattr(_i18n, "_default_locales_dir", lambda: os.path.join(_BUNDLE_DIR, "locales"))()
+        zh_path = os.path.join(_BUNDLE_DIR, "locales", "zh.json")
+        if not os.path.exists(zh_path):
+            zh_path = os.path.join(base, "zh.json")
+        if os.path.exists(zh_path):
+            with open(zh_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            for key, text in data.items():
+                if isinstance(text, str) and text not in _ZH2KEY:
+                    _ZH2KEY[text] = key
+    except Exception:
+        pass
+    return _ZH2KEY
+
+
+def T(zh, en=None):
+    lang = LANG.get("cur") or "zh"
+    if not lang.startswith("zh"):
+        try:
+            key = _zh_to_key().get(zh)
+            if key:
+                import i18n as _i18n
+                out = _i18n.t(key)
+                if out and out != key:
+                    return out
+        except Exception:
+            pass
+    if en is None:
+        en = zh
+    return en if lang.startswith("en") else en if lang not in ("zh",) else zh
 
 
 ZH2EN.update({
@@ -636,8 +696,13 @@ def install_runtime_i18n():
 
 def detect_language(cfg):
     lang = str((cfg or {}).get("language") or "").strip().lower()
-    if lang in ("zh", "en"):
+    if lang in ("zh", "en", "fr", "ru", "es"):
         return lang
+    try:
+        import i18n as _i18n
+        return _i18n.detect() or "zh"
+    except Exception:
+        pass
     try:
         import locale
         loc = (locale.getdefaultlocale()[0] or "").lower()
@@ -659,10 +724,23 @@ def apply_menu_language(menu, memo, mapping=None):
         return
     if end is None:
         return
+    _cur_lang = LANG.get("cur") or "zh"
     for i in range(end + 1):
         try:
             kind = menu.type(i)
         except Exception:
+            continue
+        if _cur_lang not in ("zh", "en") and kind in ("command", "cascade", "checkbutton", "radiobutton"):
+            try:
+                _lbl = str(menu.entrycget(i, "label"))
+                _memo_key = ("menu", id(menu), i)
+                if _memo_key not in memo:
+                    memo[_memo_key] = _lbl
+                _new = T(memo[_memo_key])
+                if _new != memo[_memo_key]:
+                    menu.entryconfigure(i, label=_new)
+            except Exception:
+                pass
             continue
         if kind in ("command", "cascade", "checkbutton", "radiobutton"):
             try:
@@ -678,7 +756,10 @@ def apply_menu_language(menu, memo, mapping=None):
                     if zh in out:
                         out = out.replace(zh, mapping[zh])
                 if out == memo[key]:
-                    out = _en_text(memo[key])
+                    try:
+                        out = T(memo[key])
+                    except Exception:
+                        out = _en_text(memo[key])
                 if out != memo[key]:
                     try:
                         menu.entryconfigure(i, label=out)
@@ -694,6 +775,64 @@ def apply_menu_language(menu, memo, mapping=None):
                 apply_menu_language(menu.nametowidget(menu.entrycget(i, "menu")), memo, mapping)
             except Exception:
                 pass
+
+
+
+
+def apply_i18n_tree(root, memo=None):
+    """把界面里的中文原文按当前语言翻译（用于 fr/ru/es 启动时）。"""
+    if memo is None:
+        memo = {}
+    try:
+        import i18n as _i18n
+        if _i18n.get_lang().startswith("zh"):
+            return
+    except Exception:
+        return
+
+    def tr_text(txt):
+        try:
+            return T(txt)
+        except Exception:
+            return txt
+
+    def walk(w):
+        try:
+            cls = w.winfo_class()
+        except Exception:
+            return
+        try:
+            if cls in ("Label", "Button", "Checkbutton", "Radiobutton", "TLabel", "TButton",
+                       "TCheckbutton", "TRadiobutton", "TLabelframe"):
+                cur = str(w.cget("text"))
+                if any("\u4e00" <= ch <= "\u9fff" for ch in cur):
+                    key = ("text", id(w))
+                    if key not in memo:
+                        memo[key] = cur
+                    new = tr_text(memo[key])
+                    if new != cur:
+                        w.configure(text=new)
+        except Exception:
+            pass
+        try:
+            if cls == "TNotebook":
+                n = w.index("end")
+                key = ("tabs", id(w))
+                if key not in memo:
+                    memo[key] = [w.tab(i, "text") for i in range(n)]
+                for i, txt in enumerate(memo[key][:n]):
+                    new = tr_text(txt.strip())
+                    if new != txt.strip():
+                        w.tab(i, text=txt.replace(txt.strip(), new))
+        except Exception:
+            pass
+        try:
+            for c in w.winfo_children():
+                walk(c)
+        except Exception:
+            pass
+
+    walk(root)
 
 
 def apply_zh2en(widget, memo, mapping=None):
@@ -777,7 +916,60 @@ def apply_zh2en(widget, memo, mapping=None):
     except Exception:
         pass
 
-UI_FONT = "Microsoft YaHei"
+# Future tuning knob: 1.0 keeps native DPI sizing; lower values compact the UI.
+UI_SCALE_COMPENSATION = 1.0
+_DPI_SCALE = 1.0
+_DPI = 96
+
+
+def _screen_size():
+    """当前显示器物理分辨率（进程已 DPI 感知，取到的是真实像素）。"""
+    try:
+        u = ctypes.windll.user32
+        return int(u.GetSystemMetrics(0)), int(u.GetSystemMetrics(1))
+    except Exception:
+        return 1920, 1080
+
+
+def _enable_dpi_awareness():
+    """Windows 上启用 Per-Monitor DPI 感知，避免系统位图拉伸导致字体发虚"""
+    global _DPI_SCALE, _DPI
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except Exception:
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
+    try:
+        _DPI = int(ctypes.windll.user32.GetDpiForSystem())
+    except Exception:
+        _DPI = 96
+    _DPI_SCALE = max(1.0, _DPI / 96.0)
+
+UI_FONT = "Microsoft YaHei UI"
+SMALL_CJK = "Microsoft YaHei UI"
+
+def _resolve_small_cjk(root=None):
+    """Resolve the auxiliary small text family (standard sans-serif, no FangSong)."""
+    global SMALL_CJK
+    try:
+        families = set(tkfont.families(root=root))
+        for candidate in ("Microsoft YaHei UI", "微软雅黑", "Microsoft YaHei", "Segoe UI"):
+            if candidate in families:
+                SMALL_CJK = candidate
+                break
+    except Exception:
+        pass
+    return SMALL_CJK
+
+# Sidebar typography and geometry (logical pixels / points).
+SIDEBAR_W = 280
+NAV_FONT_PT = 11
+NAV_PAD_X = 14
+NAV_HEIGHT = 46
+GROUP_FONT_PT = 10
+SIDEBAR_FONT = "Microsoft YaHei UI"
 
 
 class ScrollableFrame(ttk.Frame):
@@ -861,23 +1053,54 @@ VIRTUAL_GPU_KEYWORDS = ("idd", "virtual", "基本显示", "basic display", "remo
 # ==================== 更新日志数据 ====================
 CHANGELOG = [
     {
+        "version": "1.1.0",
+        "time": "2026-11-05",
+        "title": "550C 终端 · 一键更新 · 扁平化界面 · 启动提速",
+        "items": [
+            "[新增] 终端页重做为 550C 科幻控制台：深色 HUD、LINK/TUN/PROC 状态芯片、信号波形、遥测条、分级着色实时日志",
+            "[新增] 终端内置 19 条命令：help / status / version / models / model / sharemodel / config / path / tunnel / quota / billing / lang / service / hardware / export / history / logtail / clear / ps",
+            "[新增] 终端支持 ↑↓ 历史、Tab 补全、Ctrl+L 清屏，危险命令二次确认",
+            "[新增] 隧道详情整合进终端页（公网地址、二维码、cloudflared / ngrok 切换、最近日志），首页入口保留",
+            "[新增] 客户端内一键检查更新、下载、sha256 校验、安装重启（GitHub Releases）",
+            "[优化] 全局扁平化：8/12/16px 圆角、1px 描边、无阴影，去掉系统凸起灰边控件",
+            "[优化] 换页动画 280ms 缓出；首次进入插件页 / 赞助页不再错位抖动",
+            "[优化] 小字统一为微软雅黑 / Segoe UI，不再使用仿宋",
+            "[优化] 侧栏深色 H 图标、分组标题字距修正；默认以窗口模式启动",
+            "[优化] 启动去掉端口绑定的反向 DNS 解析，冷启动约 2.0s → 0.7s",
+            "[修复] 终端内容溢出标签页、底部命令行与页脚被裁切",
+            "[修复] 版本号统一为公版 v1.1.0，内部快照号全部移除",
+        ],
+    },
+    {
+        "version": "1.0.1",
+        "time": "2026-11-05",
+        "title": "现代化界面 · 多语言底座 · 云端 API · 用量统计",
+        "items": [
+            "[新增] 全新概览页：网关状态、今日用量、设备状态、最近请求一屏看完",
+            "[新增] 分组侧边栏（概览 / 工作台 / 云端 / 扩展），裁掉重复信息",
+            "[新增] 现代化配色与卡片式布局，统一留白与字体层级",
+            "[新增] 界面语言扩到五种：中文 / English / Français / Русский / Español",
+            "[新增] 云端 API 页可用：保存配置、测试连接、拉取模型列表、费用估算",
+            "[新增] 用量统计：请求数、prompt/reply tokens、费用，按今日/累计汇总",
+            "[新增] 首次启动欢迎页：选择界面语言，本地模式直接使用（GitHub 登录预留）",
+            "[优化] 按钮去掉前置图标，对齐统一；移除冗余面板",
+            "[优化] 状态栏、弹窗、菜单接入新的翻译体系",
+            "[修复] 长对话裁剪保留全部 system 提示；同源请求串行处理",
+        ],
+    },
+    {
         "version": "1.0.0",
         "time": "2026-11-05",
-        "title": "首个公开版本 / First public release",
+        "title": "同步公版：中英切换 · 图标统一 · 赞助页",
         "items": [
-            "[新增] 本地 AI 网关：把 Ollama 变成 OpenAI 兼容接口，支持工具调用与流式",
-            "[新增] 可选公网隧道：按需启动，不启动时只监听本机",
-            "[新增] 桌面客户端：填服务器地址、密钥和模型即可使用，也可指向其他 OpenAI 兼容服务",
-            "[新增] 服务端监控：请求列表、耗时、token、GPU 占用、功耗与能耗",
-            "[新增] 空闲自动卸载模型，释放显存；工具型客户端可单独延长保活",
-            "[新增] 模型自由选择：不强制任何模型，客户端传什么就用什么，可配置默认值与别名",
-            "[新增] 中英文界面切换（设置 → 语言 / Language）",
-            "[新增] 安装包数据目录改到 LOCALAPPDATA，适配微软商店要求",
-            "[修复] 上下文裁剪保留全部 system 提示；同一来源请求串行处理",
-            "[说明] AGPL-3.0 开源；修改后作为网络服务提供需公开源码",
+            "[新增] 界面中英文切换（设置 → 语言 / Language）",
+            "[新增] 赞助页：爱发电入口",
+            "[优化] 按钮文字统一去掉前置图标",
+            "[修复] 长对话裁剪保留全部 system 提示",
         ],
     },
 ]
+
 
 
 # ==================== 模型下载器（多源探测 · 断点续传 · 校验）====================
@@ -1789,42 +2012,46 @@ class Theme:
                         font=(UI_FONT, 12, "bold"))
         style.configure("BgMuted.TLabel", background=THEME["bg"], foreground=THEME["text_muted"])
         style.configure("CardCaption.TLabel", background=THEME["card"],
-                        foreground=THEME["text_muted"], font=(UI_FONT, 9))
+                        foreground=THEME["text_muted"], font=(UI_FONT, 10))
         style.configure("CardMuted.TLabel", background=THEME["card"], foreground=THEME["text_muted"])
         style.configure("CardAccent.TLabel", background=THEME["card"], foreground=THEME["accent"])
         style.configure("CardThink.TLabel", background=THEME["card"], foreground=THEME["accent"],
                         font=(UI_FONT, 9, "bold"))
+        _resolve_small_cjk(root)
+        style.configure("SmallCJK.TLabel", background=THEME["surface"], foreground=THEME["text_muted"],
+                        font=(SMALL_CJK, 10))
         style.configure("CardSmall.TLabel", background=THEME["card"], foreground=THEME["text_dim"],
-                        font=(UI_FONT, 8))
+                        font=(SMALL_CJK, 10))
         style.configure("SideCaption.TLabel", background=THEME["surface"],
-                        foreground=THEME["text_muted"], font=(UI_FONT, 9))
+                        foreground=THEME["text_muted"], font=(UI_FONT, 10))
         style.configure("SideMuted.TLabel", background=THEME["surface"], foreground=THEME["text_muted"])
-        # 按钮：清晰的 1px 边框 + 分层底色（参考站那种硬朗扁平感）
-        BORDER = "#C3CDDB"
-        style.configure("TButton", background="#F7F9FC", foreground=THEME["text"],
-                        borderwidth=1, bordercolor=BORDER, lightcolor="#F7F9FC", darkcolor=BORDER,
-                        relief="solid", padding=(12, 6), font=(UI_FONT, 9), focusthickness=0)
+        # 按钮：白底 + 细边框，明确的可点击感
+        style.configure("TButton", background="#FFFFFF", foreground=THEME["text"],
+                        borderwidth=1, bordercolor="#D5DCE6", lightcolor="#FFFFFF",
+                        darkcolor="#D5DCE6", relief="solid", padding=(12, 7),
+                        font=(UI_FONT, 10), focusthickness=0)
         style.map("TButton",
-                  background=[("pressed", "#DCE7F6"), ("active", "#E9F0FA")],
-                  bordercolor=[("active", "#2B7DE1")],
-                  lightcolor=[("pressed", "#DCE7F6"), ("active", "#E9F0FA")],
+                  background=[("pressed", "#E3EAF5"), ("active", "#F2F6FC")],
+                  bordercolor=[("active", "#9DB4D6")],
+                  lightcolor=[("pressed", "#E3EAF5"), ("active", "#F2F6FC")],
                   foreground=[("disabled", THEME["text_dim"])])
-        style.configure("Ghost.TButton", background="#F7F9FC", foreground=THEME["text"],
-                        borderwidth=1, bordercolor=BORDER, lightcolor="#F7F9FC", darkcolor=BORDER,
-                        relief="solid", padding=(12, 6), font=(UI_FONT, 9))
+        style.configure("Ghost.TButton", background="#FFFFFF", foreground=THEME["text"],
+                        borderwidth=1, bordercolor="#D5DCE6", lightcolor="#FFFFFF",
+                        darkcolor="#D5DCE6", relief="solid", padding=(10, 6),
+                        font=(UI_FONT, 10))
         style.map("Ghost.TButton",
-                  background=[("pressed", "#DCE7F6"), ("active", "#E9F0FA")],
-                  bordercolor=[("active", "#2B7DE1")],
-                  lightcolor=[("pressed", "#DCE7F6"), ("active", "#E9F0FA")],
-                  foreground=[("active", "#0F1B2D")])
+                  background=[("pressed", "#E3EAF5"), ("active", "#F2F6FC")],
+                  bordercolor=[("active", "#9DB4D6")],
+                  lightcolor=[("pressed", "#E3EAF5"), ("active", "#F2F6FC")],
+                  foreground=[("active", "#0F172A")])
         style.configure("Accent.TButton", background=THEME["accent"], foreground="#FFFFFF",
-                        borderwidth=1, bordercolor="#1E63C8", lightcolor=THEME["accent"],
-                        darkcolor="#1E63C8", relief="solid", padding=(16, 8),
-                        font=(UI_FONT, 9, "bold"))
+                        borderwidth=1, bordercolor="#1D4ED8", lightcolor=THEME["accent"],
+                        darkcolor="#1D4ED8", relief="solid", padding=(18, 9),
+                        font=(UI_FONT, 10, "bold"))
         style.map("Accent.TButton",
-                  background=[("pressed", "#1E63C8"), ("active", "#3E8BEA")],
-                  bordercolor=[("pressed", "#1E63C8"), ("active", "#1E63C8")],
-                  lightcolor=[("pressed", "#1E63C8"), ("active", "#3E8BEA")],
+                  background=[("pressed", "#1E40AF"), ("active", "#3B82F6")],
+                  lightcolor=[("pressed", "#1E40AF"), ("active", "#3B82F6")],
+                  bordercolor=[("active", "#1D4ED8")],
                   foreground=[("disabled", "#DDE4EE")])
         style.configure("Danger.TButton", background="#FBEEEC", foreground="#A3372C",
                         borderwidth=1, bordercolor="#E3B9B2", lightcolor="#FBEEEC", darkcolor="#E3B9B2",
@@ -1900,7 +2127,7 @@ class Theme:
 class HuimengAIClient:
     def __init__(self, root):
         try:
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Hymnix.Studio.26W07aBeta")
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Hymnix.Studio")
         except Exception:
             pass
         self.root = root
@@ -1921,11 +2148,19 @@ class HuimengAIClient:
                 self.root.iconphoto(True, self._app_icon)
         except Exception:
             pass
-        self.root.title("Hymnix AI Server")
-        self.root.geometry("1000x750")
+        self.root.title("Hymnix 1.1.0")
+        self.root.geometry(self._geo(1200, 870))
         Theme.apply(root)
         self.setup_icon()
         self.config = self.load_config()
+        try:
+            import i18n as _i18n
+            if not self.config.get("language"):
+                self.config["language"] = detect_language(self.config)
+            LANG["cur"] = self.config.get("language") or "zh"
+            _i18n.init(LANG["cur"])
+        except Exception:
+            pass
         apply_remote_settings(self.config)
         self.current_model = self.config.get("last_model", DEFAULT_MODEL)
         self.conversation_history = []
@@ -1936,10 +2171,19 @@ class HuimengAIClient:
         self._device_map = {}
         self.attachments = []
         self.model_caps = set()
+        try:
+            import usage as usage_mod
+            self._usage_store = usage_mod.UsageStore()
+        except Exception:
+            self._usage_store = None
         self.create_menu()
         self.setup_ui()
         try:
             self._lang_memo = {}
+            apply_i18n_tree(self.root, self._lang_memo)
+        except Exception:
+            pass
+        try:
             if not self.config.get("language"):
                 self.config["language"] = detect_language(self.config)
             self._lang = detect_language(self.config)
@@ -1958,17 +2202,28 @@ class HuimengAIClient:
         except Exception:
             pass
         try:
+            if not str(self.config.get("language") or "zh").startswith("zh"):
+                apply_menu_language(self.root.nametowidget(self.root["menu"]), self._lang_memo)
+        except Exception:
+            pass
+        try:
             normalize_button_icons(self.root)
         except Exception:
             pass
         self.process_message_queue()
         self.start_host_server()
+        self.root.after(1500, self._sync_gateway_runtime)
         self.check_environment()
         self.detect_hardware_async()
         self.start_sampler(fast=False)
+        self._health = {"ok": False, "ollama": False, "clients": 0, "ts": 0}
+        threading.Thread(target=self._health_loop, daemon=True).start()
         self.root.after(2500, self.refresh_host_bar)
+        self.root.after(300, self._update_source_status)
+        self.root.after(700, self.ensure_welcome)
         self.root.after(250, self._splash_tick)
-        if self.config.get("maximize", True):
+        self.root.after(0, self._decorate_buttons)
+        if self.config.get("maximize", False):
             try:
                 self.root.state("zoomed")
             except Exception:
@@ -1989,9 +2244,9 @@ class HuimengAIClient:
                 self.send_message()
             self.root.after(6000, _auto_send)
         if "--api" in sys.argv:
-            self.root.after(1500, lambda: self.notebook.select(2))
+            self.root.after(1500, lambda: self.select_nav(3))
         if "--plug" in sys.argv:
-            self.root.after(1500, lambda: self.notebook.select(3))
+            self.root.after(1500, lambda: self.select_nav(4))
         if "--mon" in sys.argv:
             try:
                 self.notebook.select(self.mon_tab)
@@ -2017,62 +2272,77 @@ class HuimengAIClient:
                     continue
 
     def create_menu(self):
-        menubar = tk.Menu(self.root, bg=WIN7_STYLE['bg_color'], fg=WIN7_STYLE['label_fg'])
+        """统一的四组菜单：文件 / 模型 / 服务 / 设置（帮助并入设置底部）"""
+        style_kw = {"tearoff": 0, "bg": "#FFFFFF", "fg": "#1F2937",
+                    "activebackground": "#EFF6FF", "activeforeground": "#1E40AF",
+                    "font": (UI_FONT, 10), "borderwidth": 0}
+        menubar = tk.Menu(self.root, bg="#FFFFFF", fg="#1F2937",
+                          activebackground="#EFF6FF", activeforeground="#1E40AF",
+                          font=(UI_FONT, 10), borderwidth=0)
         self.root.config(menu=menubar)
-        file_menu = tk.Menu(menubar, tearoff=0, bg=WIN7_STYLE['bg_color'], fg=WIN7_STYLE['label_fg'])
-        menubar.add_cascade(label="文件", menu=file_menu)
-        file_menu.add_command(label="保存对话", command=self.save_history)
-        file_menu.add_command(label="加载对话", command=self.load_history)
+
+        file_menu = tk.Menu(menubar, **style_kw)
+        menubar.add_cascade(label=T("文件", "File"), menu=file_menu)
+        file_menu.add_command(label=T("保存对话", "Save chat"), command=self.save_history)
+        file_menu.add_command(label=T("加载对话", "Load chat"), command=self.load_history)
+        file_menu.add_command(label=T("导出对话", "Export chat"), command=self.export_conversation)
         file_menu.add_separator()
-        file_menu.add_command(label="导出对话", command=self.export_conversation)
+        file_menu.add_command(label=T("清空对话历史", "Clear chat history"), command=self.clear_history)
         file_menu.add_separator()
-        file_menu.add_command(label="退出", command=self.root.quit)
-        tools_menu = tk.Menu(menubar, tearoff=0, bg=WIN7_STYLE['bg_color'], fg=WIN7_STYLE['label_fg'])
-        menubar.add_cascade(label="工具", menu=tools_menu)
-        tools_menu.add_command(label="刷新模型列表", command=self.refresh_models)
-        tools_menu.add_command(label="硬件信息 / 计算设备", command=self.show_hardware_dialog)
-        tools_menu.add_command(label="下载新模型", command=self.download_model_dialog)
-        tools_menu.add_command(label="启动Ollama服务", command=self.start_service_manual)
-        tools_menu.add_command(label="停止Ollama服务", command=self.stop_service_manual)
-        tools_menu.add_separator()
-        tools_menu.add_command(label="清空对话历史", command=self.clear_history)
-        tools_menu.add_command(label="复制最后回复", command=self.copy_last_response)
-        server_menu = tk.Menu(menubar, tearoff=0, bg=WIN7_STYLE['bg_color'], fg=WIN7_STYLE['label_fg'])
-        menubar.add_cascade(label="服务器", menu=server_menu)
-        server_menu.add_command(label="连接设置…", command=self.open_connection_settings)
-        server_menu.add_command(label="连接监控…", command=self.show_monitor_tab)
-        server_menu.add_separator()
-        server_menu.add_command(label="检测连接", command=self.manual_remote_check)
-        server_menu.add_separator()
-        server_menu.add_command(label="重启公网隧道", command=self.restart_host_tunnel)
-        server_menu.add_command(label="打开数据目录", command=self.open_data_dir)
-        _lang_menu = tk.Menu(menubar, tearoff=0)
+        file_menu.add_command(label=T("退出", "Quit"), command=self.root.quit)
+
+        model_menu = tk.Menu(menubar, **style_kw)
+        menubar.add_cascade(label=T("模型", "Models"), menu=model_menu)
+        model_menu.add_command(label=T("刷新模型列表", "Refresh model list"), command=self.refresh_models)
+        model_menu.add_command(label=T("下载新模型", "Download new model"), command=self.download_model_dialog)
+        model_menu.add_command(label=T("模型管理", "Manage models"), command=self.manage_models)
+        model_menu.add_separator()
+        model_menu.add_command(label=T("启动 Ollama 服务", "Start Ollama service"), command=self.start_service_manual)
+        model_menu.add_command(label=T("停止 Ollama 服务", "Stop Ollama service"), command=self.stop_service_manual)
+        model_menu.add_separator()
+        model_menu.add_command(label=T("硬件与计算设备", "Hardware & device"), command=self.show_hardware_dialog)
+
+        service_menu = tk.Menu(menubar, **style_kw)
+        menubar.add_cascade(label=T("服务", "Server"), menu=service_menu)
+        service_menu.add_command(label=T("连接设置…", "Connection settings..."), command=self.open_connection_settings)
+        service_menu.add_command(label=T("启动/停止公网隧道", "Toggle public tunnel"), command=self.toggle_host_tunnel)
+        service_menu.add_command(label=T("复制公网地址", "Copy public address"), command=self.copy_host_url)
+        service_menu.add_command(label=T("打开监控页", "Open monitor"), command=self.show_monitor_tab)
+        service_menu.add_separator()
+        service_menu.add_command(label=T("检测连接", "Test connection"), command=self.manual_remote_check)
+        service_menu.add_command(label=T("清理历史记录…", "Clean up history..."), command=self.open_cleanup_dialog)
+        service_menu.add_command(label=T("打开数据目录", "Open data folder"), command=self.open_data_dir)
+
+        _lang_menu = tk.Menu(service_menu, **style_kw)
         _lang_menu.add_command(label="中文", command=lambda: self.set_language("zh"))
         _lang_menu.add_command(label="English", command=lambda: self.set_language("en"))
-        settings_menu = tk.Menu(menubar, tearoff=0, bg=WIN7_STYLE['bg_color'], fg=WIN7_STYLE['label_fg'])
-        settings_menu.add_cascade(label="语言 / Language", menu=_lang_menu)
-        menubar.add_cascade(label="设置", menu=settings_menu)
-        settings_menu.add_command(label="程序设置", command=self.open_settings)
-        settings_menu.add_command(label="个性化设置", command=self.open_personalization)
+        _lang_menu.add_command(label="Français", command=lambda: self.set_language("fr"))
+        _lang_menu.add_command(label="Русский", command=lambda: self.set_language("ru"))
+        _lang_menu.add_command(label="Español", command=lambda: self.set_language("es"))
+
+        settings_menu = tk.Menu(menubar, **style_kw)
+        menubar.add_cascade(label=T("设置", "Settings"), menu=settings_menu)
+        settings_menu.add_command(label=T("账户与登录…", "Account & sign-in..."),
+                                  command=lambda: self.ensure_welcome(force=True))
+        settings_menu.add_cascade(label=T("语言 / Language", "Language"), menu=_lang_menu)
+        settings_menu.add_command(label=T("个性化设置", "Appearance"), command=self.open_personalization)
         settings_menu.add_separator()
-        settings_menu.add_command(label="重置窗口", command=self.reset_window)
-        help_menu = tk.Menu(menubar, tearoff=0, bg=WIN7_STYLE['bg_color'], fg=WIN7_STYLE['label_fg'])
-        menubar.add_cascade(label=T("帮助", "Help"), menu=help_menu)
-        help_menu.add_command(label=T("本次更新", "What's new"), command=self.show_update_notes)
-        help_menu.add_command(label=T("更新日志", "Changelog"), command=self.show_changelog)
-        help_menu.add_command(label=T("使用帮助", "Help"), command=self.show_help)
-        help_menu.add_command(label=T("检查更新", "Check for updates"), command=self.check_updates)
-        help_menu.add_separator()
-        help_menu.add_command(label=T("关于", "About"), command=self.show_about)
+        settings_menu.add_command(label=T("检查更新", "Check for updates"), command=self.check_updates)
+        settings_menu.add_command(label=T("使用帮助", "Help"), command=self.show_help)
+        settings_menu.add_command(label=T("更新日志", "Changelog"), command=self.show_changelog)
+        settings_menu.add_command(label=T("关于", "About"), command=self.show_about)
 
     def load_config(self):
         default_config = {
             "last_model": DEFAULT_MODEL, "history_files": [], "auto_start_service": True,
-            "auto_download_model": True, "font_size": 10, "user_name": "您", "ai_name": "AI助手",
+            "auto_download_model": True, "font_size": 12, "user_name": "您", "ai_name": "AI助手",
             "api_timeout": 60, "enable_sound": True, "auto_scroll": True, "max_history": 100,
             "compute_device": "auto",
             "download_dir": "", "download_sources": [],
-            "server_mode": "local", "server_url": "", "api_key": "", "admin_key": ""
+            "server_mode": "local", "server_url": "", "api_key": "", "admin_key": "",
+            "welcome_done": False, "language": "", "ui_sound": True,
+            "share_model": "", "billing_enabled": True, "daily_quota_tokens": 0, "chat_source": "local",
+            "cloud_enabled": False, "cloud_api": {}
         }
         if os.path.exists(CONFIG_FILE):
             try:
@@ -2093,9 +2363,21 @@ class HuimengAIClient:
         except:
             pass
 
+    @staticmethod
+    def _geo(w, h):
+        """逻辑尺寸 -> 物理像素，并按屏幕可用区域收口（窗口不超出桌面）。"""
+        pw, ph = int(w * _DPI_SCALE), int(h * _DPI_SCALE)
+        try:
+            sw, sh = _screen_size()
+            pw = min(pw, int(sw * 0.96))
+            ph = min(ph, int(sh * 0.92))
+        except Exception:
+            pass
+        return "%dx%d" % (pw, ph)
+
     def setup_ui(self):
-        self.root.geometry("1180x860")
-        self.root.minsize(1020, 660)
+        self.root.geometry(self._geo(1200, 870))
+        self.root.minsize(int(900 * _DPI_SCALE), int(700 * _DPI_SCALE))
 
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
@@ -2104,30 +2386,36 @@ class HuimengAIClient:
         shell.columnconfigure(1, weight=1)
         shell.rowconfigure(0, weight=1)
         self._shell = shell
-        self.notebook = ttk.Notebook(shell)
         try:
-            _st = ttk.Style()
-            _st.layout("TNotebook.Tab", [])      # 隐藏标签栏，改用左侧导航
-            _st.configure("TNotebook", borderwidth=0)
+            from page_manager import PageManager
+            self.notebook = PageManager(shell, duration_ms=140, direction="right", bg=THEME["bg"])
+            self._pm = True
         except Exception:
-            pass
+            self.notebook = ttk.Notebook(shell)
+            self._pm = False
         self.notebook.grid(row=0, column=1, sticky="nsew")
 
         tab_chat = ttk.Frame(self.notebook, style="Bg.TFrame")
+        tab_trace = ttk.Frame(self.notebook, style="Bg.TFrame")
         tab_mon = ttk.Frame(self.notebook, style="Bg.TFrame")
-        self.notebook.add(tab_chat, text="   终端 · 轨迹   ")
+        self.notebook.add(tab_chat, text="   " + T("对话", "Chat") + "   ")
+        self.notebook.add(tab_trace, text="   " + T("终端", "Terminal") + "   ")
+        self.build_trace_tab(tab_trace)
         self.notebook.add(tab_mon, text="   服务端监控   ")
         self.mon_tab = tab_mon
-        self.build_monitor_tab(tab_mon)
         tab_api = ttk.Frame(self.notebook, style="Bg.TFrame")
         tab_plug = ttk.Frame(self.notebook, style="Bg.TFrame")
         tab_support = ttk.Frame(self.notebook, style="Bg.TFrame")
         self.notebook.add(tab_api, text="   API 接口   ")
         self.notebook.add(tab_plug, text="   插件   ")
         self.notebook.add(tab_support, text="   " + T("赞助", "Support") + "   ")
-        self.build_api_tab(tab_api)
-        self.build_plugins_tab(tab_plug)
-        self.build_support_tab(tab_support)
+        # 懒构建：页面首次进入时再建，缩短启动时间
+        self._lazy_pages = {
+            2: (tab_mon, self.build_monitor_tab),
+            3: (tab_api, self.build_api_tab),
+            4: (tab_plug, self.build_plugins_tab),
+            5: (tab_support, self.build_support_tab),
+        }
         self._build_sidebar(shell)
 
         main_frame = ttk.Frame(tab_chat, style="Bg.TFrame", padding=(14, 12, 14, 12))
@@ -2174,9 +2462,11 @@ class HuimengAIClient:
         # ── 左栏：可滚动（滚轮缓动 + 细滑块），永远不会被窗口底边截断 ──
         left_wrap = ttk.Frame(main_frame, style="Bg.TFrame")
         left_wrap.grid(row=2, column=0, sticky=(tk.N, tk.S), padx=(0, 12))
+        left_wrap.configure(width=260)
+        left_wrap.grid_propagate(False)
         left_wrap.columnconfigure(0, weight=1)
         left_wrap.rowconfigure(0, weight=1)
-        self.control_scroll = ScrollableFrame(left_wrap, width=248)
+        self.control_scroll = ScrollableFrame(left_wrap, width=260)
         self.control_scroll.grid(row=0, column=0, sticky=(tk.N, tk.S))
         cf = self.control_scroll.inner
 
@@ -2186,28 +2476,35 @@ class HuimengAIClient:
         self.model_combo.pack(fill=tk.X, pady=(0, 4))
         self.model_combo.bind("<<ComboboxSelected>>", self.on_model_selected)
         self.model_info_var = tk.StringVar(value="")
-        ttk.Label(cf, textvariable=self.model_info_var, style="SideMuted.TLabel",
-                  wraplength=220).pack(anchor=tk.W, pady=(0, 8))
+        ttk.Label(cf, textvariable=self.model_info_var, style="SmallCJK.TLabel",
+                  wraplength=190).pack(anchor=tk.W, pady=(0, 8))
+
+        ttk.Label(cf, text="对话来源", style="SideCaption.TLabel").pack(anchor=tk.W, pady=(6, 4))
+        self.source_var = tk.StringVar(value="本地模型")
+        self.source_combo = ttk.Combobox(
+            cf, textvariable=self.source_var, state="readonly",
+            values=["本地模型", "云端 API"])
+        self.source_combo.pack(fill=tk.X, pady=(0, 4))
+        self.source_combo.bind("<<ComboboxSelected>>", self.on_source_selected)
+        self.source_status_var = tk.StringVar(value="")
+        ttk.Label(cf, textvariable=self.source_status_var, style="SmallCJK.TLabel",
+                  wraplength=238).pack(anchor=tk.W, pady=(0, 4))
+        ttk.Button(cf, text="配置云端 API", style="Ghost.TButton",
+                   command=self.open_api_tab).pack(fill=tk.X, pady=1)
 
         for text, command in (("🔄 刷新模型", self.refresh_models),
                               ("⏬ 下载模型", self.download_model_dialog),
                               ("🚀 启动服务", self.start_service_manual),
                               ("⏹️ 停止服务", self.stop_service_manual),
                               ("📊 模型管理", self.manage_models)):
-            ttk.Button(cf, text=text, style="Ghost.TButton", command=command).pack(fill=tk.X, pady=2)
+            ttk.Button(cf, text=text, style="Ghost.TButton", command=command).pack(fill=tk.X, pady=1)
 
-        ttk.Label(cf, text="对话历史", style="SideCaption.TLabel").pack(anchor=tk.W, pady=(14, 5))
-        for text, command in (("💾 保存", self.save_history), ("📂 加载", self.load_history),
-                              ("🗑️ 清空", self.clear_history), ("📤 导出", self.export_conversation)):
-            ttk.Button(cf, text=text, style="Ghost.TButton", command=command).pack(fill=tk.X, pady=2)
+        ttk.Label(cf, text="对话历史", style="SideCaption.TLabel").pack(anchor=tk.W, pady=(11, 4))
+        for text, command in (("保存", self.save_history), ("加载", self.load_history),
+                              ("清空", self.clear_history), ("导出", self.export_conversation)):
+            ttk.Button(cf, text=text, style="Ghost.TButton", command=command).pack(fill=tk.X, pady=0)
 
-        ttk.Label(cf, text="其它", style="SideCaption.TLabel").pack(anchor=tk.W, pady=(14, 5))
-        for text, command in (("⚙️ 设置", self.open_settings),
-                              ("🎨 个性化", self.open_personalization),
-                              ("❓ 帮助", self.show_help), ("ℹ️ 关于", self.show_about)):
-            ttk.Button(cf, text=text, style="Ghost.TButton", command=command).pack(fill=tk.X, pady=2)
-
-        ttk.Button(cf, text="🚪 退出", style="Danger.TButton",
+        ttk.Button(cf, text=T("退出程序", "Quit"), style="Danger.TButton",
                    command=self.root.quit).pack(fill=tk.X, pady=(16, 8))
 
         # ── 右栏：对话卡片 ──
@@ -2217,26 +2514,28 @@ class HuimengAIClient:
         chat_card.rowconfigure(1, weight=1)
         ttk.Label(chat_card, text="对话", style="CardCaption.TLabel").grid(row=0, column=0,
                                                                           sticky=tk.W, pady=(0, 6))
-        fs = int(self.config.get("font_size", 10) or 10)
+        fs = int(self.config.get("font_size", 12) or 12)
         self.chat_text = scrolledtext.ScrolledText(
-            chat_card, wrap=tk.WORD, width=70, height=24, font=("Consolas", 10),
-            bg="#11151b", fg="#d7dde5", insertbackground="#d7dde5",
-            relief="flat", borderwidth=0, highlightthickness=0, padx=12, pady=10,
-            selectbackground="#2b3442", selectforeground="#ffffff")
+            chat_card, wrap=tk.WORD, width=70, height=21, font=(UI_FONT, int(self.config.get("font_size", 12) or 12)),
+            bg="#FFFFFF", fg="#1F2937", insertbackground="#1F2937",
+            relief="flat", borderwidth=0, highlightthickness=0, padx=18, pady=14,
+            selectbackground="#DBEAFE", selectforeground="#111827", spacing1=2, spacing3=2)
         self.chat_text.grid(row=1, column=0, sticky=(tk.N, tk.S, tk.W, tk.E))
         self.chat_text.config(state=tk.DISABLED)
-        self.chat_text.tag_config("user", foreground="#7fd3ff", font=("Consolas", 10, "bold"))
-        self.chat_text.tag_config("assistant", foreground="#e8edf3", font=("Consolas", 10))
-        self.chat_text.tag_config("system", foreground="#8b95a3", font=("Consolas", 10))
-        self.chat_text.tag_config("stats", foreground="#6ee7a8", font=("Consolas", 9))
-        self.chat_text.tag_config("think", foreground="#c9a7ff", font=("Consolas", 9, "italic"))
-        self.chat_text.tag_config("ink", foreground="#b9c2cf", font=("Consolas", 10))
-        self.chat_text.tag_config("tool", foreground="#ffd479", font=("Consolas", 10, "bold"))
-        self.chat_text.tag_config("err", foreground="#ff5f56", font=("Consolas", 10, "bold"))
-        self.chat_text.tag_config("server", foreground="#ff9d6b", font=("Consolas", 10, "bold"))
-        self.chat_text.tag_config("srv_user", foreground="#ffb27a", font=("Consolas", 10))
-        self.chat_text.tag_config("srv_reply", foreground="#ffc98f", font=("Consolas", 10))
-        self.chat_text.tag_config("hist", foreground="#8f9bb3", font=("Consolas", 10))
+        self.chat_text.tag_config("user", foreground="#1E40AF", font=(UI_FONT, 11, "bold"),
+                                  justify="right", spacing1=10, spacing3=2)
+        self.chat_text.tag_config("assistant", foreground="#111827", font=(UI_FONT, 11),
+                                  spacing1=2, spacing3=10)
+        self.chat_text.tag_config("system", foreground="#98A2B3", font=(UI_FONT, 10))
+        self.chat_text.tag_config("stats", foreground="#047857", font=(UI_FONT, 9))
+        self.chat_text.tag_config("think", foreground="#1D4ED8", font=(UI_FONT, 10, "italic"))
+        self.chat_text.tag_config("ink", foreground="#4B5563", font=(UI_FONT, 11))
+        self.chat_text.tag_config("tool", foreground="#B45309", font=(UI_FONT, 10, "bold"))
+        self.chat_text.tag_config("err", foreground="#DC2626", font=(UI_FONT, 10, "bold"))
+        self.chat_text.tag_config("server", foreground="#B45309", font=(UI_FONT, 10, "bold"))
+        self.chat_text.tag_config("srv_user", foreground="#B45309", font=(UI_FONT, 10))
+        self.chat_text.tag_config("srv_reply", foreground="#92400E", font=(UI_FONT, 10))
+        self.chat_text.tag_config("hist", foreground="#9CA3AF", font=(UI_FONT, 10))
 
         ctrl_row = ttk.Frame(chat_card, style="Card.TFrame")
         ctrl_row.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(8, 0))
@@ -2255,23 +2554,23 @@ class HuimengAIClient:
                   anchor=tk.W).pack(side=tk.LEFT, padx=(12, 0))
 
         # ── 底部输入卡片 ──
-        input_card = ttk.Frame(main_frame, style="Card.TFrame", padding=(10, 8, 10, 8))
-        input_card.grid(row=3, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(12, 0))
+        input_card = ttk.Frame(main_frame, style="Card.TFrame", padding=(14, 10, 14, 10))
+        input_card.grid(row=3, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(9, 0))
         input_card.columnconfigure(0, weight=1)
         self.attach_frame = ttk.Frame(input_card, style="Card.TFrame")
         self.attach_frame.grid(row=0, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 6))
         self.attach_frame.grid_remove()
         self.input_var = tk.StringVar()
-        self.input_entry = tk.Entry(input_card, textvariable=self.input_var, font=(UI_FONT, fs),
+        self.input_entry = tk.Entry(input_card, textvariable=self.input_var, font=(UI_FONT, max(fs, 10)),
                                     relief="flat", borderwidth=0, highlightthickness=0,
-                                    bg=THEME["input_bg"], fg=THEME["text"], insertbackground=THEME["text"])
-        self.input_entry.grid(row=1, column=0, sticky=(tk.W, tk.E), ipady=6, padx=(4, 10))
+                                    bg="#F3F4F8", fg=THEME["text"], insertbackground=THEME["text"])
+        self.input_entry.grid(row=1, column=0, sticky=(tk.W, tk.E), ipady=10, padx=(2, 12))
         self.input_entry.bind("<Return>", lambda e: self.send_message())
         self.send_button = ttk.Button(input_card, text="发送", style="Accent.TButton",
                                       command=self.send_message, width=9)
         self.send_button.grid(row=1, column=1)
-        ttk.Button(input_card, text="📎", style="Ghost.TButton", width=3,
-                   command=self.attach_file).grid(row=1, column=2, padx=(6, 0))
+        ttk.Button(input_card, text="附件", style="Ghost.TButton", width=5,
+                   command=self.attach_file).grid(row=1, column=2, padx=(8, 0))
 
     # ==================== 思考计时 / 资源占用 ====================
     def start_thinking(self):
@@ -2328,17 +2627,17 @@ class HuimengAIClient:
         self._sampler_fast = fast
         if getattr(self, "_sampler_thread", None) and self._sampler_thread.is_alive():
             return
-        # 先垫一次差分，否则第一帧 CPU 是空的
-        try:
-            SysMon.cpu_system()
-            SysMon.ai_stats()
-        except Exception:
-            pass
+        # 预热放在采样线程内，避免阻塞 UI 创建
         self._sampler_running = True
         self._sampler_thread = threading.Thread(target=self._sampler_loop, daemon=True)
         self._sampler_thread.start()
 
     def _sampler_loop(self):
+        try:
+            SysMon.cpu_system()
+            SysMon.ai_stats()
+        except Exception:
+            pass
         while getattr(self, "_sampler_running", False):
             try:
                 snap = SysMon.snapshot()
@@ -2570,7 +2869,7 @@ class HuimengAIClient:
                 "显卡 : %d 张（已过滤虚拟显示适配器）") % (
             cpu.get("name", "未知"), cpu.get("cores", 0), cpu.get("threads", 0), cpu.get("mhz", 0),
             cpu.get("arch", ""), self.hw.get("ram_gb", 0), len(gpus))
-        ttk.Label(dlg, text=info, justify=tk.LEFT, font=("Microsoft YaHei", 9)).pack(
+        ttk.Label(dlg, text=info, justify=tk.LEFT, font=(UI_FONT, 9)).pack(
             anchor=tk.W, padx=16, pady=(12, 8))
         cols = ("idx", "vendor", "name", "vram", "driver", "source")
         tree = ttk.Treeview(dlg, columns=cols, show="headings", height=6)
@@ -2677,8 +2976,8 @@ class HuimengAIClient:
         progress_window.grab_set()
         Theme.apply(progress_window)
         progress_window.resizable(False, False)
-        ttk.Label(progress_window, text=f"正在下载模型: {model_name}", font=("Microsoft YaHei", 12, "bold")).pack(pady=(20, 10))
-        status_label = ttk.Label(progress_window, text="初始化下载任务...", font=("Microsoft YaHei", 10))
+        ttk.Label(progress_window, text=f"正在下载模型: {model_name}", font=(UI_FONT, 12, "bold")).pack(pady=(20, 10))
+        status_label = ttk.Label(progress_window, text="初始化下载任务...", font=(UI_FONT, 10))
         status_label.pack(pady=(0, 5))
         progress_bar = ttk.Progressbar(progress_window, length=400, mode='determinate')
         progress_bar.pack(pady=(0, 10))
@@ -3061,10 +3360,16 @@ class HuimengAIClient:
         user_input = self.input_var.get().strip()
         if (not user_input and not self.attachments) or self.is_processing:
             return
-        if not self.ollama_manager.is_service_running():
-            self.queue_message("system", "❌ 模型服务未就绪")
-            return
-        if self.current_model in ["无可用模型", "请先启动Ollama服务"]:
+        use_cloud = str(self.config.get("chat_source", "local")) == "cloud"
+        if use_cloud:
+            if not self._cloud_cfg():
+                self.queue_message("system", "❌ 云端 API 未配置")
+                return
+        else:
+            if not self.ollama_manager.is_service_running():
+                self.queue_message("system", "❌ 模型服务未就绪")
+                return
+        if not use_cloud and self.current_model in ["无可用模型", "请先启动Ollama服务"]:
             self.queue_message("system", "⚠️ 请选择有效模型")
             return
         user_name = self.config.get("user_name", "您")
@@ -3084,7 +3389,119 @@ class HuimengAIClient:
         self.is_processing = True
         self.send_button.config(state=tk.DISABLED)
         self.start_thinking()
-        threading.Thread(target=self.generate_response, args=(user_input,), daemon=True).start()
+        target = self.generate_cloud_response if use_cloud else self.generate_response
+        threading.Thread(target=target, args=(user_input,), daemon=True).start()
+
+
+    # ==================== 对话来源：本地 / 云端 ====================
+    def _cloud_cfg(self):
+        cfg = self.config.get("cloud_api") or {}
+        if not cfg or not str(cfg.get("base_url") or "").strip():
+            return None
+        return cfg
+
+    def open_api_tab(self):
+        try:
+            self.select_nav(3)
+        except Exception:
+            pass
+
+    def on_source_selected(self, _evt=None):
+        want = "cloud" if self.source_var.get().startswith("云端") else "local"
+        if want == "cloud" and not self._cloud_cfg():
+            self.source_var.set("本地模型")
+            self.config["chat_source"] = "local"
+            self.save_config()
+            messagebox.showinfo("云端 API", "还没有配置云端 API。\n先点下面的「配置云端 API」填写地址、Key 和模型。",
+                                parent=self.root)
+            self.open_api_tab()
+            self._update_source_status()
+            return
+        self.config["chat_source"] = want
+        self.save_config()
+        self._update_source_status()
+        if want == "cloud":
+            c = self._cloud_cfg() or {}
+            self._tterm("%s  CLOUD 对话已切到 %s / %s\n" % (
+                self._now_ts(), c.get("provider", "cloud"), c.get("model", "")), "system")
+
+    def _update_source_status(self):
+        try:
+            src = self.config.get("chat_source", "local")
+            if src == "cloud":
+                c = self._cloud_cfg()
+                if c:
+                    self.source_var.set("云端 API")
+                    self.source_status_var.set(("云端 · %s" % c.get("provider", "cloud"))[:34])
+                else:
+                    self.source_var.set("本地模型")
+                    self.source_status_var.set("本地 · %s（云端未配置）" % (self.model_var.get() or ""))
+            else:
+                self.source_var.set("本地模型")
+                self.source_status_var.set("本地 · %s" % (self.model_var.get() or ""))
+        except Exception:
+            pass
+
+    def _cloud_estimate_cost(self, prompt, reply):
+        try:
+            import usage as _usage
+            c = self._cloud_cfg() or {}
+            return _usage.estimate_cost(str(c.get("provider", "")).lower(), c.get("model", ""), prompt, reply)
+        except Exception:
+            return 0.0
+
+    def generate_cloud_response(self, user_input):
+        c = self._cloud_cfg()
+        try:
+            base = str(c.get("base_url") or "").rstrip("/")
+            key = str(c.get("api_key") or "").strip()
+            model = str(c.get("model") or "").strip()
+            provider = str(c.get("provider") or "cloud")
+            msgs = [{"role": m.get("role"), "content": m.get("content")}
+                    for m in self.conversation_history if m.get("role") in ("user", "assistant")]
+            if not msgs:
+                raise RuntimeError("没有可发送的消息")
+            t0 = time.time()
+            r = requests.post(base + "/chat/completions",
+                              headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"},
+                              json={"model": model, "messages": msgs, "stream": False},
+                              timeout=180)
+            dt = time.time() - t0
+            if r.status_code != 200:
+                raise RuntimeError("云端返回 %d：%s" % (r.status_code, r.text[:200]))
+            j = r.json()
+            text = ((j.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+            u = j.get("usage") or {}
+            pt = int(u.get("prompt_tokens") or 0); rt = int(u.get("completion_tokens") or 0)
+            cost = self._cloud_estimate_cost(pt, rt)
+            if not text:
+                raise RuntimeError("云端没有返回内容")
+            self.queue_message("chunk", text)
+            self.queue_message("end", None)
+            self.is_processing = False
+            self.root.after(0, lambda: self.send_button.config(state=tk.NORMAL))
+            self.root.after(0, self._update_source_status)
+            self._term("\n%s  云端 %s · %s · 输入 %d / 输出 %d tokens · %.1fs · 约 ¥%.4f\n" % (
+                self._now_ts(), provider, model, pt, rt, dt, cost), "stats")
+            try:
+                st = getattr(self, "_usage_store", None)
+                if st is not None:
+                    st.record(kind="chat", model=model, prompt_tokens=pt, reply_tokens=rt,
+                              elapsed_ms=int(dt * 1000), provider=str(provider).lower(), cost=cost)
+            except Exception:
+                pass
+            try:
+                sec = self._secure_api if False else None
+            except Exception:
+                pass
+        except Exception as e:
+            self.queue_message("system", "❌ 云端调用失败：%s" % e)
+            self.is_processing = False
+            self.root.after(0, lambda: self.send_button.config(state=tk.NORMAL))
+            try:
+                self.root.after(0, self.finish_thinking)
+            except Exception:
+                pass
 
     # ==================== 工具（模型可调用）====================
     def _tool_specs(self):
@@ -3369,7 +3786,7 @@ class HuimengAIClient:
         if not getattr(self, "_stream_open", False):
             ai_name = self.config.get("ai_name", "AI助手")
             self._stream_start = self.chat_text.index("end-1c")
-            self.chat_text.insert(tk.END, "🤖 %s: " % ai_name, "assistant")
+            self.chat_text.insert(tk.END, "%s\n" % (self.config.get("ai_name") or "Hymnix"), "assistant")
             self._stream_open = True
         self._stream_chars = int(getattr(self, "_stream_chars", 0)) + len(text)
         if getattr(self, "_t_first", None) is None:
@@ -3413,12 +3830,14 @@ class HuimengAIClient:
         if getattr(self, "_stream_open", False):
             self.end_assistant_message()
         if role == "user":
-            self._term("%s  USER  › %s\n" % (self._now_ts(), content), "user")
+            uname = self.config.get("user_name") or "你"
+            self._term("%s\n%s\n\n" % (uname, content), "user")
         elif role == "assistant":
-            self._term("%s  MODEL › %s\n" % (self._now_ts(), content), "assistant")
+            aname = self.config.get("ai_name") or "Hymnix"
+            self._term("%s\n%s\n\n" % (aname, content), "assistant")
         else:
             bad = any(k in str(content) for k in ("❌", "失败", "错误", "异常", "超时", "未响应", "无效"))
-            self._term("%s  SYS   · %s\n" % (self._now_ts(), content), "err" if bad else "system")
+            self._tterm("%s  SYS   · %s\n" % (self._now_ts(), content), "err" if bad else "system")
 
     def append_assistant_chunk(self, text):
         if not text:
@@ -3426,7 +3845,7 @@ class HuimengAIClient:
         try:
             self.chat_text.config(state=tk.NORMAL)
             if not getattr(self, "_stream_open", False):
-                self.chat_text.insert(tk.END, "%s  MODEL › " % self._now_ts(), "assistant")
+                self.chat_text.insert(tk.END, "%s\n" % (self.config.get("ai_name") or "Hymnix"), "assistant")
                 self._stream_open = True
                 self._stream_chars = 0
             self._stream_chars = int(getattr(self, "_stream_chars", 0)) + len(text)
@@ -3544,17 +3963,22 @@ class HuimengAIClient:
         self.message_queue.put(("msg", role, content, prefix))
 
     def process_message_queue(self):
+        budget = 150
         try:
-            while True:
+            while budget > 0:
+                budget -= 1
                 item = self.message_queue.get_nowait()
                 kind = item[0]
                 if kind == "metrics":
                     if hasattr(self, "metrics_var"):
                         self.metrics_var.set(item[1])
                 elif kind == "trace":
-                    self._term(str(item[1]) + "\n", "stats")
+                    self._tterm(str(item[1]) + "\n", "stats")
                 elif kind == "system":
-                    self.display_message("system", item[1])
+                    try:
+                        self._tterm("%s  SYS   · %s\n" % (self._now_ts(), item[1]), "system")
+                    except Exception:
+                        pass
                 elif kind == "server_record":
                     try:
                         self._print_server_record(item[1], prefix="SERVER")
@@ -3574,7 +3998,8 @@ class HuimengAIClient:
         except Empty:
             pass
         finally:
-            self.root.after(60, self.process_message_queue)
+            delay = 0 if budget <= 0 else 60
+            self.root.after(delay, self.process_message_queue)
 
     def update_connection_status(self, connected):
         def apply():
@@ -3699,7 +4124,7 @@ class HuimengAIClient:
         dialog.transient(self.root)
         dialog.grab_set()
         Theme.apply(dialog)
-        ttk.Label(dialog, text="选择格式:", font=("Microsoft YaHei", 10)).pack(pady=20)
+        ttk.Label(dialog, text="选择格式:", font=(UI_FONT, 10)).pack(pady=20)
         format_var = tk.StringVar(value="txt")
         formats = [("文本文件 (.txt)", "txt"), ("JSON文件 (.json)", "json"), ("Markdown (.md)", "md")]
         for text, value in formats:
@@ -3957,7 +4382,7 @@ class HuimengAIClient:
         dialog.transient(self.root)
         dialog.grab_set()
         Theme.apply(dialog)
-        ttk.Label(dialog, text="程序设置", font=("Microsoft YaHei", 12, "bold")).pack(pady=(15, 10))
+        ttk.Label(dialog, text="程序设置", font=(UI_FONT, 12, "bold")).pack(pady=(15, 10))
         settings_frame = ttk.Frame(dialog)
         settings_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
         ttk.Label(settings_frame, text="API超时时间(秒):").grid(row=0, column=0, sticky=tk.W, pady=5)
@@ -4005,7 +4430,7 @@ class HuimengAIClient:
         dialog.transient(self.root)
         dialog.grab_set()
         Theme.apply(dialog)
-        ttk.Label(dialog, text="个性化设置", font=("Microsoft YaHei", 12, "bold")).pack(pady=(15, 10))
+        ttk.Label(dialog, text="个性化设置", font=(UI_FONT, 12, "bold")).pack(pady=(15, 10))
         settings_frame = ttk.Frame(dialog)
         settings_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
         ttk.Label(settings_frame, text="用户名称:").grid(row=0, column=0, sticky=tk.W, pady=5)
@@ -4030,8 +4455,8 @@ class HuimengAIClient:
                 self.config["font_size"] = int(font_size_var.get())
                 self.config["enable_sound"] = sound_var.get()
                 self.save_config()
-                self.chat_text.config(font=("Microsoft YaHei", self.config["font_size"]))
-                self.input_entry.config(font=("Microsoft YaHei", self.config["font_size"]))
+                self.chat_text.config(font=(UI_FONT, self.config["font_size"]))
+                self.input_entry.config(font=(UI_FONT, self.config["font_size"]))
                 dialog.destroy()
                 self.queue_message("system", "✅ 个性化设置已保存")
             except ValueError:
@@ -4043,6 +4468,12 @@ class HuimengAIClient:
     def set_language(self, lang):
         self.config["language"] = lang
         try:
+            import i18n as _i18n
+            _i18n.set_lang(lang)
+            LANG["cur"] = lang
+        except Exception:
+            pass
+        try:
             self.save_config()
         except Exception:
             pass
@@ -4052,7 +4483,7 @@ class HuimengAIClient:
 
     def reset_window(self):
         if messagebox.askyesno("重置窗口", "确定要重置窗口位置和大小吗？", parent=self.root):
-            self.root.geometry("1000x750")
+            self.root.geometry(self._geo(1200, 870))
             self.queue_message("system", "🔄 窗口已重置")
 
     def show_changelog(self):
@@ -4125,7 +4556,7 @@ class HuimengAIClient:
 
     def check_updates(self):
         self.queue_message("system", "🔍 正在检查更新...")
-        self.queue_message("system", "✅ 当前已是最新版本 v26W05d")
+        self.queue_message("system", "✅ 当前已是最新版本 v%s" % app_version())
 
     def show_about(self):
         """关于：把版本、环境、硬件、能力、隐私一次说清，并可一键复制给排障用"""
@@ -4153,9 +4584,9 @@ class HuimengAIClient:
 
         rows = [
             ("h2", "版本"),
-            ("kv", ("程序版本", "1.0.0 · 2026-11-05")),
-            ("kv", ("代码基线", "26W05d（原件备份 all_in_one_local_ai_client.py.bak-26W05d）")),
-            ("kv", ("运行方式", "Python 源码 / 单文件 exe（dist\\Hymnix 26W07a.exe）")),
+            ("kv", ("程序版本", app_version_line())),
+            ("kv", ("发行版", "Hymnix 公版 · CarrisFlynn/hymnix-ai-server")),
+            ("kv", ("运行方式", "Python 源码 / 单文件 exe（Hymnix %s.exe）" % app_version())),
             ("h2", "运行环境"),
             ("kv", ("Python", "%d.%d.%d" % sys.version_info[:3])),
             ("kv", ("Ollama", "%s　（%s）" % (ollama_ver, ollama_state))),
@@ -4200,7 +4631,7 @@ class HuimengAIClient:
         head.pack(fill=tk.X, padx=20, pady=(16, 4))
         ttk.Label(head, text="Hymnix", style="Bg.TLabel",
                   font=(UI_FONT, 18, "bold")).pack(side=tk.LEFT)
-        ttk.Label(head, text="1.0.0", style="CardThink.TLabel").pack(side=tk.LEFT, padx=(10, 0))
+        ttk.Label(head, text=app_version(), style="CardThink.TLabel").pack(side=tk.LEFT, padx=(10, 0))
         ttk.Label(dlg, text="本地大模型客户端 · 全离线推理", style="BgMuted.TLabel").pack(
             anchor=tk.W, padx=20)
 
@@ -4210,7 +4641,7 @@ class HuimengAIClient:
         box.pack(fill=tk.BOTH, expand=True, padx=20, pady=(10, 6))
         box.tag_config("h2", foreground=THEME["accent"], font=(UI_FONT, 10, "bold"),
                        spacing1=8, spacing3=4)
-        box.tag_config("k", foreground=THEME["text_muted"], font=(UI_FONT, 9))
+        box.tag_config("k", foreground=THEME["text_muted"], font=(UI_FONT, 10))
         box.tag_config("v", foreground=THEME["text"], font=(UI_FONT, 9))
         box.tag_config("li", foreground=THEME["text"], font=(UI_FONT, 9),
                        lmargin1=16, lmargin2=26)
@@ -4253,14 +4684,14 @@ class HuimengAIClient:
         Theme.apply(dialog)
         models = self.ollama_manager.get_available_models()
         if not models:
-            ttk.Label(dialog, text="没有找到已安装的模型", font=("Microsoft YaHei", 10)).pack(pady=50)
+            ttk.Label(dialog, text="没有找到已安装的模型", font=(UI_FONT, 10)).pack(pady=50)
             ttk.Button(dialog, text="关闭", command=dialog.destroy).pack(pady=20)
             return
         list_frame = ttk.Frame(dialog)
         list_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
         scrollbar = ttk.Scrollbar(list_frame)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        model_listbox = tk.Listbox(list_frame, yscrollcommand=scrollbar.set, font=("Microsoft YaHei", 10),
+        model_listbox = tk.Listbox(list_frame, yscrollcommand=scrollbar.set, font=(UI_FONT, 10),
                                    bg=WIN7_STYLE['text_bg'], fg=WIN7_STYLE['text_fg'])
         model_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.config(command=model_listbox.yview)
@@ -4420,6 +4851,809 @@ class HuimengAIClient:
         ttk.Button(btns, text="关闭", command=win.destroy).pack(side="left", padx=6)
 
     # ==================== 服务端监控（内嵌页）====================
+
+    # ==================== 概览 Dashboard ====================
+    def _usage_summary(self):
+        try:
+            if getattr(self, "_usage_store", None) is not None:
+                return self._usage_store.summary("today")
+        except Exception:
+            pass
+        return {"requests": 0, "prompt_tokens": 0, "reply_tokens": 0,
+                "total_tokens": 0, "cost": 0.0, "avg_latency_ms": 0}
+
+    @staticmethod
+    def _fmt_num(n):
+        try:
+            n = int(n)
+        except Exception:
+            return str(n)
+        if n >= 1000000:
+            return "%.1fM" % (n / 1000000.0)
+        if n >= 1000:
+            return "%.1fK" % (n / 1000.0)
+        return str(n)
+
+    def build_dashboard_tab(self, parent):
+        self._section_header(parent, T("概览", "Overview"), "dashboard")
+        outer = ttk.Frame(parent, padding=(18, 4, 18, 16))
+        outer.pack(fill="both", expand=True)
+        outer.columnconfigure(0, weight=1)
+        outer.rowconfigure(2, weight=1)
+
+        hero = tk.Frame(outer, bg=THEME["card"], highlightbackground=THEME["sep"], highlightthickness=1)
+        hero.grid(row=0, column=0, sticky="ew")
+        hero.columnconfigure(0, weight=1)
+        tk.Label(hero, text=T("本地 AI 网关", "Local AI gateway"), bg=THEME["card"],
+                 fg=THEME["text"], font=(UI_FONT, 16, "bold")).grid(
+            row=0, column=0, sticky="w", padx=18, pady=(16, 2))
+        self.dash_status_var = tk.StringVar(value=T("正在检测…", "Checking..."))
+        tk.Label(hero, textvariable=self.dash_status_var, bg=THEME["card"],
+                 fg=THEME["text_muted"], font=(UI_FONT, 9)).grid(
+            row=1, column=0, sticky="w", padx=18)
+        self.dash_url_var = tk.StringVar(value=T("公网地址：未分配", "Public address: not allocated"))
+        tk.Label(hero, textvariable=self.dash_url_var, bg=THEME["card"],
+                 fg=THEME["accent"], font=(UI_FONT, 9)).grid(
+            row=2, column=0, sticky="w", padx=18, pady=(2, 16))
+        btns = tk.Frame(hero, bg=THEME["card"])
+        btns.grid(row=0, column=1, rowspan=3, sticky="e", padx=16)
+        ttk.Button(btns, text=T("启动隧道", "Start tunnel"), style="Accent.TButton",
+                   command=self.toggle_host_tunnel).pack(side="left")
+        ttk.Button(btns, text=T("复制地址", "Copy address"), style="Ghost.TButton",
+                   command=self.copy_host_url).pack(side="left", padx=8)
+        ttk.Button(btns, text=T("打开监控", "Open monitor"), style="Ghost.TButton",
+                   command=self.show_monitor_tab).pack(side="left")
+
+        row = tk.Frame(outer, bg=THEME["bg"])
+        row.grid(row=1, column=0, sticky="ew", pady=(14, 0))
+        for i in range(3):
+            row.columnconfigure(i, weight=1)
+        self.dash_req_var = tk.StringVar(value="0")
+        self.dash_tok_var = tk.StringVar(value="0")
+        self.dash_cost_var = tk.StringVar(value="¥0.00")
+        cards = [(T("今日请求", "Requests today"), self.dash_req_var),
+                 (T("今日 Tokens", "Tokens today"), self.dash_tok_var),
+                 (T("今日费用", "Cost today"), self.dash_cost_var)]
+        for i, (title, var) in enumerate(cards):
+            card = tk.Frame(row, bg=THEME["card"], highlightbackground=THEME["sep"], highlightthickness=1)
+            card.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else 10, 0))
+            tk.Label(card, text=title, bg=THEME["card"], fg=THEME["text_muted"],
+                     font=(UI_FONT, 9)).pack(anchor="w", padx=14, pady=(9, 0))
+            tk.Label(card, textvariable=var, bg=THEME["card"], fg=THEME["text"],
+                     font=(UI_FONT, 22, "bold")).pack(anchor="w", padx=14, pady=(2, 12))
+
+        bottom = tk.Frame(outer, bg=THEME["bg"])
+        bottom.grid(row=2, column=0, sticky="nsew", pady=(14, 0))
+        bottom.columnconfigure(0, weight=1)
+        bottom.columnconfigure(1, weight=1)
+        bottom.rowconfigure(0, weight=1)
+
+        dev = tk.Frame(bottom, bg=THEME["card"], highlightbackground=THEME["sep"], highlightthickness=1)
+        dev.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        tk.Label(dev, text=T("设备状态", "Device"), bg=THEME["card"], fg=THEME["text"],
+                 font=(UI_FONT, 11, "bold")).pack(anchor="w", padx=14, pady=(12, 6))
+        self.dash_device_var = tk.StringVar(value=T("检测中…", "Detecting..."))
+        tk.Label(dev, textvariable=self.dash_device_var, bg=THEME["card"], fg=THEME["text_muted"],
+                 font=(UI_FONT, 9), justify="left", wraplength=420).pack(anchor="w", padx=14)
+        quick = tk.Frame(dev, bg=THEME["card"])
+        quick.pack(anchor="w", padx=14, pady=(10, 14))
+        ttk.Button(quick, text=T("模型管理", "Models"), style="Ghost.TButton",
+                   command=self.manage_models).pack(side="left")
+        ttk.Button(quick, text=T("清理历史", "Clean history"), style="Ghost.TButton",
+                   command=self.open_cleanup_dialog).pack(side="left", padx=8)
+        ttk.Button(quick, text=T("更新日志", "Changelog"), style="Ghost.TButton",
+                   command=self.show_changelog).pack(side="left")
+
+        recent = tk.Frame(bottom, bg=THEME["card"], highlightbackground=THEME["sep"], highlightthickness=1)
+        recent.grid(row=0, column=1, sticky="nsew")
+        tk.Label(recent, text=T("最近请求", "Recent requests"), bg=THEME["card"], fg=THEME["text"],
+                 font=(UI_FONT, 11, "bold")).pack(anchor="w", padx=14, pady=(12, 6))
+        self.dash_recent = tk.Text(recent, height=8, bg=THEME["card"], fg=THEME["text_muted"],
+                                   relief="flat", font=(UI_FONT, 9), wrap="word", bd=0)
+        self.dash_recent.pack(fill="both", expand=True, padx=14, pady=(0, 12))
+        self.dash_recent.configure(state="disabled")
+        self.root.after(1200, self.refresh_dashboard)
+
+    def refresh_dashboard(self):
+        try:
+            ok = bool(HOST.get("ready"))
+            clients = HOST.get("clients", 0)
+            self.dash_status_var.set((T("● 网关在线", "● Gateway online") if ok
+                                      else T("● 网关离线", "● Gateway offline"))
+                                     + "   ·   " + T("在线客户端 %d", "Clients %d") % clients)
+            url = HOST.get("url") or ""
+            self.dash_url_var.set((T("公网地址：", "Public address: ") + url) if url
+                                  else T("公网地址：未分配（点「启动隧道」）", "Public address: not allocated"))
+        except Exception:
+            pass
+        try:
+            s = self._usage_summary()
+            self.dash_req_var.set(str(s.get("requests", 0)))
+            self.dash_tok_var.set(self._fmt_num(s.get("total_tokens", 0)))
+            self.dash_cost_var.set("¥%.2f" % float(s.get("cost", 0) or 0))
+        except Exception:
+            pass
+        try:
+            hw = getattr(self, "hw_summary_var", None)
+            if hw is not None:
+                self.dash_device_var.set(hw.get())
+            else:
+                gpu = T("未检测到显卡", "No GPU detected")
+                try:
+                    import subprocess as _sp
+                    r = _sp.run(["nvidia-smi", "--query-gpu=name,memory.used,memory.total",
+                                 "--format=csv,noheader,nounits"], capture_output=True,
+                                text=True, timeout=3,
+                                creationflags=getattr(_sp, "CREATE_NO_WINDOW", 0))
+                    line = (r.stdout or "").strip().splitlines()[0] if r.stdout.strip() else ""
+                    if line:
+                        parts = [x.strip() for x in line.split(",")]
+                        gpu = "%s   VRAM %s/%s MB" % (parts[0], parts[1], parts[2])
+                except Exception:
+                    pass
+                self.dash_device_var.set(gpu)
+        except Exception:
+            pass
+        try:
+            recs = getattr(self, "_mon_records", []) or []
+            lines = []
+            for rec in recs[-6:][::-1]:
+                ip = str(rec.get("ip") or "local")
+                model = str(rec.get("model") or "")
+                el = (rec.get("elapsed_ms") or 0) / 1000.0
+                lines.append("%s  %s  %.1fs" % (ip, model, el))
+            text = "\n".join(lines) if lines else T("暂无请求", "No requests yet")
+            self.dash_recent.configure(state="normal")
+            self.dash_recent.delete("1.0", "end")
+            self.dash_recent.insert("1.0", text)
+            self.dash_recent.configure(state="disabled")
+        except Exception:
+            pass
+
+    # ==================== 欢迎 / 登录 ====================
+    def ensure_welcome(self, force=False):
+        try:
+            if self.config.get("welcome_done") and not force:
+                return
+            win = tk.Toplevel(self.root)
+            win.title("Welcome · Hymnix 1.1.0")
+            win.configure(bg=THEME["bg"])
+            win.geometry("620x520")
+            win.transient(self.root)
+            win.grab_set()
+            win.resizable(False, False)
+            tk.Label(win, text="Hymnix 1.1.0", bg=THEME["bg"], fg=THEME["text"],
+                     font=(UI_FONT, 22, "bold")).pack(anchor="w", padx=28, pady=(26, 2))
+            tk.Label(win, text=T("本地 AI 网关 · 多语言 · 用量可见", "Local AI gateway · multilingual"),
+                     bg=THEME["bg"], fg=THEME["text_muted"],
+                     font=(UI_FONT, 10)).pack(anchor="w", padx=28)
+
+            lang_box = tk.Frame(win, bg=THEME["card"], highlightbackground=THEME["sep"], highlightthickness=1)
+            lang_box.pack(fill="x", padx=28, pady=(18, 0))
+            tk.Label(lang_box, text=T("界面语言", "Interface language"), bg=THEME["card"],
+                     fg=THEME["text"], font=(UI_FONT, 10, "bold")).pack(anchor="w", padx=14, pady=(10, 2))
+            lang_var = tk.StringVar(value=self.config.get("language") or "zh")
+            opts = [("中文", "zh"), ("English", "en"), ("Français", "fr"), ("Русский", "ru"), ("Español", "es")]
+            row = tk.Frame(lang_box, bg=THEME["card"])
+            row.pack(fill="x", padx=10, pady=(2, 10))
+            for idx, (label, code) in enumerate(opts):
+                tk.Radiobutton(row, text=label, value=code, variable=lang_var, bg=THEME["card"],
+                               fg=THEME["text"], activebackground=THEME["card"],
+                               activeforeground=THEME["text"], highlightthickness=0, bd=0,
+                               font=(UI_FONT, 9), selectcolor=THEME["card"]).grid(
+                    row=idx // 3, column=idx % 3, sticky="w", padx=(4, 12), pady=3)
+            for col in range(3):
+                row.columnconfigure(col, weight=1)
+
+            mode_box = tk.Frame(win, bg=THEME["card"], highlightbackground=THEME["sep"], highlightthickness=1)
+            mode_box.pack(fill="x", padx=28, pady=(9, 0))
+            tk.Label(mode_box, text=T("登录方式", "Sign in"), bg=THEME["card"], fg=THEME["text"],
+                     font=(UI_FONT, 10, "bold")).pack(anchor="w", padx=14, pady=(8, 4))
+            tk.Label(mode_box, text=T("本地模式：无需账号，数据只在本机",
+                                      "Local mode: no account, data stays on this PC"),
+                     bg=THEME["card"], fg=THEME["text_muted"], font=(UI_FONT, 9)).pack(anchor="w", padx=14)
+            gh = ttk.Button(mode_box, text=T("连接 GitHub（即将支持）", "Connect GitHub (coming soon)"),
+                            style="Ghost.TButton")
+            gh.config(state=tk.DISABLED)
+            gh.pack(anchor="w", padx=14, pady=(6, 12))
+
+            def _go():
+                self.config["language"] = lang_var.get()
+                self.config["welcome_done"] = True
+                try:
+                    self.save_config()
+                except Exception:
+                    pass
+                win.destroy()
+
+            ttk.Button(win, text=T("以本地模式开始", "Continue in local mode"),
+                       style="Accent.TButton", command=_go).pack(anchor="e", padx=28, pady=(18, 0))
+        except Exception:
+            pass
+
+
+    # ==================== 终端（服务端日志） ====================
+    # ---------- 550C 控制台配色 ----------
+    C_BG = "#05080E"
+    C_PANEL = "#0A1018"
+    C_LINE = "#16324A"
+    C_LINE2 = "#1E4E6B"
+    C_TXT = "#9BE8FF"
+    C_DIM = "#4E7C93"
+    C_ACC = "#38BDF8"
+    C_WARN = "#FFC857"
+    C_ERR = "#FF6B6B"
+    C_OK = "#3DDC97"
+
+    def _cbtn(self, parent, text, command, accent=False, pad=10):
+        return tk.Button(
+            parent, text=text, command=command,
+            bg=self.C_ACC if accent else self.C_PANEL,
+            fg="#04121C" if accent else self.C_TXT,
+            activebackground="#0EA5E9" if accent else "#0E2334",
+            activeforeground="#04121C" if accent else "#CFEFFF",
+            font=("Consolas", 9, "bold" if accent else "normal"),
+            relief="flat", bd=0, padx=pad, pady=3, cursor="hand2",
+            highlightthickness=1,
+            highlightbackground=self.C_ACC if accent else self.C_LINE,
+            highlightcolor=self.C_LINE2, disabledforeground=self.C_DIM)
+
+    def _console_chip(self, parent, label, var, fg=None):
+        box = tk.Frame(parent, bg=self.C_PANEL)
+        tk.Label(box, text=label, bg=self.C_PANEL, fg=self.C_DIM,
+                 font=("Consolas", 9)).pack(side="left")
+        tk.Label(box, textvariable=var, bg=self.C_PANEL, fg=fg or self.C_TXT,
+                 font=("Consolas", 9, "bold")).pack(side="left", padx=(6, 0))
+        return box
+
+    def build_trace_tab(self, parent):
+        self._section_header(parent, T("终端", "Terminal"), "550c console")
+        outer = tk.Frame(parent, bg=self.C_BG, highlightthickness=1,
+                         highlightbackground=self.C_LINE2)
+        outer.pack(fill="both", expand=True, padx=34, pady=(8, 20))
+
+        # ---- 顶栏：标识 / 时钟 / 信号 ----
+        bar = tk.Frame(outer, bg=self.C_PANEL)
+        bar.pack(fill="x")
+        tk.Frame(bar, bg=self.C_ACC, width=3).pack(side="left", fill="y")
+        tk.Label(bar, text=" HYMNIX // TERMINAL", bg=self.C_PANEL, fg=self.C_TXT,
+                 font=("Consolas", 10, "bold")).pack(side="left", pady=6)
+        tk.Label(bar, text="· 550C", bg=self.C_PANEL, fg=self.C_DIM,
+                 font=("Consolas", 9)).pack(side="left", padx=(6, 0))
+        self.trace_clock = tk.StringVar(value="--:--:--")
+        tk.Label(bar, textvariable=self.trace_clock, bg=self.C_PANEL, fg=self.C_TXT,
+                 font=("Consolas", 10)).pack(side="right", padx=(0, 12))
+        self.trace_sig = tk.Canvas(bar, bg=self.C_PANEL, height=14, width=120,
+                                   highlightthickness=0, bd=0)
+        self.trace_sig.pack(side="right", padx=(10, 10))
+        tk.Frame(outer, bg=self.C_LINE, height=1).pack(fill="x")
+
+        # ---- 状态栏：链路 / 隧道 / 进程 ----
+        self.trace_tunnel_status = tk.StringVar(value="未启动")
+        self.trace_tunnel_url = tk.StringVar(value="未分配")
+        self.trace_tunnel_pid = tk.StringVar(value="PID -")
+        stat = tk.Frame(outer, bg=self.C_PANEL)
+        stat.pack(fill="x")
+        left = tk.Frame(stat, bg=self.C_PANEL)
+        left.pack(side="left", padx=(10, 0), pady=6)
+        self._console_chip(left, "LINK", self.trace_tunnel_status, self.C_OK).pack(side="left")
+        self._console_chip(left, "TUN", self.trace_tunnel_url, self.C_TXT).pack(side="left", padx=(14, 0))
+        self._console_chip(left, "PROC", self.trace_tunnel_pid, self.C_DIM).pack(side="left", padx=(14, 0))
+        btns = tk.Frame(stat, bg=self.C_PANEL)
+        btns.pack(side="right", padx=(0, 8), pady=6)
+        self._cbtn(btns, "COPY", self.copy_trace_tunnel_url).pack(side="left", padx=3)
+        self._cbtn(btns, "OPEN", self.open_trace_tunnel_url).pack(side="left", padx=3)
+        self._cbtn(btns, "LINK", self.toggle_host_tunnel, accent=True).pack(side="left", padx=(3, 0))
+        tk.Frame(outer, bg=self.C_LINE, height=1).pack(fill="x")
+
+        self._tun_slot = tk.Frame(outer, bg=self.C_PANEL)
+        self._tun_slot.pack(fill="x")
+        self.trace_tunnel_log = tk.Label(
+            self._tun_slot, text="", justify="left", anchor="nw", height=4,
+            bg=self.C_PANEL, fg=self.C_DIM, font=("Consolas", 9),
+            padx=10, pady=4)
+        self.trace_tun_log_shown = False
+
+        # ---- 配置条：分享模型 / 计费 / 限额 ----
+        cfg = tk.Frame(outer, bg=self.C_PANEL)
+        cfg.pack(fill="x")
+        tk.Label(cfg, text="MODEL", bg=self.C_PANEL, fg=self.C_DIM,
+                 font=("Consolas", 9)).pack(side="left", padx=(10, 6), pady=6)
+        self.trace_share_model = tk.StringVar(value=self.config.get("share_model") or "")
+        self.trace_model_menu = tk.Menu(cfg, tearoff=0, bg=self.C_PANEL, fg=self.C_TXT,
+                                        activebackground=self.C_ACC, activeforeground="#04121C",
+                                        bd=0, font=("Consolas", 9))
+        self.trace_model_mb = tk.Menubutton(
+            cfg, text=" —  v", menu=self.trace_model_menu,
+            bg=self.C_BG, fg=self.C_TXT, activebackground=self.C_LINE, activeforeground=self.C_TXT,
+            font=("Consolas", 9), relief="flat", bd=0, padx=8, pady=2, cursor="hand2",
+            highlightthickness=1, highlightbackground=self.C_LINE)
+        self.trace_model_mb.pack(side="left")
+        self.trace_share_model.trace_add("write", lambda *a: self._sync_trace_model_label())
+        self._cbtn(cfg, "APPLY", self.apply_share_model).pack(side="left", padx=6)
+
+        self.trace_billing = tk.BooleanVar(value=bool(self.config.get("billing_enabled", True)))
+        tk.Checkbutton(cfg, text="BILL", variable=self.trace_billing, command=self.apply_billing,
+                       bg=self.C_PANEL, fg=self.C_DIM, activebackground=self.C_PANEL,
+                       activeforeground=self.C_TXT, selectcolor=self.C_BG,
+                       font=("Consolas", 9), bd=0, highlightthickness=0,
+                       cursor="hand2").pack(side="left", padx=(14, 0))
+
+        tk.Label(cfg, text="QUOTA", bg=self.C_PANEL, fg=self.C_DIM,
+                 font=("Consolas", 9)).pack(side="left", padx=(14, 6))
+        self.trace_quota = tk.StringVar(value=str(self.config.get("daily_quota_tokens", 0) or 0))
+        tk.Entry(cfg, textvariable=self.trace_quota, width=9, bg=self.C_BG, fg=self.C_TXT,
+                 insertbackground=self.C_ACC, relief="flat", bd=0, font=("Consolas", 9),
+                 highlightthickness=1, highlightbackground=self.C_LINE,
+                 highlightcolor=self.C_LINE2).pack(side="left", ipady=3, padx=(0, 6))
+        self._cbtn(cfg, "SAVE", self.apply_quota).pack(side="left")
+        self._cbtn(cfg, "TUN.LOG", self._toggle_trace_tunnel_log).pack(side="right", padx=(0, 8))
+        tk.Frame(outer, bg=self.C_LINE, height=1).pack(fill="x")
+
+        # ---- 日志区 ----
+        loghead = tk.Frame(outer, bg=self.C_BG)
+        loghead.pack(fill="x", padx=10, pady=(6, 2))
+        tk.Label(loghead, text="SYS.LOG", bg=self.C_BG, fg=self.C_DIM,
+                 font=("Consolas", 9, "bold")).pack(side="left")
+        self.trace_log_stat = tk.StringVar(value="")
+        tk.Label(loghead, textvariable=self.trace_log_stat, bg=self.C_BG, fg=self.C_DIM,
+                 font=("Consolas", 9)).pack(side="left", padx=(10, 0))
+        self._cbtn(loghead, "CLEAR", self.clear_trace).pack(side="right")
+        self._cbtn(loghead, "COPY", self.copy_trace).pack(side="right", padx=6)
+
+        body = tk.Frame(outer, bg=self.C_LINE2, highlightthickness=1,
+                        highlightbackground=self.C_LINE2)
+        body.pack(fill="both", expand=True, padx=10, pady=(0, 0))
+        self.trace_text = tk.Text(
+            body, bg=self.C_BG, fg=self.C_TXT, insertbackground=self.C_TXT,
+            selectbackground="#12384F", selectforeground="#E6FAFF",
+            font=("Consolas", 10), relief="flat", bd=0, wrap="word", height=8,
+            padx=10, pady=8, highlightthickness=0, spacing1=1, spacing3=1)
+        sb = tk.Scrollbar(body, command=self.trace_text.yview, width=10, bd=0,
+                          relief="flat", highlightthickness=0,
+                          bg=self.C_PANEL, troughcolor=self.C_BG,
+                          activebackground=self.C_LINE2, elementborderwidth=0)
+        self.trace_text.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        self.trace_text.pack(side="left", fill="both", expand=True)
+        tag_colors = {
+            "user": "#7FE7FF", "assistant": "#DFF6FF", "system": "#5F90A8",
+            "stats": "#3DDC97", "think": "#7FA8FF", "ink": "#9FBFD0",
+            "tool": "#FFC857", "err": "#FF6B6B", "server": "#FF9E6B",
+            "srv_user": "#FFB27A", "srv_reply": "#FFC98F", "hist": "#6E8CA0",
+        }
+        for tag, color in tag_colors.items():
+            self.trace_text.tag_config(tag, foreground=color)
+        self.trace_text.config(state=tk.DISABLED)
+
+        # ---- 命令行 ----
+        cmdwrap = tk.Frame(outer, bg=self.C_PANEL, highlightthickness=1,
+                           highlightbackground=self.C_LINE)
+        cmdwrap.pack(fill="x", padx=10, pady=(8, 0))
+        tk.Label(cmdwrap, text=">", bg=self.C_PANEL, fg=self.C_ACC,
+                 font=("Consolas", 11, "bold")).pack(side="left", padx=(10, 6))
+        self.trace_cmd = tk.StringVar()
+        self.trace_cmd_entry = tk.Entry(
+            cmdwrap, textvariable=self.trace_cmd, bg=self.C_PANEL, fg=self.C_TXT,
+            insertbackground=self.C_ACC, relief="flat", bd=0,
+            font=("Consolas", 10), highlightthickness=0)
+        self.trace_cmd_entry.pack(side="left", fill="x", expand=True, pady=7)
+        self._cbtn(cmdwrap, "EXEC", self.run_trace_command, accent=True).pack(side="right", padx=6)
+        self._trace_history = []
+        self._trace_history_pos = 0
+        self.trace_cmd_entry.bind("<Return>", lambda e: self.run_trace_command())
+        self.trace_cmd_entry.bind("<Up>", self._trace_history_prev)
+        self.trace_cmd_entry.bind("<Down>", self._trace_history_next)
+        self.trace_cmd_entry.bind("<Tab>", self._trace_complete)
+
+        # ---- 页脚 ----
+        self.trace_hint = tk.StringVar(value="")
+        foot = tk.Frame(outer, bg=self.C_BG)
+        foot.pack(fill="x", padx=10, pady=(4, 8))
+        tk.Label(foot, textvariable=self.trace_hint, bg=self.C_BG, fg=self.C_ACC,
+                 font=("Consolas", 9), anchor="w").pack(fill="x")
+        self.trace_hint.set(
+            "命令: help · status · models · model <名称> · tunnel on|off · quota <n> · service · export · ps")
+
+        self._reset_trace_model_values()
+        self._sync_trace_model_label()
+        self.root.after(1000, self._refresh_trace_tunnel)
+        self.root.after(2500, self._refresh_trace_models)
+        self._console_tick()
+
+    def _toggle_trace_tunnel_log(self):
+        try:
+            if self.trace_tun_log_shown:
+                self.trace_tunnel_log.pack_forget()
+                self.trace_tun_log_shown = False
+            else:
+                self.trace_tunnel_log.pack(fill="x", in_=self._tun_slot)
+                self.trace_tun_log_shown = True
+        except Exception:
+            pass
+
+    def _sync_trace_model_label(self):
+        try:
+            cur = (self.trace_share_model.get() or "—").strip() or "—"
+            if len(cur) > 24:
+                cur = cur[:23] + "…"
+            self.trace_model_mb.configure(text=" %s  v" % cur)
+        except Exception:
+            pass
+
+    def _set_trace_model_values(self, vals):
+        try:
+            vals = [str(v) for v in (vals or [])]
+            m = self.trace_model_menu
+            m.delete(0, "end")
+            for v in vals:
+                m.add_command(label=v, command=lambda vv=v: self.trace_share_model.set(vv))
+            if vals and self.trace_share_model.get() not in vals:
+                self.trace_share_model.set(vals[0])
+            self._sync_trace_model_label()
+        except Exception:
+            pass
+
+    def _console_tick(self):
+        """顶栏时钟 + 信号波形（轻量，仅本页存在时运行）"""
+        try:
+            self.trace_clock.set(datetime.now().strftime("%H:%M:%S"))
+            c = getattr(self, "trace_sig", None)
+            if c is not None and c.winfo_exists() and c.winfo_ismapped():
+                c.delete("all")
+                w = max(60, c.winfo_width())
+                n = max(12, int(w / 6))
+                import math as _m
+                t = time.time()
+                for i in range(n):
+                    h = 3 + 9 * abs(_m.sin(t * 2.2 + i * 0.7)) * (0.55 + 0.45 * ((i * 37) % 11) / 10.0)
+                    x = 2 + i * (w - 4) / float(n)
+                    c.create_line(x, 7 - h / 2, x, 7 + h / 2,
+                                  fill=self.C_ACC if i % 5 else self.C_LINE2, width=1)
+            self.root.after(150, self._console_tick)
+        except Exception:
+            pass
+
+    def _refresh_trace_tunnel(self):
+        try:
+            state = HOST.get("tunnel_state") or ("online" if HOST.get("url") else "未启动")
+            self.trace_tunnel_status.set({"up":"在线", "starting":"连接中", "off":"未启动"}.get(state, state))
+            self.trace_tunnel_url.set(HOST.get("url") or "未分配")
+            proc=getattr(self, "_host_tun", None)
+            self.trace_tunnel_pid.set("PID %s" % (getattr(proc, "pid", "-") if proc else "-"))
+            lines=list(getattr(self, "_tunnel_logs", []))[-8:]
+            self.trace_tunnel_log.configure(text="\n".join(lines) if lines else "cloudflared 日志暂为空")
+        except Exception: pass
+        try: self.root.after(1500, self._refresh_trace_tunnel)
+        except Exception: pass
+
+    def copy_trace_tunnel_url(self):
+        url=HOST.get("url") or ""
+        if url:
+            self.root.clipboard_clear(); self.root.clipboard_append(url); self._tterm("  已复制公网地址\n", "system")
+        else: self._tterm("  隧道尚未在线\n", "err")
+
+    def open_trace_tunnel_url(self):
+        import webbrowser
+        url=HOST.get("url") or ""
+        if url: webbrowser.open(url)
+
+    def _reset_trace_model_values(self):
+        try:
+            if not self.trace_share_model.get():
+                cur = getattr(self, "current_model", "")
+                if cur:
+                    self.trace_share_model.set(cur)
+        except Exception:
+            pass
+
+    def _refresh_trace_models(self):
+        try:
+            vals = list(getattr(self, "model_combo", None)["values"] or []) if hasattr(self, "model_combo") else []
+            if vals:
+                self._set_trace_model_values(vals)
+            self.root.after(5000, self._refresh_trace_models)
+        except Exception:
+            pass
+
+    def _sync_gateway_runtime(self):
+        """把终端页的设置同步给网关进程内运行时 + gateway_config.json"""
+        try:
+            import gateway_core as _gw
+            _gw.RUNTIME["share_model"] = self.trace_share_model.get().strip()
+            _gw.RUNTIME["billing_enabled"] = bool(self.trace_billing.get())
+            _gw.RUNTIME["daily_quota_tokens"] = int(self.trace_quota.get() or 0)
+        except Exception:
+            pass
+        try:
+            cfg_path = os.path.join(_DATA_DIR, "gateway_config.json")
+            cfg = {}
+            if os.path.exists(cfg_path):
+                cfg = json.load(open(cfg_path, encoding="utf-8"))
+            share = self.trace_share_model.get().strip()
+            if share:
+                cfg["default_model"] = share
+            cfg["billing_enabled"] = bool(self.trace_billing.get())
+            cfg["daily_quota_tokens"] = int(self.trace_quota.get() or 0)
+            with open(cfg_path, "w", encoding="utf-8") as f:
+                json.dump(cfg, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    def apply_share_model(self):
+        self.config["share_model"] = self.trace_share_model.get().strip()
+        self.save_config()
+        self._sync_gateway_runtime()
+        self.trace_hint.set(T("已把分享模型设为 %s", "Shared model set to %s") % self.trace_share_model.get())
+        self._tterm("%s  CFG   → %s\n" % (self._now_ts(), self.trace_hint.get()), "system")
+
+    def apply_billing(self):
+        self.config["billing_enabled"] = bool(self.trace_billing.get())
+        self.save_config()
+        self._sync_gateway_runtime()
+        self.trace_hint.set(T("计费：%s", "Billing: %s") % (T("开", "on") if self.trace_billing.get() else T("关", "off")))
+        self._tterm("%s  CFG   → %s\n" % (self._now_ts(), self.trace_hint.get()), "system")
+
+    def apply_quota(self):
+        try:
+            q = max(0, int(self.trace_quota.get() or 0))
+        except Exception:
+            q = 0
+        self.trace_quota.set(str(q))
+        self.config["daily_quota_tokens"] = q
+        self.save_config()
+        self._sync_gateway_runtime()
+        self.trace_hint.set(T("每日限额：%d tokens（0=不限）", "Daily quota: %d tokens (0=off)") % q)
+        self._tterm("%s  CFG   → %s\n" % (self._now_ts(), self.trace_hint.get()), "system")
+
+    def _trace_history_prev(self, _e=None):
+        if self._trace_history:
+            self._trace_history_pos=max(0, self._trace_history_pos-1); self.trace_cmd.set(self._trace_history[self._trace_history_pos])
+        return "break"
+    def _trace_history_next(self, _e=None):
+        if self._trace_history:
+            self._trace_history_pos=min(len(self._trace_history), self._trace_history_pos+1); self.trace_cmd.set(self._trace_history[self._trace_history_pos] if self._trace_history_pos < len(self._trace_history) else "")
+        return "break"
+    def _trace_complete(self, _e=None):
+        try:
+            from terminal_commands import COMMANDS
+            cmds = list(COMMANDS) + ["?", "h", "cls"]
+        except Exception:
+            cmds = "help clear status version models model sharemodel config path tunnel quota billing lang service hardware export history logtail ps".split()
+        p=self.trace_cmd.get().strip(); hits=[c for c in cmds if c.startswith(p)]
+        if len(hits)==1: self.trace_cmd.set(hits[0]+" ")
+        return "break"
+
+    def run_trace_command(self):
+        # Central registry handles parsing and dispatch; legacy branches below remain as fallback.
+        raw = (self.trace_cmd.get() or "").strip()
+        if raw:
+            self.trace_cmd.set("")
+            self._trace_history.append(raw); self._trace_history=self._trace_history[-80:]; self._trace_history_pos=len(self._trace_history)
+            self._tterm("%s  › %s\n" % (self._now_ts(), raw), "user")
+            try:
+                from terminal_commands import execute
+                result = execute(raw, self)
+                if result.get("clear"):
+                    self.clear_trace()
+                if result.get("text"):
+                    self._tterm(result["text"], "err" if not result.get("handled", True) else "system")
+                return
+            except Exception as exc:
+                self._tterm("error: %s\n" % exc, "err")
+                return
+        return
+
+    def _legacy_trace_command_disabled(self):
+        raw = (self.trace_cmd.get() or "").strip()
+        if not raw:
+            return
+        self.trace_cmd.set("")
+        self._trace_history.append(raw); self._trace_history=self._trace_history[-80:]; self._trace_history_pos=len(self._trace_history)
+        self._tterm("%s  › %s\n" % (self._now_ts(), raw), "user")
+        parts = raw.split()
+        cmd = parts[0].lower()
+        arg = " ".join(parts[1:]).strip()
+        if cmd in ("help", "?", "h"):
+            self._tterm("\n".join([
+                "  help                      显示命令帮助",
+                "  clean / clear             清空终端",
+                "  status                    网关状态、分享模型、计费、限额、用量",
+                "  models                    列出已安装模型",
+                "  sharemodel <模型名>        设置分享给朋友的模型",
+                "  billing on|off            开关计费（默认开）",
+                "  quota <tokens>            设置每日限额，0=不限",
+                "  tunnel on|off             启动/停止公网隧道",
+                "  copy                      复制终端内容",
+                "  uptime                    运行时长",
+                "  logs [n]                  查看隧道日志",
+                "  lang <code>               切换语言",
+            ]) + "\n", "system")
+        elif cmd in ("clean", "clear", "cls"):
+            self.clear_trace()
+        elif cmd == "copy":
+            self.copy_trace()
+        elif cmd == "uptime":
+            started=getattr(self, "_gateway_started_at", None)
+            self._tterm("  运行时长：%s\n" % (str(timedelta(seconds=int(time.time()-started))) if started else "未知"), "system")
+        elif cmd == "logs":
+            try: n=max(1, int(arg or 8))
+            except Exception: n=8
+            self._tterm("\n".join(list(getattr(self, "_tunnel_logs", []))[-n:]) + "\n", "server")
+        elif cmd == "lang":
+            self._tterm("  语言切换：%s（重启后完全生效）\n" % (arg or "未指定"), "system")
+        elif cmd == "status":
+            st = []
+            st.append("  网关：%s" % ("在线" if HOST.get("ready") else "离线"))
+            st.append("  公网地址：%s" % (HOST.get("url") or "未分配"))
+            st.append("  分享模型：%s" % (self.trace_share_model.get() or "(跟随客户端)"))
+            st.append("  计费：%s" % ("开" if self.trace_billing.get() else "关"))
+            st.append("  每日限额：%s" % (self.trace_quota.get() or "0"))
+            try:
+                u = self._usage_summary()
+                st.append("  今日：%d 请求 · %s tokens · ¥%.2f" % (
+                    u.get("requests", 0), self._fmt_num(u.get("total_tokens", 0)), float(u.get("cost", 0) or 0)))
+            except Exception:
+                pass
+            self._tterm("\n".join(st) + "\n", "system")
+        elif cmd == "models":
+            try:
+                vals = list(self.model_combo["values"] or [])
+            except Exception:
+                vals = []
+            if not vals:
+                self._tterm("  （还没有模型列表，点「刷新模型」或稍后再试）\n", "err")
+            else:
+                self._tterm("  已安装模型：" + ", ".join(str(v) for v in vals) + "\n", "system")
+        elif cmd in ("sharemodel", "model", "share"):
+            if not arg:
+                self._tterm("  用法：sharemodel <模型名>\n", "err")
+            else:
+                self.trace_share_model.set(arg)
+                self.apply_share_model()
+        elif cmd == "billing":
+            if arg.lower() in ("on", "off", "1", "0", "开", "关"):
+                self.trace_billing.set(arg.lower() in ("on", "1", "开"))
+                self.apply_billing()
+            else:
+                self._tterm("  用法：billing on|off\n", "err")
+        elif cmd == "quota":
+            try:
+                self.trace_quota.set(str(max(0, int(arg))))
+                self.apply_quota()
+            except Exception:
+                self._tterm("  用法：quota <tokens>\n", "err")
+        elif cmd == "tunnel":
+            on = HOST.get("url")
+            want_on = arg.lower() in ("on", "start", "1", "开")
+            want_off = arg.lower() in ("off", "stop", "0", "关")
+            if want_on and not on:
+                self.toggle_host_tunnel()
+            elif want_off and on:
+                self.toggle_host_tunnel()
+            elif want_on or want_off:
+                self._tterm("  已经是目标状态\n", "system")
+            else:
+                self._tterm("  用法：tunnel on|off\n", "err")
+        else:
+            self._tterm("  未知命令：%s（输入 help 查看可用命令）\n" % cmd, "err")
+
+    def command_status(self, args):
+        return "gateway=%s tunnel=%s model=%s quota=%s" % ("online" if HOST.get("ready") else "offline", HOST.get("url") or "off", self.trace_share_model.get() or "default", self.trace_quota.get() or "0")
+    def command_version(self, args):
+        return str(self.config.get("version") or "Hymnix")
+    def command_models(self, args):
+        try: return ", ".join(str(v) for v in (self.model_combo["values"] or []))
+        except Exception: return "no models"
+    def command_model(self, args):
+        if not args: return "usage: model <name>"
+        self.current_model = args[0]; self.config["model"] = args[0]; self.save_config(); return "model set: " + args[0]
+    def command_sharemodel(self, args):
+        if not args: return "usage: sharemodel <name>"
+        self.trace_share_model.set(" ".join(args)); self.apply_share_model(); return "shared model set: " + self.trace_share_model.get()
+    def command_quota(self, args):
+        if not args: return "usage: quota <n>"
+        self.trace_quota.set(str(max(0, int(args[0])))); self.apply_quota(); return "quota set: " + self.trace_quota.get()
+    def command_billing(self, args):
+        if not args or args[0].lower() not in ("on", "off"): return "usage: billing on|off"
+        self.trace_billing.set(args[0].lower() == "on"); self.apply_billing(); return "billing " + args[0].lower()
+    def command_tunnel(self, args):
+        op=(args[0].lower() if args else "status")
+        if op in ("on", "start"): self.start_host_tunnel(); return "tunnel starting"
+        if op in ("off", "stop"): self.stop_host_tunnel(); return "tunnel stopped"
+        if op == "restart": self.restart_host_tunnel(); return "tunnel restarting"
+        return "tunnel=" + (HOST.get("url") or "off")
+    def command_lang(self, args):
+        if not args or args[0].lower() not in ("zh", "en", "fr", "ru", "es"): return "usage: lang <zh|en|fr|ru|es>"
+        LANG["cur"] = args[0].lower(); self.config["language"] = LANG["cur"]; self.save_config(); return "language set: " + LANG["cur"]
+    def command_path(self, args):
+        if len(args) >= 2 and args[0].lower() == "set":
+            p=os.path.abspath(" ".join(args[1:])); self.config["working_dir"] = p; self.save_config(); return "path set: " + p
+        return str(self.config.get("working_dir") or _APP_DIR)
+    def command_config(self, args):
+        if not args or args[0].lower() == "get": return json.dumps(self.config, ensure_ascii=False, indent=2)
+        if args[0].lower() == "set" and len(args) >= 3:
+            self.config[args[1]] = " ".join(args[2:]); self.save_config(); return "config set: " + args[1]
+        return "usage: config get|set <key> <value>"
+    def command_history(self, args): return "\n".join(self._trace_history[-80:]) or "history empty"
+    def command_logtail(self, args):
+        try: n=max(1,int(args[0])) if args else 10
+        except Exception: n=10
+        return "\n".join(list(getattr(self,"_tunnel_logs",[]))[-n:]) or "logs empty"
+    def command_ps(self, args):
+        return subprocess.check_output("tasklist", shell=True, text=True, stderr=subprocess.STDOUT, creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))[:4000]
+    def command_hardware(self, args):
+        return platform.platform() + " | " + platform.processor()
+    def command_service(self, args):
+        op = args[0].lower() if args else "status"
+        if op in ("start", "restart"): self.start_host_server(); return "service " + op
+        if op == "stop": self.stop_host_server(); return "service stopped"
+        return "service=" + ("online" if HOST.get("ready") else "offline")
+    def command_export(self, args):
+        path = os.path.abspath(args[0]) if args else os.path.join(_DATA_DIR, "terminal_export.txt")
+        with open(path, "w", encoding="utf-8") as f: f.write(self.trace_text.get("1.0", "end"))
+        return "exported: " + path
+
+    def _draw_vbar(self, first, last):
+        try:
+            c = self._vbar
+            if not c.winfo_exists():
+                return
+            c.delete("all")
+            hh = max(1, c.winfo_height())
+            top = int(first * hh)
+            bot = int(last * hh)
+            if bot - top < 24:
+                bot = min(hh, top + 24)
+            c.create_rectangle(3, top + 1, 8, max(top + 22, bot - 1),
+                               fill=self.C_LINE2, width=0)
+        except Exception:
+            pass
+
+    def _tterm(self, text, tag="system"):
+        """写入终端日志：时间戳压暗、级别做彩色小标签，正文按 tag 着色。"""
+        try:
+            import re as _re
+            self.trace_text.config(state=tk.NORMAL)
+            for line in str(text).splitlines(True):
+                m = _re.match(r"^(\d{2}:\d{2}:\d{2}\.\d{3})(\s+)(\S+)(.*)$", line, _re.S)
+                if m:
+                    self.trace_text.insert(tk.END, m.group(1), "ts")
+                    self.trace_text.insert(tk.END, m.group(2))
+                    self.trace_text.insert(tk.END, m.group(3), "lvl")
+                    self.trace_text.insert(tk.END, m.group(4), tag)
+                else:
+                    self.trace_text.insert(tk.END, line, tag)
+            self.trace_text.see(tk.END)
+            self.trace_text.config(state=tk.DISABLED)
+            self._log_lines = getattr(self, "_log_lines", 0) + str(text).count("\n")
+            try:
+                self.trace_log_stat.set("· %d lines" % self._log_lines)
+            except Exception:
+                pass
+        except Exception:
+            try:
+                self.trace_text.insert(tk.END, text, tag)
+            except Exception:
+                pass
+
+    def clear_trace(self):
+        try:
+            self.trace_text.config(state=tk.NORMAL)
+            self.trace_text.delete("1.0", tk.END)
+            self.trace_text.config(state=tk.DISABLED)
+        except Exception:
+            pass
+
+    def copy_trace(self):
+        try:
+            text = self.trace_text.get("1.0", tk.END).strip()
+            self.root.clipboard_clear()
+            self.root.clipboard_append(text)
+            self.queue_message("system", T("已复制终端内容", "Terminal content copied"))
+        except Exception:
+            pass
+
     def build_monitor_tab(self, parent):
         try:
             self._section_header(parent, "服务端监控", "server monitor")
@@ -4489,6 +5723,7 @@ class HuimengAIClient:
 
     def show_monitor_tab(self):
         try:
+            self._ensure_page(2)
             self.notebook.select(self.mon_tab)
         except Exception:
             pass
@@ -4524,71 +5759,105 @@ class HuimengAIClient:
         self.mon_detail.config(state="disabled")
 
     def refresh_monitor(self):
+        if not hasattr(self, "mon_status_var"):
+            self.root.after(900, self.refresh_monitor)
+            return
         try:
-            admin = HOST.get("admin_key", "")
-            port = HOST.get("port", 11435)
-            if HOST.get("ready") and admin:
-                r = requests.get("http://127.0.0.1:%d/admin/status" % port,
-                                 headers={"X-Admin-Key": admin}, timeout=4)
-                data = r.json()
-                st = data.get("stats", {})
-                self.mon_status_var.set("网关在线 · 在线客户端 %s · 累计请求 %s · 对话 %s · 模型服务 %s" % (
-                    data.get("online", 0), st.get("requests", 0), st.get("conversations", 0),
-                    "在线" if (data.get("ollama") or {}).get("online") else "离线"))
-                clients = data.get("clients") or []
-                self._mon_client_ips = [c.get("ip", "") for c in clients if c.get("ip")]
-                txt = []
-                for c in clients:
-                    txt.append("● %s   %s" % (c.get("ip", ""), "在线" if c.get("online") else "离线"))
-                    txt.append("   请求 %s · 对话 %s" % (c.get("requests", 0), c.get("conversations", 0)))
-                    txt.append("   最近 %s" % str(c.get("last_seen", ""))[5:19])
-                    if c.get("last_prompt"):
-                        txt.append("   “%s”" % c["last_prompt"][:40])
-                    txt.append("────────────────")
-                if not txt:
-                    txt = ["还没有客户端连接。", "", "把公网地址和密钥发给朋友，", "他连上来之后这里会出现。"]
-                self.mon_clients.config(state="normal")
-                self.mon_clients.delete("1.0", "end")
-                self.mon_clients.insert("1.0", chr(10).join(txt))
-                self.mon_clients.config(state="disabled")
-
-                recs_all = data.get("recent") or []
-                ips = ["全部IP"] + sorted(set(str(r.get("ip", "")) for r in recs_all if r.get("ip")))
-                try:
-                    self.mon_ip_box.configure(values=ips)
-                except Exception:
-                    pass
-                recs = [r for r in recs_all if self._mon_match(r)]
-                self._mon_records = recs
-                sel = self.mon_tree.selection()
-                keep = self.mon_tree.index(sel[0]) if sel else -1
-                self.mon_tree.delete(*self.mon_tree.get_children())
-                try:
-                    self.mon_tree.tag_configure("odd", background="#F7F9FC")
-                    self.mon_tree.tag_configure("even", background="#FFFFFF")
-                except Exception:
-                    pass
-                for _i, rec in enumerate(recs):
-                    q = ""
-                    for m in reversed(rec.get("messages") or []):
-                        if m.get("role") == "user":
-                            q = str(m.get("content", "")).replace(chr(10), " ")[:90]
-                            break
-                    t = str(rec.get("t", ""))
-                    if "T" in t:
-                        t = t.split("T")[1]
-                    self.mon_tree.insert("", "end", tags=("even" if _i % 2 == 0 else "odd",),
-                                         values=(t, rec.get("ip", ""), rec.get("model", ""),
-                                                            str(rec.get("elapsed_ms", "-")), q))
-                if 0 <= keep < len(recs):
-                    kids = self.mon_tree.get_children()
-                    if kids:
-                        self.mon_tree.selection_set(kids[keep])
-                self.mon_url_var.set("公网地址：%s" % (HOST.get("url") or "建立中…"))
-            else:
+            _cur = getattr(self.notebook, "index", -1)
+            if callable(_cur):
+                _cur = self.notebook.index(self.notebook.select())
+            if _cur != 2:
+                self.root.after(1600, self.refresh_monitor)
+                return
+        except Exception:
+            pass
+        if getattr(self, "_mon_busy", False):
+            self.root.after(800, self.refresh_monitor)
+            return
+        admin = HOST.get("admin_key", "")
+        port = HOST.get("port", 11435)
+        if not (HOST.get("ready") and admin):
+            try:
                 self.mon_status_var.set("内置网关尚未就绪…")
+            except Exception:
+                pass
+            self.root.after(2500, self.refresh_monitor)
+            return
+        self._mon_busy = True
+        def worker():
+            data = None
+            try:
+                data = requests.get("http://127.0.0.1:%d/admin/status" % port,
+                                    headers={"X-Admin-Key": admin}, timeout=4).json()
+            except Exception:
+                data = None
+            self.root.after(0, lambda: self._apply_monitor(data))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _apply_monitor(self, data):
+        self._mon_busy = False
+        try:
+            if data is None:
+                raise RuntimeError("读取超时")
+            st = data.get("stats", {})
+            self.mon_status_var.set("网关在线 · 在线客户端 %s · 累计请求 %s · 对话 %s · 模型服务 %s" % (
+                data.get("online", 0), st.get("requests", 0), st.get("conversations", 0),
+                "在线" if (data.get("ollama") or {}).get("online") else "离线"))
+            clients = data.get("clients") or []
+            self._mon_client_ips = [c.get("ip", "") for c in clients if c.get("ip")]
+            txt = []
+            for c in clients:
+                txt.append("● %s   %s" % (c.get("ip", ""), "在线" if c.get("online") else "离线"))
+                txt.append("   请求 %s · 对话 %s" % (c.get("requests", 0), c.get("conversations", 0)))
+                txt.append("   最近 %s" % str(c.get("last_seen", ""))[5:19])
+                if c.get("last_prompt"):
+                    txt.append("   “%s”" % c["last_prompt"][:40])
+                txt.append("────────────────")
+            if not txt:
+                txt = ["还没有客户端连接。", "", "把公网地址和密钥发给朋友，", "他连上来之后这里会出现。"]
+            self.mon_clients.config(state="normal")
+            self.mon_clients.delete("1.0", "end")
+            self.mon_clients.insert("1.0", chr(10).join(txt))
+            self.mon_clients.config(state="disabled")
+
+            recs_all = data.get("recent") or []
+            ips = ["全部IP"] + sorted(set(str(r.get("ip", "")) for r in recs_all if r.get("ip")))
+            try:
+                self.mon_ip_box.configure(values=ips)
+            except Exception:
+                pass
+            recs = [r for r in recs_all if self._mon_match(r)]
+            self._mon_records = recs
+            sel = self.mon_tree.selection()
+            keep = self.mon_tree.index(sel[0]) if sel else -1
+            self.mon_tree.delete(*self.mon_tree.get_children())
+            try:
+                self.mon_tree.tag_configure("odd", background="#F7F9FC")
+                self.mon_tree.tag_configure("even", background="#FFFFFF")
+            except Exception:
+                pass
+            for _i, rec in enumerate(recs):
+                q = ""
+                for m in reversed(rec.get("messages") or []):
+                    if m.get("role") == "user":
+                        q = str(m.get("content", "")).replace(chr(10), " ")[:90]
+                        break
+                t = str(rec.get("t", ""))
+                if "T" in t:
+                    t = t.split("T")[1]
+                self.mon_tree.insert("", "end", tags=("even" if _i % 2 == 0 else "odd",),
+                                     values=(t, rec.get("ip", ""), rec.get("model", ""),
+                                                        str(rec.get("elapsed_ms", "-")), q))
+            if 0 <= keep < len(recs):
+                kids = self.mon_tree.get_children()
+                if kids:
+                    self.mon_tree.selection_set(kids[keep])
+            self.mon_url_var.set("公网地址：%s" % (HOST.get("url") or "建立中…"))
         except Exception as e:
-            self.mon_status_var.set("读取监控失败：%s" % e)
+            try:
+                self.mon_status_var.set("读取监控失败：%s" % e)
+            except Exception:
+                pass
         self.root.after(2500, self.refresh_monitor)
 
     # ==================== 内置网关：启动 / 隧道 / 状态 ====================
@@ -4765,6 +6034,20 @@ class HuimengAIClient:
         except Exception:
             pass
 
+    def _health_loop(self):
+        """后台轮询本地网关健康状态，避免 UI 线程被 2 秒超时阻塞"""
+        import urllib.request
+        while True:
+            try:
+                with urllib.request.urlopen(
+                        "http://127.0.0.1:%d/health" % HOST.get("port", 11435), timeout=1.2) as r:
+                    d = json.loads(r.read().decode("utf-8", "ignore"))
+                self._health = {"ok": bool(d.get("ok")), "ollama": bool(d.get("ollama")),
+                                "clients": int(d.get("clients_online") or 0), "ts": time.time()}
+            except Exception:
+                self._health = {"ok": False, "ollama": False, "clients": 0, "ts": time.time()}
+            time.sleep(2.5)
+
     def refresh_host_bar(self):
         try:
             ok = HOST["ready"]
@@ -4773,14 +6056,12 @@ class HuimengAIClient:
             ollama_ok = False
             clients = 0
             if ok:
-                try:
-                    import urllib.request
-                    with urllib.request.urlopen("http://127.0.0.1:%d/health" % HOST["port"], timeout=2) as r:
-                        d = json.loads(r.read().decode("utf-8", "ignore"))
-                        ollama_ok = bool(d.get("ollama"))
-                        clients = int(d.get("clients_online", 0))
-                except Exception:
-                    ok = False
+                h = getattr(self, "_health", None) or {}
+                if h.get("ts") and (time.time() - h["ts"] < 8):
+                    ollama_ok = bool(h.get("ollama"))
+                    clients = int(h.get("clients") or 0)
+                else:
+                    ok = bool(h.get("ok", ok))
             HOST["ollama"] = ollama_ok
             HOST["clients"] = clients
             green, red, grey = "#2E7D5B", "#A33A32", "#9AA0A6"
@@ -4858,77 +6139,132 @@ class HuimengAIClient:
             pass
 
     def _build_sidebar(self, parent):
-        side = tk.Frame(parent, bg="#FFFFFF", width=190)
+        side = tk.Frame(parent, bg="#FFFFFF", width=SIDEBAR_W)
         side.grid(row=0, column=0, sticky="ns")
         side.grid_propagate(False)
         tk.Frame(side, bg="#C9D3DE", width=1).pack(side="right", fill="y")
 
         top = tk.Frame(side, bg="#FFFFFF")
-        top.pack(fill="x", pady=(20, 4), padx=16)
-        tk.Label(top, text="H", bg="#2B7DE1", fg="#ffffff",
-                 font=("Segoe UI Semibold", 15), width=2, height=1).pack(side="left")
-        tk.Label(top, text="Hymnix", bg="#FFFFFF", fg="#1C2430",
-                 font=(UI_FONT, 12, "bold")).pack(side="left", padx=(8, 0))
-        tk.Label(side, text="1.0.0", bg="#FFFFFF", fg="#9AA6B4",
-                 font=(UI_FONT, 9)).pack(anchor="w", padx=18, pady=(2, 16))
+        top.pack(fill="x", pady=(16, 4), padx=18)
+        # Use the shipped application mark; Pillow's LANCZOS keeps the 40px edge clean.
+        _logo = None
+        try:
+            _png = os.path.join(_BUNDLE_DIR, "icon.png")
+            if not os.path.exists(_png):
+                _png = os.path.join(_APP_DIR, "icon.png")
+            from PIL import Image, ImageTk
+            _im = Image.open(_png).convert("RGBA").resize((40, 40), Image.Resampling.LANCZOS)
+            self._sidebar_icon = ImageTk.PhotoImage(_im, master=top)
+            _logo = tk.Label(top, image=self._sidebar_icon, bg="#FFFFFF", bd=0, highlightthickness=0)
+            _logo.pack(side="left")
+        except Exception:
+            try:
+                import ui_kit as _uk
+                _logo = _uk.SquareLogo(top, size=40, letter="H", color=THEME["accent"], bg="#FFFFFF")
+                _logo.pack(side="left")
+            except Exception:
+                _logo = tk.Canvas(top, width=40, height=40, bg="#FFFFFF", highlightthickness=0, bd=0)
+                _logo.pack(side="left")
+                _logo.create_rectangle(1, 1, 39, 39, fill=THEME["accent"], outline=THEME["accent"])
+                _logo.create_text(20, 20, text="H", fill="#FFFFFF",
+                                  font=("Segoe UI Semibold", 17), anchor="center")
+        tk.Label(top, text="Hymnix", bg="#FFFFFF", fg="#111827",
+                 font=(SIDEBAR_FONT, 14, "bold")).pack(side="left", padx=(10, 0))
+        tk.Label(side, text="1.1.0", bg="#FFFFFF", fg="#98A2B3",
+                 font=(SIDEBAR_FONT, 9)).pack(anchor="w", padx=20, pady=(0, 18))
 
-        items = [(T("终端 · 轨迹", "Terminal · Trace"), "▤"),
-                 (T("服务端监控", "Server Monitor"), "◉"),
-                 (T("API 接口", "API"), "⇄"),
-                 (T("插件", "Plugins"), "✧"),
-                 (T("赞助", "Support"), "♥")]
+        groups = [
+            (T("工作台", "WORKSPACE"), [
+                (T("对话", "Chat"), ""),
+                (T("终端", "Terminal"), ""),
+                (T("服务端监控", "Server Monitor"), ""),
+            ]),
+            (T("云端", "CLOUD"), [
+                (T("API 接口", "API"), ""),
+            ]),
+            (T("扩展", "EXTENSIONS"), [
+                (T("插件", "Plugins"), ""),
+            ]),
+            (None, [(T("赞助", "Support"), "")]),
+        ]
+        try:
+            import ui_kit as _uk
+        except Exception:
+            _uk = None
         self._nav_rows = []
-        for idx, (name, glyph) in enumerate(items):
-            row = tk.Frame(side, bg="#FFFFFF", cursor="hand2")
-            row.pack(fill="x", padx=10, pady=2)
-            bar = tk.Frame(row, bg="#FFFFFF", width=3)
-            bar.pack(side="left", fill="y")
-            lab = tk.Label(row, text="  %s   %s" % (glyph, name), anchor="w", bg="#FFFFFF",
-                           fg="#4A5A6E", font=(UI_FONT, 10), cursor="hand2")
-            lab.pack(side="left", fill="x", expand=True, ipady=9)
-            self._nav_rows.append((row, bar, lab))
-            for w in (row, lab):
-                w.bind("<Button-1>", lambda e, i=idx: self.select_nav(i))
-                w.bind("<Enter>", lambda e, i=idx: self._nav_hover(i, True))
-                w.bind("<Leave>", lambda e, i=idx: self._nav_hover(i, False))
-
+        idx = 0
+        for group, entries in groups:
+            if group:
+                tk.Frame(side, bg="#EEF1F6", height=1).pack(fill="x", padx=20, pady=(16, 0))
+                tk.Label(side, text=group, bg="#FFFFFF", fg="#475467",
+                         font=(SIDEBAR_FONT, GROUP_FONT_PT, "bold")).pack(anchor="w", padx=22, pady=(12, 8))
+            for name, glyph in entries:
+                if _uk is not None:
+                    nav = _uk.NavItem(side, text=name, active=(idx == 0),
+                                      on_click=lambda i=idx: self.select_nav(i),
+                                      width=SIDEBAR_W - 24, height=NAV_HEIGHT,
+                                      font=(SIDEBAR_FONT, NAV_FONT_PT))
+                    nav.pack(fill="x", padx=12, pady=4)
+                    self._nav_rows.append(nav)
+                else:
+                    row = tk.Frame(side, bg="#FFFFFF", cursor="hand2")
+                    row.pack(fill="x", padx=12, pady=3)
+                    bar = tk.Frame(row, bg="#FFFFFF", width=3)
+                    bar.pack(side="left", fill="y")
+                    lab = tk.Label(row, text=name, anchor="w",
+                                   bg="#FFFFFF", fg="#475467", font=(SIDEBAR_FONT, NAV_FONT_PT), cursor="hand2")
+                    lab.pack(side="left", fill="x", expand=True, ipady=10)
+                    self._nav_rows.append((row, bar, lab))
+                    for w in (row, lab):
+                        w.bind("<Button-1>", lambda e, i=idx: self.select_nav(i))
+                idx += 1
         foot = tk.Frame(side, bg="#FFFFFF")
-        foot.pack(side="bottom", fill="x", pady=14, padx=16)
+        foot.pack(side="bottom", fill="x", pady=(14, 20), padx=20)
         self.side_status = tk.Label(foot, text="", anchor="w", justify="left", bg="#FFFFFF",
-                                    fg="#6C7A8C", font=(UI_FONT, 9))
+                                    fg="#667085", font=(SMALL_CJK, 10), pady=4)
         self.side_status.pack(fill="x")
 
-        for i in range(5):
+        for i in range(6):
             self.root.bind("<Control-Key-%d>" % (i + 1), lambda e, x=i: self.select_nav(x))
         self.root.bind("<Control-Return>", lambda e: self.send_message())
         self.select_nav(0)
 
     def _nav_hover(self, idx, on):
+        pass
+
+    def _ensure_page(self, idx):
         try:
-            row, bar, lab = self._nav_rows[idx]
-            if getattr(self, "_nav_active", 0) == idx:
-                return
-            bg = "#EAEFF7" if on else "#F4F6FA"
-            row.configure(bg=bg)
-            lab.configure(bg=bg)
+            item = getattr(self, "_lazy_pages", {}).pop(idx, None)
+            if item:
+                frame, builder = item
+                builder(frame)
         except Exception:
             pass
 
     def select_nav(self, idx):
         try:
+            self._ensure_page(idx)
             self.notebook.select(idx)
             self._nav_active = idx
-            for i, (row, bar, lab) in enumerate(self._nav_rows):
+            for i, nav in enumerate(self._nav_rows):
                 active = (i == idx)
-                bg = "#E7EEFA" if active else "#F4F6FA"
-                row.configure(bg=bg)
-                lab.configure(bg=bg,
-                              fg="#2B7DE1" if active else "#4A5A6E",
-                              font=(UI_FONT, 10, "bold") if active else (UI_FONT, 10))
-                bar.configure(bg="#2B7DE1" if active else bg)
+                if hasattr(nav, "set_active"):
+                    try:
+                        nav.set_active(active)
+                    except Exception:
+                        pass
+                else:
+                    row, bar, lab = nav
+                    bg = "#EFF6FF" if active else "#F6F7FB"
+                    row.configure(bg=bg)
+                    lab.configure(bg=bg,
+                                  fg="#1E40AF" if active else "#475467",
+                                  font=(SIDEBAR_FONT, NAV_FONT_PT, "bold") if active else (SIDEBAR_FONT, NAV_FONT_PT))
+                    bar.configure(bg="#2563EB" if active else bg)
             self._ui_click("tab")
         except Exception:
             pass
+
 
     def _save_geometry(self):
         try:
@@ -4949,28 +6285,28 @@ class HuimengAIClient:
             head_tag = "hist" if prefix == "HIST" else "server"
             stamp = str(rec.get("t") or "")
             ts = stamp.split("T")[1][:8] if "T" in stamp else self._now_ts()
-            self._term("%s  %-7s %s  %s  %.1fs%s\n" % (
+            self._tterm("%s  %-7s %s  %s  %.1fs%s\n" % (
                 ts, prefix + " ›", ip, rec.get("model", ""), elapsed, tok), head_tag)
             dim = (prefix == "HIST")
             think = (rec.get("thinking") or "").strip()
             if think:
                 for ln in think.splitlines()[:8]:
                     if ln.strip():
-                        self._term("            THINK › %s\n" % ln.strip()[:220],
+                        self._tterm("            THINK › %s\n" % ln.strip()[:220],
                                    "hist" if dim else "think")
             gpu = rec.get("gpu") or {}
             if gpu:
-                self._term("            ⚡ 算力 › GPU %s%% · 显存 %.1fG · %sW · %.4fWh · ¥%.7f · %s GPU秒\n" % (
+                self._tterm("            ⚡ 算力 › GPU %s%% · 显存 %.1fG · %sW · %.4fWh · ¥%.7f · %s GPU秒\n" % (
                     gpu.get("gpu_util", "-"), (gpu.get("vram_mb") or 0) / 1024.0,
                     gpu.get("power_w", "-"), gpu.get("energy_wh", 0),
                     gpu.get("cost_yuan", 0), gpu.get("gpu_seconds", "-")),
                     "hist" if (prefix == "HIST") else "stats")
             for note in (rec.get("injected_notes") or []):
-                self._term("            📨 转达 › %s\n" % str(note)[:200], "tool")
+                self._tterm("            📨 转达 › %s\n" % str(note)[:200], "tool")
             for tc in (rec.get("tool_calls") or []):
                 name = tc.get("name", "") if isinstance(tc, dict) else str(tc)
                 args = tc.get("arguments", "") if isinstance(tc, dict) else ""
-                self._term("            TOOL  › %s %s\n" % (name, str(args)[:160]),
+                self._tterm("            TOOL  › %s %s\n" % (name, str(args)[:160]),
                            "hist" if dim else "tool")
             q = ""
             for m in reversed(msgs):
@@ -4978,11 +6314,11 @@ class HuimengAIClient:
                     q = str(m.get("content", ""))
                     break
             if q:
-                self._term("            USER  › %s\n" % q.replace(chr(10), " ")[:240],
+                self._tterm("            USER  › %s\n" % q.replace(chr(10), " ")[:240],
                            "hist" if prefix == "HIST" else "srv_user")
             rep = (rec.get("reply") or "").strip()
             if rep:
-                self._term("            REPLY › %s\n" % rep.replace(chr(10), " ")[:320],
+                self._tterm("            REPLY › %s\n" % rep.replace(chr(10), " ")[:320],
                            "hist" if prefix == "HIST" else "srv_reply")
         except Exception:
             pass
@@ -4997,16 +6333,43 @@ class HuimengAIClient:
             self.root.after(4000, self.load_terminal_history)
             return
         self._term_history_loaded = True
+        threading.Thread(target=self._history_worker, daemon=True).start()
+
+    def _history_worker(self):
         try:
+            admin = HOST.get("admin_key", "")
             r = requests.get("http://127.0.0.1:%d/admin/history?limit=800" % HOST.get("port", 11435),
                              headers={"X-Admin-Key": admin}, timeout=15)
             items = r.json().get("items") or []
-            self._server_seen = set(rec.get("t") for rec in items)
-            for rec in sorted(items, key=lambda x: str(x.get("t") or "")):
-                self._print_server_record(rec, prefix="HIST")
-            self._term("%s  SYSTEM 已加载历史记录 %d 条，实时回显已开启\n" % (self._now_ts(), len(items)), "system")
+            self.root.after(0, lambda: self._insert_history(items, None))
         except Exception as e:
-            self._term("%s  SYSTEM 加载历史失败：%s\n" % (self._now_ts(), e), "system")
+            self.root.after(0, lambda: self._insert_history([], str(e)))
+
+    def _insert_history(self, items, err):
+        if err:
+            self._tterm("%s  SYSTEM 加载历史失败：%s\n" % (self._now_ts(), err), "system")
+            return
+        self._server_seen = set(rec.get("t") for rec in items)
+        ordered = sorted(items, key=lambda x: str(x.get("t") or ""))
+        self._history_queue = ordered
+        self._history_total = len(ordered)
+        self._insert_history_batch()
+
+    def _insert_history_batch(self):
+        q = getattr(self, "_history_queue", [])
+        batch = q[:80]
+        del q[:80]
+        for rec in batch:
+            try:
+                self._print_server_record(rec, prefix="HIST")
+            except Exception:
+                pass
+        self.root.update_idletasks()
+        if q:
+            self.root.after(10, self._insert_history_batch)
+        else:
+            self._tterm("%s  SYSTEM 已加载历史记录 %d 条，实时回显已开启\n" % (
+                self._now_ts(), getattr(self, "_history_total", 0)), "system")
 
     def poll_server_trace(self):
         if not self.config.get("enable_server_trace", False):
@@ -5127,59 +6490,293 @@ class HuimengAIClient:
         ttk.Button(btns, text="执行清理", style="Danger.TButton", command=apply).pack(side="left", padx=8)
         ttk.Button(btns, text="关闭", style="Ghost.TButton", command=dlg.destroy).pack(side="right")
     # ==================== API 接口（界面设计稿）====================
-    def build_api_tab(self, parent):
+    # ==================== 云端 API ====================
+    def _api_providers(self):
         try:
-            self._section_header(parent, "API 接口", "cloud models")
+            import providers
+            return providers
         except Exception:
-            pass
-        outer = ttk.Frame(parent, padding=(20, 16, 20, 16))
+            return None
+
+    def _api_cfg_path(self):
+        return os.path.join(_DATA_DIR, "providers.json")
+
+    def build_api_tab(self, parent):
+        self._section_header(parent, T("云端 API", "Cloud API"), "providers")
+        outer = ttk.Frame(parent, padding=(18, 4, 18, 16))
         outer.pack(fill="both", expand=True)
-        ttk.Label(outer, text="API 模型接口", font=(UI_FONT, 16, "bold")).pack(anchor="w")
-        ttk.Label(outer, text="接入云端模型（DeepSeek / OpenAI / Gemini），与本地 qwen3:8b 并存，随时切换。"
-                             "本板块为界面设计稿，参数保存与调用将在下一版接入。",
-                  style="BgMuted.TLabel", wraplength=920).pack(anchor="w", pady=(4, 14))
+        outer.columnconfigure(0, weight=1)
+        outer.columnconfigure(1, weight=1)
+        outer.rowconfigure(1, weight=1)
 
+        intro = tk.Frame(outer, bg=THEME["card"], highlightbackground=THEME["sep"], highlightthickness=1)
+        intro.grid(row=0, column=0, columnspan=2, sticky="ew")
+        tk.Label(intro, text=T("接入云端模型，与本地模型并存", "Connect cloud models alongside local ones"),
+                 bg=THEME["card"], fg=THEME["text"], font=(UI_FONT, 13, "bold")).pack(
+            anchor="w", padx=16, pady=(14, 2))
+        tk.Label(intro, text=T("本地模型负责隐私与免费，云端模型负责难任务；配置只保存在本机。",
+                               "Local models keep privacy and cost at zero; cloud models handle harder tasks. Config stays on this PC."),
+                 bg=THEME["card"], fg=THEME["text_muted"], font=(UI_FONT, 9)).pack(anchor="w", padx=16, pady=(0, 14))
+
+        form = tk.Frame(outer, bg=THEME["card"], highlightbackground=THEME["sep"], highlightthickness=1)
+        form.grid(row=1, column=0, sticky="nsew", pady=(14, 0), padx=(0, 10))
+        tk.Label(form, text=T("服务商配置", "Provider"), bg=THEME["card"], fg=THEME["text"],
+                 font=(UI_FONT, 11, "bold")).pack(anchor="w", padx=16, pady=(14, 8))
         self.api_provider = tk.StringVar(value="DeepSeek")
-        row = ttk.Frame(outer, style="Bg.TFrame")
-        row.pack(fill="x", pady=(0, 10))
-        ttk.Label(row, text="服务商", style="BgMuted.TLabel").pack(side="left")
-        ttk.Combobox(row, textvariable=self.api_provider, values=["DeepSeek", "OpenAI", "Gemini"],
-                     state="readonly", width=14).pack(side="left", padx=(10, 0))
-        ttk.Label(row, text="（切换服务商后，下面的地址会自动带上官方默认值）",
-                  style="BgMuted.TLabel").pack(side="left", padx=(10, 0))
-
-        fields = ttk.Frame(outer, style="Card.TFrame", padding=(16, 14))
-        fields.pack(fill="x", pady=6)
-        defaults = {"DeepSeek": "https://api.deepseek.com/v1",
-                    "OpenAI": "https://api.openai.com/v1",
-                    "Gemini": "https://generativelanguage.googleapis.com/v1beta"}
-        self.api_url = tk.StringVar(value=defaults["DeepSeek"])
+        self.api_url = tk.StringVar(value="https://api.deepseek.com/v1")
         self.api_key = tk.StringVar(value="")
         self.api_model = tk.StringVar(value="deepseek-chat")
-        for i, (label, var, show) in enumerate((("接口地址", self.api_url, None),
-                                                ("API Key", self.api_key, "*"),
-                                                ("模型名", self.api_model, None))):
-            ttk.Label(fields, text=label, style="BgMuted.TLabel").grid(row=i, column=0, sticky="w", pady=6)
-            ttk.Entry(fields, textvariable=var, width=70, show=show).grid(row=i, column=1, sticky="w", padx=12)
-        ttk.Label(fields, text="状态：未接入（设计稿）", style="CardThink.TLabel").grid(
-            row=3, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        names = ["DeepSeek", "OpenAI", "Gemini", "OpenRouter", "自定义"]
+        row = tk.Frame(form, bg=THEME["card"])
+        row.pack(fill="x", padx=16)
+        tk.Label(row, text=T("服务商", "Provider"), bg=THEME["card"], fg=THEME["text_muted"],
+                 font=(UI_FONT, 9), width=10, anchor="w").pack(side="left")
+        cb = ttk.Combobox(row, textvariable=self.api_provider, values=names, state="readonly", width=20)
+        cb.pack(side="left")
+        cb.bind("<<ComboboxSelected>>", lambda e: self._api_apply_preset())
 
-        btns = ttk.Frame(outer, style="Bg.TFrame")
-        btns.pack(fill="x", pady=12)
-        b1 = ttk.Button(btns, text="保存配置（下一版开放）", style="Accent.TButton")
-        b1.config(state=tk.DISABLED)
-        b1.pack(side="left")
-        b2 = ttk.Button(btns, text="测试连接（下一版开放）", style="Ghost.TButton")
-        b2.config(state=tk.DISABLED)
-        b2.pack(side="left", padx=8)
-        ttk.Label(outer, text="设计目标：两套模型并存——本地负责隐私与免费，云端负责难任务；在输入框右侧一键切换。",
-                  style="BgMuted.TLabel", wraplength=920).pack(anchor="w", pady=(6, 0))
+        # Endpoint and model are controlled selections; only the key is typed.
+        r = tk.Frame(form, bg=THEME["card"]); r.pack(fill="x", padx=16, pady=(10, 0))
+        tk.Label(r, text=T("接口地址", "Base URL"), bg=THEME["card"], fg=THEME["text_muted"], font=(UI_FONT, 9), width=10, anchor="w").pack(side="left")
+        self.api_url_combo = ttk.Combobox(r, textvariable=self.api_url, width=43, state="readonly")
+        self.api_url_combo.pack(side="left", fill="x", expand=True)
+        self.api_url_combo.bind("<<ComboboxSelected>>", lambda e: self._api_endpoint_changed())
 
+        r = tk.Frame(form, bg=THEME["card"]); r.pack(fill="x", padx=16, pady=(10, 0))
+        tk.Label(r, text=T("API Key", "API Key"), bg=THEME["card"], fg=THEME["text_muted"], font=(UI_FONT, 9), width=10, anchor="w").pack(side="left")
+        self.api_key_entry = ttk.Entry(r, textvariable=self.api_key, width=39, show="*"); self.api_key_entry.pack(side="left", fill="x", expand=True)
+        self.api_key_visible = False
+        ttk.Button(r, text=T("显示", "Show"), style="Ghost.TButton", command=self._toggle_api_key).pack(side="left", padx=(6, 0))
+        tk.Label(form, text=T("API Key 仅保存在本机；请使用粘贴，日志和截图不会显示明文。", "API Key stays local; paste it here. It is never shown in logs or screenshots."), bg=THEME["card"], fg=THEME["text_muted"], font=(SMALL_CJK, 10)).pack(anchor="w", padx=16)
+
+        r = tk.Frame(form, bg=THEME["card"]); r.pack(fill="x", padx=16, pady=(10, 0))
+        tk.Label(r, text=T("模型名", "Model"), bg=THEME["card"], fg=THEME["text_muted"], font=(UI_FONT, 9), width=10, anchor="w").pack(side="left")
+        self.api_model_combo = ttk.Combobox(r, textvariable=self.api_model, width=35, state="readonly"); self.api_model_combo.pack(side="left", fill="x", expand=True)
+        self.api_fetch_btn = ttk.Button(r, text=T("拉取模型", "Fetch models"), style="Ghost.TButton", command=self.fetch_api_models); self.api_fetch_btn.pack(side="left", padx=(6, 0))
+
+        self._api_apply_preset()
+
+        self.api_status = tk.StringVar(value=T("未测试", "Not tested"))
+        tk.Label(form, textvariable=self.api_status, bg=THEME["card"], fg=THEME["text_muted"],
+                 font=(UI_FONT, 9), wraplength=520, justify="left").pack(anchor="w", padx=16, pady=(9, 0))
+
+        btns = tk.Frame(form, bg=THEME["card"])
+        btns.pack(anchor="w", padx=16, pady=(12, 16))
+        ttk.Button(btns, text=T("保存配置", "Save"), style="Accent.TButton",
+                   command=self.save_api_config).pack(side="left")
+        self.api_test_btn = ttk.Button(btns, text=T("测试连接", "Test connection"),
+                                       style="Ghost.TButton", command=self.test_api_connection)
+        self.api_test_btn.pack(side="left", padx=8)
+        ttk.Button(btns, text=T("应用为当前", "Apply"), style="Ghost.TButton",
+                   command=self.apply_api_config).pack(side="left")
+        ttk.Button(btns, text=T("用于对话", "Use in chat"), style="Ghost.TButton",
+                   command=self.use_cloud_for_chat).pack(side="left", padx=8)
+
+        side = tk.Frame(outer, bg=THEME["card"], highlightbackground=THEME["sep"], highlightthickness=1)
+        side.grid(row=1, column=1, sticky="nsew", pady=(14, 0))
+        tk.Label(side, text=T("用量与费用", "Usage & cost"), bg=THEME["card"], fg=THEME["text"],
+                 font=(UI_FONT, 11, "bold")).pack(anchor="w", padx=16, pady=(14, 8))
+        self.api_usage_today = tk.StringVar(value="—")
+        self.api_usage_all = tk.StringVar(value="—")
+        self.api_usage_cost = tk.StringVar(value="—")
+        for label, var in ((T("今日请求 / Tokens", "Requests / tokens today"), self.api_usage_today),
+                           (T("累计请求 / Tokens", "All-time requests / tokens"), self.api_usage_all),
+                           (T("累计费用（估算）", "Estimated cost (all)"), self.api_usage_cost)):
+            r = tk.Frame(side, bg=THEME["card"])
+            r.pack(fill="x", padx=16, pady=(4, 0))
+            tk.Label(r, text=label, bg=THEME["card"], fg=THEME["text_muted"],
+                     font=(UI_FONT, 9)).pack(anchor="w")
+            tk.Label(r, textvariable=var, bg=THEME["card"], fg=THEME["text"],
+                     font=(UI_FONT, 14, "bold")).pack(anchor="w")
+        self.api_models_list = tk.Text(side, height=8, bg=THEME["input_bg"], fg=THEME["text_muted"],
+                                       relief="flat", font=(UI_FONT, 9), bd=0)
+        self.api_models_list.pack(fill="both", expand=True, padx=16, pady=(12, 16))
+        self.api_models_list.configure(state="disabled")
+        self.root.after(1500, self.refresh_api_usage)
+
+    def _api_endpoint_changed(self):
+        if self.api_provider.get() == "自定义":
+            return
+        self.api_status.set(T("已选择预设端点；模型请点击拉取模型", "Preset endpoint selected; fetch models"))
+
+    def _toggle_api_key(self):
+        self.api_key_visible = not getattr(self, "api_key_visible", False)
+        self.api_key_entry.configure(show="" if self.api_key_visible else "*")
+
+    def fetch_api_models(self):
+        base = self.api_url.get().strip().rstrip("/")
+        if not base:
+            self.api_status.set(T("请选择接口地址", "Select an endpoint first")); return
+        self.api_fetch_btn.configure(state=tk.DISABLED)
+        self.api_status.set(T("正在拉取模型…", "Fetching models..."))
+        def work():
+            models=[]; err=""
+            try:
+                import urllib.request
+                req=urllib.request.Request(base + "/models", headers={"Authorization":"Bearer " + self.api_key.get().strip()})
+                with urllib.request.urlopen(req, timeout=12) as resp:
+                    data=json.loads(resp.read().decode("utf-8", "ignore"))
+                raw=data.get("data", data) if isinstance(data, dict) else data
+                if not isinstance(raw, list): raise ValueError("返回格式不是模型列表")
+                models=[str(x.get("id", "")) for x in raw if isinstance(x, dict) and x.get("id")]
+                if not models: raise ValueError("返回格式中没有模型 id")
+            except Exception as e: err=str(e)
+            self.root.after(0, lambda: self._api_models_done(models, err))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _api_models_done(self, models, err):
+        self.api_fetch_btn.configure(state=tk.NORMAL)
+        if err:
+            self.api_status.set(T("拉取模型失败（请检查 401/超时/返回格式）：%s", "Model fetch failed (401/timeout/format): %s") % err)
+            return
+        self.api_model_combo.configure(values=models)
+        self.api_model.set(models[0])
+        self.api_status.set(T("已拉取 %d 个模型（云端）", "Fetched %d models (cloud)") % len(models))
+
+    def _api_presets(self):
+        mod = self._api_providers()
+        if mod is None:
+            return {"DeepSeek": ("https://api.deepseek.com/v1", "deepseek-chat"),
+                    "OpenAI": ("https://api.openai.com/v1", "gpt-4o-mini"),
+                    "Gemini": ("https://generativelanguage.googleapis.com/v1beta/openai", "gemini-2.0-flash"),
+                    "OpenRouter": ("https://openrouter.ai/api/v1", "deepseek/deepseek-chat")}
+        out = {}
+        for key in ("deepseek", "openai", "gemini", "openrouter"):
+            preset = mod.get_preset(key)
+            if preset:
+                label = {"deepseek": "DeepSeek", "openai": "OpenAI",
+                         "gemini": "Gemini", "openrouter": "OpenRouter"}[key]
+                out[label] = (preset.get("base_url", ""), preset.get("default_model", ""))
+        return out or {"DeepSeek": ("https://api.deepseek.com/v1", "deepseek-chat")}
+
+    def _api_apply_preset(self):
+        name = self.api_provider.get()
+        if name == "自定义":
+            self.api_url_combo.configure(state="normal")
+            self.api_model_combo.configure(state="normal")
+            return
+        self.api_url_combo.configure(state="readonly")
+        self.api_model_combo.configure(state="readonly")
+        base, model = self._api_presets().get(name, ("", ""))
+        if base:
+            self.api_url.set(base)
+        if model:
+            self.api_model.set(model)
+        if hasattr(self, "api_url_combo"):
+            self.api_url_combo.configure(values=[base] if base else [])
+        if hasattr(self, "api_model_combo"):
+            vals = (self._api_providers().get_preset(name.lower()) or {}).get("models", []) if self._api_providers() else []
+            self.api_model_combo.configure(values=vals or ([model] if model else []))
+        self.api_status.set(T("已选择 %s 预设端点（本地配置）", "%s preset endpoint selected (local config)") % name)
+
+    def save_api_config(self):
+        try:
+            mod = self._api_providers()
+            cfg = {"provider": self.api_provider.get(),
+                   "base_url": self.api_url.get().strip(),
+                   "api_key": self.api_key.get().strip(),
+                   "model": self.api_model.get().strip(),
+                   "updated": time.strftime("%Y-%m-%d %H:%M:%S")}
+            if mod is not None:
+                mod.save_config({"providers": {self.api_provider.get().lower(): cfg},
+                                 "active": self.api_provider.get()}, self._api_cfg_path())
+            self.config["cloud_api"] = cfg
+            self.config["chat_source"] = "cloud"
+            self.save_config()
+            try:
+                self._update_source_status()
+            except Exception:
+                pass
+            self.api_status.set(T("已保存：%s", "Saved: %s") % self.api_provider.get())
+        except Exception as e:
+            self.api_status.set(T("保存失败：", "Save failed: ") + str(e))
+
+    def apply_api_config(self):
+        self.save_api_config()
+        try:
+            self.config["cloud_enabled"] = True
+            self.save_config()
+            self.api_status.set(T("已应用为当前云端配置（本地模型仍可使用）",
+                                  "Applied as active cloud config (local models still available)"))
+        except Exception:
+            pass
+
+    def use_cloud_for_chat(self):
+        if not self._cloud_cfg():
+            messagebox.showinfo("云端 API", "先保存配置再用于对话。", parent=self.root)
+            return
+        self.config["chat_source"] = "cloud"
+        try:
+            self.save_config()
+        except Exception:
+            pass
+        self._update_source_status()
+        try:
+            self.select_nav(0)
+        except Exception:
+            pass
+        self.queue_message("system", "云端 API 已接入对话")
+
+    def test_api_connection(self):
+        base = self.api_url.get().strip()
+        key = self.api_key.get().strip()
+        model = self.api_model.get().strip()
+        if not base or not key:
+            self.api_status.set(T("请先填写接口地址和 API Key", "Base URL and API Key are required"))
+            return
+        self.api_status.set(T("正在测试连接…", "Testing connection..."))
+        self.api_test_btn.config(state=tk.DISABLED)
+
+        def work():
+            try:
+                mod = self._api_providers()
+                if mod is None:
+                    raise RuntimeError("providers module missing")
+                ok, msg, latency, models = mod.test_connection(base, key, model, timeout=15)
+            except Exception as e:
+                ok, msg, latency, models = False, str(e), 0, []
+            self.root.after(0, lambda: self._api_test_done(ok, msg, latency, models))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _api_test_done(self, ok, msg, latency, models):
+        self.api_test_btn.config(state=tk.NORMAL)
+        self.api_status.set(("✅ " if ok else "❌ ") + msg + ("   %.0f ms" % latency if latency else ""))
+        try:
+            self.api_models_list.configure(state="normal")
+            self.api_models_list.delete("1.0", "end")
+            self.api_models_list.insert("1.0", "\n".join(models) if models else
+                                        T("（没有取到模型列表）", "(no model list)"))
+            self.api_models_list.configure(state="disabled")
+        except Exception:
+            pass
+
+    def refresh_api_usage(self):
+        try:
+            st = getattr(self, "_usage_store", None)
+            if st is None:
+                return
+            tday = st.summary("today")
+            alls = st.summary("all")
+            self.api_usage_today.set("%d / %s" % (tday.get("requests", 0), self._fmt_num(tday.get("total_tokens", 0))))
+            self.api_usage_all.set("%d / %s" % (alls.get("requests", 0), self._fmt_num(alls.get("total_tokens", 0))))
+            self.api_usage_cost.set("¥%.2f" % float(alls.get("cost", 0) or 0))
+        except Exception:
+            pass
+        try:
+            self.root.after(5000, self.refresh_api_usage)
+        except Exception:
+            pass
 
     # ==================== 赞助 ====================
     AFDIAN_URL = "https://ifdian.net/a/hymnixstudio"
 
     def build_support_tab(self, parent):
+        try:
+            from pages_modern import build_sponsor_page
+            build_sponsor_page(self, parent)
+            return
+        except Exception:
+            pass
         try:
             self._section_header(parent, T("赞助与支持", "Support"), "support")
         except Exception:
@@ -5191,7 +6788,7 @@ class HuimengAIClient:
 
         intro = T("如果这个小工具帮你省了时间，欢迎请我喝杯咖啡。赞助完全自愿，功能和更新不会因此打折。",
                   "If this little tool saves you some time, you can buy me a coffee. Support is optional and never changes what you get.")
-        ttk.Label(outer, text=intro, style="BgMuted.TLabel", wraplength=900).pack(anchor="w", pady=(0, 18))
+        ttk.Label(outer, text=intro, style="BgMuted.TLabel", wraplength=900).pack(anchor="w", pady=(0, 12))
 
         cards = ttk.Frame(outer)
         cards.pack(fill="x", anchor="w")
@@ -5221,6 +6818,12 @@ class HuimengAIClient:
 
     # ==================== 插件 ====================
     def build_plugins_tab(self, parent):
+        try:
+            from pages_modern import build_plugins_page
+            build_plugins_page(self, parent)
+            return
+        except Exception:
+            pass
         try:
             self._section_header(parent, "插件与能力", "plugins")
         except Exception:
@@ -5289,7 +6892,7 @@ class HuimengAIClient:
     # ==================== 本次更新 ====================
     def show_update_notes(self):
         dlg = tk.Toplevel(self.root)
-        dlg.title("本次更新 · Hymnix AI Server")
+        dlg.title("本次更新 · Hymnix 1.1.0")
         dlg.geometry("760x620")
         dlg.transient(self.root)
         Theme.apply(dlg)
@@ -5297,7 +6900,7 @@ class HuimengAIClient:
                                         bg=THEME["input_bg"], fg=THEME["text"],
                                         relief="flat", padx=16, pady=14)
         txt.pack(fill="both", expand=True, padx=12, pady=12)
-        txt.insert("1.0", """Hymnix AI Server · 本次更新
+        txt.insert("1.0", """Hymnix 1.1.0 · 本次更新
 ================================================
 
 【模型升级】
@@ -5339,7 +6942,7 @@ class HuimengAIClient:
         target = tk.StringVar(value=ips[0] if ips else "all")
         ttk.Combobox(dlg, textvariable=target, values=(ips + ["all"]), width=32).pack(anchor="w", padx=18)
         ttk.Label(dlg, text="消息内容：会注入对方下一轮 AI 回复里，由 AI 自然转达（不依赖客户端界面）",
-                  style="BgMuted.TLabel").pack(anchor="w", padx=18, pady=(10, 4))
+                  style="BgMuted.TLabel").pack(anchor="w", padx=18, pady=(8, 4))
         box = tk.Text(dlg, height=5, width=52, relief="flat", bg=THEME["input_bg"],
                       fg=THEME["text"], font=(UI_FONT, 10), padx=8, pady=6)
         box.pack(padx=18)
@@ -5363,6 +6966,29 @@ class HuimengAIClient:
 
         ttk.Button(dlg, text="发送", style="Accent.TButton", command=send).pack(anchor="w", padx=18)
 
+    def _decorate_buttons(self):
+        """给所有 ttk 按钮加手型光标和点击反馈音"""
+        def walk(w):
+            try:
+                cls = w.winfo_class()
+            except Exception:
+                return
+            if cls in ("TButton", "Button"):
+                try:
+                    w.configure(cursor="hand2")
+                except Exception:
+                    pass
+                try:
+                    w.bind("<ButtonPress-1>", lambda e: self._ui_click("btn"), add="+")
+                except Exception:
+                    pass
+            try:
+                for c in w.winfo_children():
+                    walk(c)
+            except Exception:
+                pass
+        walk(self.root)
+
     def _splash_tick(self):
         try:
             pct, text = 12, "正在加载界面…"
@@ -5376,23 +7002,17 @@ class HuimengAIClient:
                     pct, text = 85, "模型列表已就绪…"
             except Exception:
                 pass
-            try:
-                import urllib.request as _u
-                import json as _j
-                with _u.urlopen("http://127.0.0.1:%d/health" % HOST.get("port", 11435), timeout=2) as r:
-                    d = _j.loads(r.read().decode("utf-8", "ignore"))
-                if d.get("ok") and d.get("ollama"):
-                    pct, text = 100, "启动完成"
-            except Exception:
-                pass
-            splash_update(pct, text)
-            if pct >= 100 or (time.time() - SPLASH.get("t0", time.time())) > 20:
+            h = getattr(self, "_health", None) or {}
+            if h.get("ok") and h.get("ollama"):
+                pct, text = 100, "启动完成"
+            elapsed = time.time() - SPLASH.get("t0", time.time())
+            if pct >= 100 or elapsed > 1.6:
                 splash_update(100, "启动完成")
-                self.root.after(300, self._splash_done)
+                self.root.after(180, self._splash_done)
                 return
         except Exception:
             pass
-        self.root.after(350, self._splash_tick)
+        self.root.after(160, self._splash_tick)
 
     def _splash_done(self):
         splash_close()
@@ -5540,7 +7160,7 @@ def _build_splash(root):
     try:
         win = tk.Toplevel(root)
         win.overrideredirect(True)
-        w, h = 460, 238
+        w, h = int(460 * _DPI_SCALE), int(238 * _DPI_SCALE)
         x = (win.winfo_screenwidth() - w) // 2
         y = (win.winfo_screenheight() - h) // 2
         win.geometry("%dx%d+%d+%d" % (w, h, x, y))
@@ -5591,7 +7211,12 @@ def main():
     except Exception:
         pass
     selftest = "--selftest" in sys.argv
+    _enable_dpi_awareness()
     root = tk.Tk()
+    try:
+        root.tk.call("tk", "scaling", _DPI / 72.0 * UI_SCALE_COMPENSATION)
+    except Exception:
+        pass
     root.withdraw()
     try:
         _build_splash(root)
