@@ -20,12 +20,6 @@ Hymnix turns a local [Ollama](https://ollama.com) model into an OpenAI-compatibl
 
 ![Hymnix AI Server 1.1.0](docs/images/preview.png)
 
-![Feature overview: chat, 550C terminal, server monitor, plugins and cloud API](docs/images/feature-overview.png)
-
-<p align="center"><i>The 550C terminal console - status chips, live log, telemetry and 19 commands, all inside its own tab.</i></p>
-
-![550C terminal console](docs/images/terminal.png)
-
 ## Highlights
 
 - **Local models** - anything Ollama can run; 8 GB VRAM is enough for qwen3:8b.
@@ -33,7 +27,7 @@ Hymnix turns a local [Ollama](https://ollama.com) model into an OpenAI-compatibl
 - **Live console** - a request log for troubleshooting and resource tracking: latency, tokens, GPU utilisation, VRAM, power and estimated cost.
 - **Optional public access** - Cloudflare Tunnel (default) or ngrok, started on demand.
 - **Desktop client included** - a ready-to-use app for the people you invite; it can also point at any OpenAI-compatible service.
-- **550C terminal console** - a mission-control terminal tab with live status chips, telemetry and 19 commands, so the whole app can be driven from the keyboard. Reference: [docs/terminal-commands.md](docs/terminal-commands.md).
+- **Terminal console** - a dark, dashboard-style terminal tab with live status chips, telemetry and 19 commands, so the whole app can be driven from the keyboard. Reference: [docs/terminal-commands.md](docs/terminal-commands.md).
 - **One-click updates** - check the release, read the notes, download, verify SHA-256 and restart, without touching a running executable.
 - **Five languages** - 简体中文, English, Français, Русский, Español, switchable from the welcome screen or the terminal.
 - **Idle-aware** - the model is unloaded from VRAM after 60 seconds of inactivity (configurable).

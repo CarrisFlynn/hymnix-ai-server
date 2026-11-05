@@ -40,7 +40,7 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- **550C terminal console** - the terminal tab is now a full mission-control style
+- **Terminal console** - the terminal tab is now a full dashboard style
   console: header with live clock and signal waveform, LINK / TUN / PROC status
   chips, SYS.LOG stream with timestamp and level colouring, telemetry bar and a
   real command line with history, tab completion and danger confirmation.

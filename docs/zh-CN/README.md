@@ -14,15 +14,6 @@
 
 ![Hymnix 1.1.0](images/preview.png)
 
-![功能一览：对话 / 550C 终端 / 服务端监控 / 插件与云端 API](images/feature-overview.png)
-
-<details>
-<summary>550C 终端控制台（点开）</summary>
-
-![550C 终端](images/terminal.png)
-
-</details>
-
 ## 快速开始（约 5 分钟）
 
 ### 1. 安装 Ollama 并拉模型

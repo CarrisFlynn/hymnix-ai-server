@@ -1055,9 +1055,9 @@ CHANGELOG = [
     {
         "version": "1.1.0",
         "time": "2026-11-05",
-        "title": "550C 终端 · 一键更新 · 扁平化界面 · 启动提速",
+        "title": "终端 HUD · 一键更新 · 扁平化界面 · 启动提速",
         "items": [
-            "[新增] 终端页重做为 550C 科幻控制台：深色 HUD、LINK/TUN/PROC 状态芯片、信号波形、遥测条、分级着色实时日志",
+            "[新增] 终端页重做为深色 HUD 控制台：LINK/TUN/PROC 状态芯片、信号波形、遥测条、分级着色实时日志",
             "[新增] 终端内置 19 条命令：help / status / version / models / model / sharemodel / config / path / tunnel / quota / billing / lang / service / hardware / export / history / logtail / clear / ps",
             "[新增] 终端支持 ↑↓ 历史、Tab 补全、Ctrl+L 清屏，危险命令二次确认",
             "[新增] 隧道详情整合进终端页（公网地址、二维码、cloudflared / ngrok 切换、最近日志），首页入口保留",
@@ -5073,7 +5073,7 @@ class HuimengAIClient:
 
 
     # ==================== 终端（服务端日志） ====================
-    # ---------- 550C 控制台配色 ----------
+    # ---------- 控制台配色 ----------
     C_BG = "#05080E"
     C_PANEL = "#0A1018"
     C_LINE = "#16324A"
@@ -5107,7 +5107,7 @@ class HuimengAIClient:
         return box
 
     def build_trace_tab(self, parent):
-        self._section_header(parent, T("终端", "Terminal"), "550c console")
+        self._section_header(parent, T("终端", "Terminal"), "console")
         outer = tk.Frame(parent, bg=self.C_BG, highlightthickness=1,
                          highlightbackground=self.C_LINE2)
         outer.pack(fill="both", expand=True, padx=34, pady=(8, 20))
@@ -5118,7 +5118,7 @@ class HuimengAIClient:
         tk.Frame(bar, bg=self.C_ACC, width=3).pack(side="left", fill="y")
         tk.Label(bar, text=" HYMNIX // TERMINAL", bg=self.C_PANEL, fg=self.C_TXT,
                  font=("Consolas", 10, "bold")).pack(side="left", pady=6)
-        tk.Label(bar, text="· 550C", bg=self.C_PANEL, fg=self.C_DIM,
+        tk.Label(bar, text="· CONSOLE", bg=self.C_PANEL, fg=self.C_DIM,
                  font=("Consolas", 9)).pack(side="left", padx=(6, 0))
         self.trace_clock = tk.StringVar(value="--:--:--")
         tk.Label(bar, textvariable=self.trace_clock, bg=self.C_PANEL, fg=self.C_TXT,
