@@ -108,7 +108,7 @@ ZH2EN.update({
 
 def normalize_button_icons(root):
     """统一去掉按钮文字前面的图标符号，保证所有按钮文字居中对齐。"""
-    ICON_RE = re.compile(r"[\s\u2190-\u21FF\u2300-\u27BF\u2B00-\u2BFF\uFE0F\u2000-\u206F\u2600-\u27BF"
+    ICON_RE = re.compile(r"^[\s\u2190-\u21FF\u2300-\u27BF\u2B00-\u2BFF\uFE0F\u2000-\u206F\u2600-\u27BF"
                          r"\U0001F300-\U0001FAFF]+")
     def walk(w):
         try:
@@ -146,7 +146,7 @@ TERMS = {
     "重启": "Restart", "上传附件": "Attach", "发送": "Send", "复制": "Copy",
     "监控": "Monitor", "接口": "API", "插件": "Plugins", "语言": "Language",
     "高级": "Advanced", "基础": "Basic", "默认": "Default", "自动": "Auto",
-    "正在": "Working:", "完成": "Done", "进行中": "In progress", "已连接": "Connected",
+    "正在": "Working: ", "完成": "Done", "进行中": "In progress", "已连接": "Connected",
     "未连接": "Disconnected", "可用": "Available", "不可用": "Unavailable",
     "选择": "Select", "浏览": "Browse", "编辑": "Edit", "添加": "Add",
 }
@@ -164,6 +164,127 @@ def _en_text(value):
         if zh in out:
             out = out.replace(zh, TERMS[zh])
     return out
+
+
+
+def install_widget_text_hooks():
+    """Translate text/label/values at creation time for every widget and menu."""
+    try:
+        import tkinter as _tk
+        from tkinter import ttk as _ttk
+    except Exception:
+        return
+
+    def _tr(v):
+        try:
+            if LANG.get("cur") == "en" and isinstance(v, str) and v.strip():
+                return _en_text(v)
+        except Exception:
+            pass
+        return v
+
+    # ---- every widget: intercept options at creation ----
+    try:
+        if not getattr(_tk.Widget, "_hymnix_opts", False):
+            _orig_options = _tk.Widget._options
+
+            def _options(self, cnf, kw=None):
+                if isinstance(cnf, dict) and "text" in cnf:
+                    cnf = dict(cnf)
+                    cnf["text"] = _tr(cnf["text"])
+                if isinstance(kw, dict) and "text" in kw:
+                    kw = dict(kw)
+                    kw["text"] = _tr(kw["text"])
+                return _orig_options(self, cnf, kw)
+
+            _tk.Widget._options = _options
+            _tk.Widget._hymnix_opts = True
+    except Exception:
+        pass
+
+    # ---- widgets whose text is set via configure later ----
+    for cls in (_tk.Label, _ttk.Label, _tk.Button, _ttk.Button, _tk.Checkbutton,
+                _ttk.Checkbutton, _tk.Radiobutton, _ttk.Radiobutton, _ttk.Labelframe):
+        try:
+            if getattr(cls, "_hymnix_conf", False):
+                continue
+            orig = cls.configure
+
+            def make(orig):
+                def conf(self, cnf=None, **kw):
+                    if isinstance(cnf, dict) and "text" in cnf:
+                        cnf = dict(cnf)
+                        cnf["text"] = _tr(cnf["text"])
+                    if "text" in kw:
+                        kw["text"] = _tr(kw["text"])
+                    return orig(self, cnf, **kw)
+                return conf
+
+            cls.configure = make(orig)
+            cls._hymnix_conf = True
+        except Exception:
+            pass
+
+    # ---- menu items ----
+    try:
+        if not getattr(_tk.Menu, "_hymnix_menu", False):
+            for _m in ("add_command", "add_cascade", "add_checkbutton", "add_radiobutton"):
+                _orig = getattr(_tk.Menu, _m)
+
+                def make_menu(orig):
+                    def fn(self, cnf={}, **kw):
+                        if isinstance(cnf, dict) and "label" in cnf:
+                            cnf = dict(cnf)
+                            cnf["label"] = _tr(cnf["label"])
+                        if "label" in kw:
+                            kw["label"] = _tr(kw["label"])
+                        return orig(self, cnf, **kw)
+                    return fn
+
+                setattr(_tk.Menu, _m, make_menu(_orig))
+            _tk.Menu._hymnix_menu = True
+    except Exception:
+        pass
+
+    # ---- combobox values ----
+    try:
+        if not getattr(_ttk.Combobox, "_hymnix_values", False):
+            _orig = _ttk.Combobox.configure
+
+            def _conf(self, cnf=None, **kw):
+                vals = kw.get("values")
+                if vals is None and isinstance(cnf, dict):
+                    vals = cnf.get("values")
+                if vals is not None and LANG.get("cur") == "en":
+                    tr = [_tr(v) for v in vals]
+                    if isinstance(cnf, dict):
+                        cnf = dict(cnf); cnf["values"] = tr
+                    kw["values"] = tr
+                return _orig(self, cnf, **kw)
+
+            _ttk.Combobox.configure = _conf
+            _ttk.Combobox._hymnix_values = True
+    except Exception:
+        pass
+
+    # ---- window titles ----
+    for cls in (_tk.Tk, _tk.Toplevel):
+        try:
+            if getattr(cls, "_hymnix_title", False):
+                continue
+            _orig = cls.title
+
+            def make_title(orig):
+                def title(self, string=None):
+                    if isinstance(string, str):
+                        string = _tr(string)
+                    return orig(self, string)
+                return title
+
+            cls.title = make_title(_orig)
+            cls._hymnix_title = True
+        except Exception:
+            pass
 
 
 def install_runtime_i18n():
@@ -475,7 +596,7 @@ class ClientApp(tk.Tk):
         top = ttk.Frame(self, padding=(14, 10, 14, 6))
         top.pack(fill="x")
         ttk.Label(top, text="Hymnix", font=("Microsoft YaHei UI", 16, "bold")).pack(side="left")
-        self.dot = tk.Label(top, text="", fg="#9A6B12", bg="#F4F5F3", font=("Microsoft YaHei UI", 12))
+        self.dot = tk.Label(top, text="●", fg="#9A6B12", bg="#F4F5F3", font=("Microsoft YaHei UI", 12))
         self.dot.pack(side="left", padx=(10, 4))
         self.var_state = tk.StringVar(value="连接中…")
         ttk.Label(top, textvariable=self.var_state, foreground="#71757C").pack(side="left")
@@ -511,7 +632,7 @@ class ClientApp(tk.Tk):
         return CFG["server_url"].rstrip("/")
 
     def headers(self):
-        return {"Authorization": "Bearer" + CFG["api_key"]}
+        return {"Authorization": "Bearer " + CFG["api_key"]}
 
     def _probe_loop(self):
         while True:
@@ -572,7 +693,7 @@ class ClientApp(tk.Tk):
             r = requests.get(self.base() + "/api/inbox", headers=self.headers(), timeout=4)
             if r.status_code == 200:
                 for m in (r.json().get("messages") or []):
-                    self._append("\n 服务端消息：" + str(m.get("text", "")) + "\n", "system")
+                    self._append("\n📨 服务端消息：" + str(m.get("text", "")) + "\n", "system")
         except Exception:
             pass
         self.after(5000, self._poll_inbox)
@@ -702,7 +823,7 @@ class ClientApp(tk.Tk):
             except Exception:
                 msg.set("剪贴板里没有文本")
                 return
-            m = re.search(r"https?://[\s'\"]+", txt)
+            m = re.search(r"https?://[^\s'\"]+", txt)
             if m:
                 v_url.set(m.group(0).strip())
             m2 = re.search(r"(Hymnix[0-9A-Za-z]+)", txt)

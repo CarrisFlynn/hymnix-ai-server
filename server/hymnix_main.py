@@ -37,7 +37,7 @@ def apply_remote_settings(cfg):
             base = "http://" + base
         API_BASE = base or "http://127.0.0.1:11435"
         key = str(cfg.get("api_key", "") or "").strip()
-        API_HEADERS = {"Authorization": "Bearer" + key} if key else {}
+        API_HEADERS = {"Authorization": "Bearer " + key} if key else {}
         ADMIN_KEY = str(cfg.get("admin_key", "") or "").strip()
         GATEWAY_HEALTH_URL = API_BASE + "/health"
     else:
@@ -321,7 +321,7 @@ def normalize_button_icons(root):
             if 0x25A0 <= cp <= 0x25FF:
                 continue
             out.append(ch)
-        return re.sub(r"\s{2,}", "", "".join(out)).strip()
+        return re.sub(r"\s{2,}", " ", "".join(out)).strip()
 
     def walk(w):
         try:
@@ -361,7 +361,7 @@ TERMS = {
     "重启": "Restart", "上传附件": "Attach", "发送": "Send", "复制": "Copy",
     "监控": "Monitor", "接口": "API", "插件": "Plugins", "语言": "Language",
     "高级": "Advanced", "基础": "Basic", "默认": "Default", "自动": "Auto",
-    "正在": "Working:", "完成": "Done", "进行中": "In progress", "已连接": "Connected",
+    "正在": "Working: ", "完成": "Done", "进行中": "In progress", "已连接": "Connected",
     "未连接": "Disconnected", "可用": "Available", "不可用": "Unavailable",
     "选择": "Select", "浏览": "Browse", "编辑": "Edit", "添加": "Add",
 }
@@ -403,7 +403,7 @@ def _strip_icons(text):
         if 0x25A0 <= cp <= 0x25FF:
             continue
         out.append(ch)
-    return re.sub(r"\s{2,}", "", "".join(out)).strip()
+    return re.sub(r"\s{2,}", " ", "".join(out)).strip()
 
 
 def install_button_icon_hooks():
@@ -433,10 +433,169 @@ def install_button_icon_hooks():
                 return conf
 
             cls.configure = make(orig)
+            orig_init = cls.__init__
+
+            def make_init(orig_init):
+                def init_fn(self, *a, **kw):
+                    try:
+                        if LANG.get("cur") == "en" and "text" in kw:
+                            kw["text"] = _strip_icons(kw["text"])
+                    except Exception:
+                        pass
+                    return orig_init(self, *a, **kw)
+                return init_fn
+
+            cls.__init__ = make_init(orig_init)
             cls._hymnix_icon_hook = True
         except Exception:
             pass
 
+
+
+def install_widget_text_hooks():
+    """Translate text/label/values at creation time for every widget and menu."""
+    try:
+        import tkinter as _tk
+        from tkinter import ttk as _ttk
+    except Exception:
+        return
+
+    def _tr(v):
+        try:
+            if LANG.get("cur") == "en" and isinstance(v, str) and v.strip():
+                return _en_text(v)
+        except Exception:
+            pass
+        return v
+
+    # ---- every widget: intercept options at creation ----
+    try:
+        if not getattr(_tk.Widget, "_hymnix_opts", False):
+            _orig_options = _tk.Widget._options
+
+            def _options(self, cnf, kw=None):
+                if isinstance(cnf, dict) and "text" in cnf:
+                    cnf = dict(cnf)
+                    cnf["text"] = _tr(cnf["text"])
+                if isinstance(kw, dict) and "text" in kw:
+                    kw = dict(kw)
+                    kw["text"] = _tr(kw["text"])
+                return _orig_options(self, cnf, kw)
+
+            _tk.Widget._options = _options
+            _tk.Widget._hymnix_opts = True
+    except Exception:
+        pass
+
+    # ---- widgets whose text is set via configure later ----
+    for cls in (_tk.Label, _ttk.Label, _tk.Button, _ttk.Button, _tk.Checkbutton,
+                _ttk.Checkbutton, _tk.Radiobutton, _ttk.Radiobutton, _ttk.Labelframe):
+        try:
+            if getattr(cls, "_hymnix_conf", False):
+                continue
+            orig = cls.configure
+
+            def make(orig):
+                def conf(self, cnf=None, **kw):
+                    if isinstance(cnf, dict) and "text" in cnf:
+                        cnf = dict(cnf)
+                        cnf["text"] = _tr(cnf["text"])
+                    if "text" in kw:
+                        kw["text"] = _tr(kw["text"])
+                    return orig(self, cnf, **kw)
+                return conf
+
+            cls.configure = make(orig)
+            cls._hymnix_conf = True
+        except Exception:
+            pass
+
+    # ---- menu items ----
+    try:
+        if not getattr(_tk.Menu, "_hymnix_menu", False):
+            for _m in ("add_command", "add_cascade", "add_checkbutton", "add_radiobutton"):
+                _orig = getattr(_tk.Menu, _m)
+
+                def make_menu(orig):
+                    def fn(self, cnf={}, **kw):
+                        if isinstance(cnf, dict) and "label" in cnf:
+                            cnf = dict(cnf)
+                            cnf["label"] = _tr(cnf["label"])
+                        if "label" in kw:
+                            kw["label"] = _tr(kw["label"])
+                        return orig(self, cnf, **kw)
+                    return fn
+
+                setattr(_tk.Menu, _m, make_menu(_orig))
+            _tk.Menu._hymnix_menu = True
+    except Exception:
+        pass
+
+    # ---- combobox values ----
+    try:
+        if not getattr(_ttk.Combobox, "_hymnix_values", False):
+            _orig = _ttk.Combobox.configure
+
+            def _conf(self, cnf=None, **kw):
+                vals = kw.get("values")
+                if vals is None and isinstance(cnf, dict):
+                    vals = cnf.get("values")
+                if vals is not None and LANG.get("cur") == "en":
+                    tr = [_tr(v) for v in vals]
+                    if isinstance(cnf, dict):
+                        cnf = dict(cnf); cnf["values"] = tr
+                    kw["values"] = tr
+                return _orig(self, cnf, **kw)
+
+            _ttk.Combobox.configure = _conf
+            _ttk.Combobox._hymnix_values = True
+    except Exception:
+        pass
+
+    # ---- window titles ----
+    for cls in (_tk.Tk, _tk.Toplevel):
+        try:
+            if getattr(cls, "_hymnix_title", False):
+                continue
+            _orig = cls.title
+
+            def make_title(orig):
+                def title(self, string=None):
+                    if isinstance(string, str):
+                        string = _tr(string)
+                    return orig(self, string)
+                return title
+
+            cls.title = make_title(_orig)
+            cls._hymnix_title = True
+        except Exception:
+            pass
+
+
+
+ZH2EN.update({
+    "保存对话": "Save chat",
+    "加载对话": "Load chat",
+    "导出对话": "Export chat",
+    "退出": "Quit",
+    "刷新模型列表": "Refresh model list",
+    "硬件信息 / 计算设备": "Hardware / Compute device",
+    "下载新模型": "Download new model",
+    "启动Ollama服务": "Start Ollama service",
+    "停止Ollama服务": "Stop Ollama service",
+    "清空对话历史": "Clear chat history",
+    "复制最后回复": "Copy last reply",
+    "连接设置…": "Connection settings...",
+    "连接监控…": "Monitor...",
+    "检测连接": "Test connection",
+    "重启公网隧道": "Restart public tunnel",
+    "打开数据目录": "Open data folder",
+    "中文": "Chinese",
+    "程序设置": "Settings",
+    "个性化设置": "Appearance",
+    "重置窗口": "Reset window",
+    "配置里记着上次选的 GPU，但当前 Ollama 服务没有按它启动": "A GPU was selected last time, but Ollama is not using it now",
+})
 
 def install_runtime_i18n():
     """Install global hooks so dynamically generated strings are translated too."""
@@ -712,7 +871,7 @@ CHANGELOG = [
             "[新增] 服务端监控：请求列表、耗时、token、GPU 占用、功耗与能耗",
             "[新增] 空闲自动卸载模型，释放显存；工具型客户端可单独延长保活",
             "[新增] 模型自由选择：不强制任何模型，客户端传什么就用什么，可配置默认值与别名",
-            "[新增] 中英文界面切换（设置 语言 / Language）",
+            "[新增] 中英文界面切换（设置 → 语言 / Language）",
             "[新增] 安装包数据目录改到 LOCALAPPDATA，适配微软商店要求",
             "[修复] 上下文裁剪保留全部 system 提示；同一来源请求串行处理",
             "[说明] AGPL-3.0 开源；修改后作为网络服务提供需公开源码",
@@ -723,7 +882,9 @@ CHANGELOG = [
 
 # ==================== 模型下载器（多源探测 · 断点续传 · 校验）====================
 class ModelDownloader:
-    """直连 docker v2 registry 的下载器。 源顺序即优先级（镜像在前、官方在最后）。探测 8 秒超时即刻换源； 传输阶段 180 秒收不到数据判为超时，换下一个源续传。"""
+    """直连 docker v2 registry 的下载器。
+    源顺序即优先级（镜像在前、官方在最后）。探测 8 秒超时即刻换源；
+    传输阶段 180 秒收不到数据判为超时，换下一个源续传。"""
 
     OFFICIAL = "https://registry.ollama.ai"
     ACCEPT = "application/vnd.docker.distribution.manifest.v2+json"
@@ -766,11 +927,11 @@ class ModelDownloader:
 
     def _token_from(self, resp):
         hdr = resp.headers.get("WWW-Authenticate", "")
-        realm = re.search(r'realm="(["]+)"', hdr or "")
+        realm = re.search(r'realm="([^"]+)"', hdr or "")
         if not realm:
             return None
         params = {"scope": "repository:%s:pull" % self.repo}
-        svc = re.search(r'service="(["]+)"', hdr)
+        svc = re.search(r'service="([^"]+)"', hdr)
         if svc:
             params["service"] = svc.group(1)
         try:
@@ -786,7 +947,7 @@ class ModelDownloader:
         url = "%s/v2/%s/%s" % (self.base, self.repo, path)
         h = dict(headers or {})
         if self.token:
-            h["Authorization"] = "Bearer" + self.token
+            h["Authorization"] = "Bearer " + self.token
         r = self.session.get(url, headers=h, stream=stream,
                              timeout=timeout or (self.connect_timeout, self.read_timeout))
         if r.status_code == 401 and retry_auth:
@@ -806,7 +967,7 @@ class ModelDownloader:
             return None
         self.base = self.sources[idx + 1]
         self.token = None
-        self.log("切换到源 %s" % self.base)
+        self.log("↪ 切换到源 %s" % self.base)
         return self.base
 
     # ---------- 解析清单 ----------
@@ -822,16 +983,16 @@ class ModelDownloader:
             try:
                 r = self._fetch("manifests/" + self.tag, timeout=(self.connect_timeout, 30))
                 if r.status_code == 200:
-                    self.log("源可用：%s（%.1f 秒）" % (base, time.time() - t0))
+                    self.log("✅ 源可用：%s（%.1f 秒）" % (base, time.time() - t0))
                     return r.json()
-                errors.append("%s HTTP %d" % (base, r.status_code))
-                self.log("%s 返回 HTTP %d，立刻换下一个源" % (base, r.status_code))
+                errors.append("%s → HTTP %d" % (base, r.status_code))
+                self.log("✗ %s 返回 HTTP %d，立刻换下一个源" % (base, r.status_code))
             except requests.exceptions.Timeout:
-                errors.append("%s 探测超时（%d 秒）" % (base, self.connect_timeout))
-                self.log("%s 探测超时（%d 秒），立刻换下一个源" % (base, self.connect_timeout))
+                errors.append("%s → 探测超时（%d 秒）" % (base, self.connect_timeout))
+                self.log("✗ %s 探测超时（%d 秒），立刻换下一个源" % (base, self.connect_timeout))
             except Exception as e:
-                errors.append("%s %s" % (base, type(e).__name__))
-                self.log("%s 不可用（%s），换下一个源" % (base, type(e).__name__))
+                errors.append("%s → %s" % (base, type(e).__name__))
+                self.log("✗ %s 不可用（%s），换下一个源" % (base, type(e).__name__))
         return {"__error__": errors}
 
     # ---------- 校验 ----------
@@ -857,14 +1018,14 @@ class ModelDownloader:
             if size and start >= size:
                 break
             headers = {"Range": "bytes=%d-" % start} if start > 0 else {}
-            self.log("%s 开始（%.1f MB%s）" % (
+            self.log("↓ %s 开始（%.1f MB%s）" % (
                 hexd[:12], size / 1048576.0,
                 "，从 %.1f MB 续传" % (start / 1048576.0) if start else ""))
             try:
                 r = self._fetch("blobs/" + digest, stream=True, headers=headers,
                                 timeout=(self.connect_timeout, self.read_timeout))
                 if r.status_code not in (200, 206):
-                    self.log("%s HTTP %d" % (hexd[:12], r.status_code))
+                    self.log("✗ %s HTTP %d" % (hexd[:12], r.status_code))
                     if not self._switch_source():
                         return False, "下载 %s 失败：HTTP %d，且没有更多源可用" % (hexd[:12], r.status_code)
                     continue
@@ -886,7 +1047,7 @@ class ModelDownloader:
                             t_last, b_last = now, written
                             self._emit(base_done + written, total, speed, "下载 %s" % hexd[:12])
                 if size and written != size:
-                    self.log("%s 只下到 %.1f/%.1f MB，重试" % (
+                    self.log("⚠ %s 只下到 %.1f/%.1f MB，重试" % (
                         hexd[:12], written / 1048576.0, size / 1048576.0))
                     continue
                 self._emit(base_done + written, total, 0, "校验 %s" % hexd[:12])
@@ -899,13 +1060,13 @@ class ModelDownloader:
                 os.replace(tmp, final)
                 return True, ""
             except requests.exceptions.Timeout:
-                self.log("%s 超过 %d 秒没有收到数据，判定超时" % (hexd[:12], self.read_timeout))
+                self.log("✗ %s 超过 %d 秒没有收到数据，判定超时" % (hexd[:12], self.read_timeout))
                 if not self._switch_source():
                     return False, ("下载 %s 超时：所有源在 %d 秒内都没有数据返回"
                                    % (hexd[:12], self.read_timeout))
                 continue
             except Exception as e:
-                self.log("%s 下载异常：%s" % (hexd[:12], type(e).__name__))
+                self.log("✗ %s 下载异常：%s" % (hexd[:12], type(e).__name__))
                 if not self._switch_source():
                     return False, "下载 %s 失败：%s" % (hexd[:12], str(e))
                 continue
@@ -936,7 +1097,7 @@ class ModelDownloader:
             hexd = digest.split(":", 1)[1]
             final = os.path.join(blobs_dir, "sha256-" + hexd)
             if os.path.exists(final) and (not size or os.path.getsize(final) == size):
-                self.log("已存在，跳过 %s" % hexd[:12])
+                self.log("↺ 已存在，跳过 %s" % hexd[:12])
                 done += size
                 self._emit(done, total, 0, "跳过已有层")
                 continue
@@ -953,12 +1114,16 @@ class ModelDownloader:
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(manifest, f, indent=2, ensure_ascii=False)
         os.replace(tmp, mpath)
-        self.log("manifest 已写入：%s" % mpath)
+        self.log("✅ manifest 已写入：%s" % mpath)
         return True, "下载完成，源：%s" % self.base
 
 
 class SysMon:
-    """资源采样：全部走 Windows API / NVML，不 spawn 子进程、不阻塞 UI。 · GPU：优先 nvml.dll（ctypes，约 0.01 ms/次）；拿不到才退回 nvidia-smi（约 60 ms） · CPU：GetSystemTimes 差分（系统整体）；GetProcessTimes 差分（ollama 进程，才是计算真正吃掉的） · 内存：GlobalMemoryStatusEx（系统）+ GetProcessMemoryInfo（ollama 进程）"""
+    """资源采样：全部走 Windows API / NVML，不 spawn 子进程、不阻塞 UI。
+    · GPU：优先 nvml.dll（ctypes，约 0.01 ms/次）；拿不到才退回 nvidia-smi（约 60 ms）
+    · CPU：GetSystemTimes 差分（系统整体）；GetProcessTimes 差分（ollama 进程，才是计算真正吃掉的）
+    · 内存：GlobalMemoryStatusEx（系统）+ GetProcessMemoryInfo（ollama 进程）
+    """
 
     _nvml = None
     _nvml_handle = None
@@ -1089,7 +1254,8 @@ class SysMon:
 
     @staticmethod
     def ai_stats():
-        """AI 相关进程（llama-server / ollama）的 CPU%（占全机容量）与工作集合计。 这才是计算真正产生的那份占用；系统 CPU 里还混着别的程序。"""
+        """AI 相关进程（llama-server / ollama）的 CPU%（占全机容量）与工作集合计。
+        这才是计算真正产生的那份占用；系统 CPU 里还混着别的程序。"""
         try:
             k32 = ctypes.windll.kernel32
             psapi = ctypes.WinDLL("psapi.dll")
@@ -1278,7 +1444,7 @@ class HardwareProbe:
         n = (name or "").lower()
         if "nvidia" in n or "geforce" in n or "quadro" in n or "rtx" in n or "tesla" in n:
             return "NVIDIA"
-        if "amd" in n or "radeon" in n or "ati" in n:
+        if "amd" in n or "radeon" in n or "ati " in n:
             return "AMD"
         if "intel" in n or "arc" in n or "uhd" in n or "iris" in n:
             return "Intel"
@@ -1398,7 +1564,7 @@ class HardwareProbe:
     def env_desc(env):
         if not env:
             return "无"
-        return ",".join("%s=%s" % (k, v) for k, v in env.items())
+        return ", ".join("%s=%s" % (k, v) for k, v in env.items())
 
 
 class OllamaManager:
@@ -1741,6 +1907,7 @@ class HuimengAIClient:
         try:
             install_runtime_i18n()
             install_button_icon_hooks()
+            install_widget_text_hooks()
         except Exception:
             pass
         try:
@@ -1948,14 +2115,14 @@ class HuimengAIClient:
 
         tab_chat = ttk.Frame(self.notebook, style="Bg.TFrame")
         tab_mon = ttk.Frame(self.notebook, style="Bg.TFrame")
-        self.notebook.add(tab_chat, text="终端 · 轨迹")
-        self.notebook.add(tab_mon, text="服务端监控")
+        self.notebook.add(tab_chat, text="   终端 · 轨迹   ")
+        self.notebook.add(tab_mon, text="   服务端监控   ")
         self.mon_tab = tab_mon
         self.build_monitor_tab(tab_mon)
         tab_api = ttk.Frame(self.notebook, style="Bg.TFrame")
         tab_plug = ttk.Frame(self.notebook, style="Bg.TFrame")
-        self.notebook.add(tab_api, text="API 接口")
-        self.notebook.add(tab_plug, text="插件")
+        self.notebook.add(tab_api, text="   API 接口   ")
+        self.notebook.add(tab_plug, text="   插件   ")
         self.build_api_tab(tab_api)
         self.build_plugins_tab(tab_plug)
         self._build_sidebar(shell)
@@ -1971,21 +2138,21 @@ class HuimengAIClient:
         status_frame = ttk.Frame(main_frame, style="Bg.TFrame")
         status_frame.grid(row=0, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 10))
         status_frame.columnconfigure(0, weight=1)
-        self.status_var = tk.StringVar(value="正在初始化...")
+        self.status_var = tk.StringVar(value="🟡 正在初始化...")
         ttk.Label(status_frame, textvariable=self.status_var, style="Status.TLabel",
                   anchor=tk.W).grid(row=0, column=0, sticky=(tk.W, tk.E))
-        self.connection_status = tk.StringVar(value="")
+        self.connection_status = tk.StringVar(value="●")
         self.status_dot = ttk.Label(status_frame, textvariable=self.connection_status, style="Dot.TLabel")
         self.status_dot.grid(row=0, column=1, padx=(10, 0))
 
         # ── 内置网关状态条：网关 / 隧道 / 模型 + 公网地址 ──
         sbar = ttk.Frame(status_frame, style="Bg.TFrame")
         sbar.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(3, 0))
-        self.host_gw_dot = tk.Label(sbar, text=T("网关", "Gateway"), fg="#9AA0A6", bg=THEME["bg"])
+        self.host_gw_dot = tk.Label(sbar, text=T("● 网关", "● Gateway"), fg="#9AA0A6", bg=THEME["bg"])
         self.host_gw_dot.pack(side=tk.LEFT)
-        self.host_tun_dot = tk.Label(sbar, text=T("隧道", "Tunnel"), fg="#9AA0A6", bg=THEME["bg"])
+        self.host_tun_dot = tk.Label(sbar, text=T("● 隧道", "● Tunnel"), fg="#9AA0A6", bg=THEME["bg"])
         self.host_tun_dot.pack(side=tk.LEFT, padx=(10, 0))
-        self.host_oll_dot = tk.Label(sbar, text=T("模型", "Model"), fg="#9AA0A6", bg=THEME["bg"])
+        self.host_oll_dot = tk.Label(sbar, text=T("● 模型", "● Model"), fg="#9AA0A6", bg=THEME["bg"])
         self.host_oll_dot.pack(side=tk.LEFT, padx=(10, 0))
         self.host_url_var = tk.StringVar(value="公网地址：启动中…")
         ttk.Label(sbar, textvariable=self.host_url_var, foreground="#71757C",
@@ -2019,25 +2186,25 @@ class HuimengAIClient:
         ttk.Label(cf, textvariable=self.model_info_var, style="SideMuted.TLabel",
                   wraplength=220).pack(anchor=tk.W, pady=(0, 8))
 
-        for text, command in (("刷新模型", self.refresh_models),
-                              ("下载模型", self.download_model_dialog),
-                              ("启动服务", self.start_service_manual),
-                              ("停止服务", self.stop_service_manual),
-                              ("模型管理", self.manage_models)):
+        for text, command in (("🔄 刷新模型", self.refresh_models),
+                              ("⏬ 下载模型", self.download_model_dialog),
+                              ("🚀 启动服务", self.start_service_manual),
+                              ("⏹️ 停止服务", self.stop_service_manual),
+                              ("📊 模型管理", self.manage_models)):
             ttk.Button(cf, text=text, style="Ghost.TButton", command=command).pack(fill=tk.X, pady=2)
 
         ttk.Label(cf, text="对话历史", style="SideCaption.TLabel").pack(anchor=tk.W, pady=(14, 5))
-        for text, command in (("保存", self.save_history), ("加载", self.load_history),
-                              ("清空", self.clear_history), ("导出", self.export_conversation)):
+        for text, command in (("💾 保存", self.save_history), ("📂 加载", self.load_history),
+                              ("🗑️ 清空", self.clear_history), ("📤 导出", self.export_conversation)):
             ttk.Button(cf, text=text, style="Ghost.TButton", command=command).pack(fill=tk.X, pady=2)
 
         ttk.Label(cf, text="其它", style="SideCaption.TLabel").pack(anchor=tk.W, pady=(14, 5))
-        for text, command in (("设置", self.open_settings),
-                              ("个性化", self.open_personalization),
-                              ("帮助", self.show_help), ("关于", self.show_about)):
+        for text, command in (("⚙️ 设置", self.open_settings),
+                              ("🎨 个性化", self.open_personalization),
+                              ("❓ 帮助", self.show_help), ("ℹ️ 关于", self.show_about)):
             ttk.Button(cf, text=text, style="Ghost.TButton", command=command).pack(fill=tk.X, pady=2)
 
-        ttk.Button(cf, text="退出", style="Danger.TButton",
+        ttk.Button(cf, text="🚪 退出", style="Danger.TButton",
                    command=self.root.quit).pack(fill=tk.X, pady=(16, 8))
 
         # ── 右栏：对话卡片 ──
@@ -2100,7 +2267,7 @@ class HuimengAIClient:
         self.send_button = ttk.Button(input_card, text="发送", style="Accent.TButton",
                                       command=self.send_message, width=9)
         self.send_button.grid(row=1, column=1)
-        ttk.Button(input_card, text="", style="Ghost.TButton", width=3,
+        ttk.Button(input_card, text="📎", style="Ghost.TButton", width=3,
                    command=self.attach_file).grid(row=1, column=2, padx=(6, 0))
 
     # ==================== 思考计时 / 资源占用 ====================
@@ -2110,7 +2277,7 @@ class HuimengAIClient:
         self._stream_chars = 0
         self._thinking = True
         if hasattr(self, "think_var"):
-            self.think_var.set("思考中 0.0 秒")
+            self.think_var.set("🧠 思考中 0.0 秒")
         self._tick_id = self.root.after(120, self._tick_thinking)
         self.start_sampler(fast=True)
 
@@ -2118,14 +2285,14 @@ class HuimengAIClient:
         if not getattr(self, "_thinking", False):
             return
         if getattr(self, "_t_first", None) is None and hasattr(self, "think_var"):
-            self.think_var.set("思考中 %.1f 秒" % (time.time() - self._t0))
+            self.think_var.set("🧠 思考中 %.1f 秒" % (time.time() - self._t0))
             self._tick_id = self.root.after(120, self._tick_thinking)
 
     def first_token_arrived(self):
         if getattr(self, "_t_first", None) is None:
             self._t_first = time.time()
             if hasattr(self, "think_var"):
-                self.think_var.set("思考 %.2f 秒" % (self._t_first - self._t0))
+                self.think_var.set("🧠 思考 %.2f 秒" % (self._t_first - self._t0))
 
     def finish_thinking(self):
         self._thinking = False
@@ -2140,16 +2307,16 @@ class HuimengAIClient:
                 think = self._t_first - self._t0
                 gen = max(0.0, time.time() - self._t_first)
                 chars = int(getattr(self, "_stream_chars", 0) or 0)
-                parts = ["思考 %.2f 秒" % think]
+                parts = ["🧠 思考 %.2f 秒" % think]
                 if gen > 0.3:
                     parts.append("生成 %.1f 秒" % gen)
                     if chars > 0:
                         parts.append("%.0f 字/秒" % (chars / gen))
                 if chars > 0:
                     parts.append("%d 字" % chars)
-                self.think_var.set("·".join(parts))
+                self.think_var.set(" · ".join(parts))
             else:
-                self.think_var.set("本轮没有生成内容")
+                self.think_var.set("🧠 本轮没有生成内容")
         # 退回低频采样（仍然常驻，空闲时数值也在动）
         self.start_sampler(fast=False)
 
@@ -2202,7 +2369,7 @@ class HuimengAIClient:
                 bits.append("模型 %.1fG（显存 %.1fG）" % (snap["model_size"], snap["model_vram"]))
             else:
                 bits.append("模型 %.1fG（纯内存）" % snap["model_size"])
-        return "·".join(bits)
+        return "   ·   ".join(bits)
 
     # ==================== 计算设备（CPU / 显卡 选择）====================
     DEVICE_AUTO_TEXT = T("自动（由 Ollama 决定，推荐）", "Auto (decided by Ollama, recommended)")
@@ -2219,11 +2386,11 @@ class HuimengAIClient:
         self.device_combo = ttk.Combobox(card, textvariable=self.device_var, state="readonly", width=44)
         self.device_combo.grid(row=1, column=0, sticky=tk.W)
         self.device_combo.bind("<<ComboboxSelected>>", self.on_device_selected)
-        ttk.Button(card, text="检测硬件", style="Ghost.TButton",
+        ttk.Button(card, text="🔍 检测硬件", style="Ghost.TButton",
                    command=self.detect_hardware_async).grid(row=1, column=1, padx=(8, 0))
-        ttk.Button(card, text="应用", style="Accent.TButton", width=7,
+        ttk.Button(card, text="✔ 应用", style="Accent.TButton", width=7,
                    command=self.apply_device_settings).grid(row=1, column=2, padx=(6, 0))
-        ttk.Button(card, text="详情", style="Ghost.TButton", width=7,
+        ttk.Button(card, text="ℹ️ 详情", style="Ghost.TButton", width=7,
                    command=self.show_hardware_dialog).grid(row=1, column=3, padx=(6, 0))
         self.hw_summary_var = tk.StringVar(value="正在检测 CPU / 显卡 ...")
         ttk.Label(card, textvariable=self.hw_summary_var, style="CardMuted.TLabel",
@@ -2248,7 +2415,7 @@ class HuimengAIClient:
     def on_hardware_detected(self, data):
         self.hw = data
         if data.get("error"):
-            self.hw_summary_var.set("硬件检测失败:" + str(data["error"]))
+            self.hw_summary_var.set("硬件检测失败: " + str(data["error"]))
             return
         cpu = data.get("cpu") or {}
         gpus = data.get("gpus") or []
@@ -2270,15 +2437,15 @@ class HuimengAIClient:
             gpu_txt = "、".join("%s %.1fG" % (g["name"], g["vram_gb"]) for g in gpus)
         else:
             gpu_txt = "未检测到独立显卡，只能用 CPU"
-        self.hw_summary_var.set("CPU: %s（%d 核 / %d 线程 @ %d MHz） | 显卡 %d 张：%s | 内存 %.1f GB" % (
+        self.hw_summary_var.set("CPU: %s（%d 核 / %d 线程 @ %d MHz）   |   显卡 %d 张：%s   |   内存 %.1f GB" % (
             cpu.get("name", "未知"), cpu.get("cores", 0), cpu.get("threads", 0), cpu.get("mhz", 0),
             len(gpus), gpu_txt, data.get("ram_gb", 0)))
-        self.queue_message("system", T("硬件: %s，检测到 %d 张显卡" % (cpu.get("name", "未知"), len(gpus)),
-                "Hardware: %s, %d GPU(s) detected" % (cpu.get("name", "Unknown"), len(gpus))))
+        self.queue_message("system", T("🖥️ 硬件: %s，检测到 %d 张显卡" % (cpu.get("name", "未知"), len(gpus)),
+                "🖥️ Hardware: %s, %d GPU(s) detected" % (cpu.get("name", "Unknown"), len(gpus))))
         if current.startswith("gpu:"):
-            self.update_device_hint("配置里记着上次选的 GPU，但当前 Ollama 服务不一定绑定了它，点『 应用』可重新绑定")
+            self.update_device_hint("⚠️ 配置里记着上次选的 GPU，但当前 Ollama 服务不一定绑定了它，点『✔ 应用』可重新绑定")
         elif current == "cpu":
-            self.update_device_hint("当前为纯 CPU 模式（请求带 num_gpu=0），不占用显存")
+            self.update_device_hint("✅ 当前为纯 CPU 模式（请求带 num_gpu=0），不占用显存")
         else:
             self.update_device_hint("")
 
@@ -2287,11 +2454,11 @@ class HuimengAIClient:
         self.config["compute_device"] = val
         self.save_config()
         if val == "cpu":
-            self.update_device_hint("已选纯 CPU：下一条对话起带 num_gpu=0，不占显存，无需重启服务")
+            self.update_device_hint("✅ 已选纯 CPU：下一条对话起带 num_gpu=0，不占显存，无需重启服务")
         elif val.startswith("gpu:"):
-            self.update_device_hint("选了指定显卡：需要点『 应用』重启 Ollama 服务才会只让它参与计算")
+            self.update_device_hint("⚠️ 选了指定显卡：需要点『✔ 应用』重启 Ollama 服务才会只让它参与计算")
         else:
-            self.update_device_hint("自动模式：由 Ollama 自己挑卡")
+            self.update_device_hint("✅ 自动模式：由 Ollama 自己挑卡")
 
     def apply_device_settings(self):
         val = getattr(self, "_device_map", {}).get(self.device_var.get(), "auto")
@@ -2299,9 +2466,9 @@ class HuimengAIClient:
             self.config["compute_device"] = val
             self.save_config()
             if val == "cpu":
-                self.update_device_hint("已保存为纯 CPU，立即生效（无需重启服务）")
+                self.update_device_hint("✅ 已保存为纯 CPU，立即生效（无需重启服务）")
             else:
-                self.update_device_hint("已保存为自动模式，立即生效")
+                self.update_device_hint("✅ 已保存为自动模式，立即生效")
             return
         idx = int(val.split(":")[1])
         gpu = None
@@ -2310,7 +2477,7 @@ class HuimengAIClient:
                 gpu = g
                 break
         if not gpu:
-            messagebox.showwarning("提示", "没有找到这块显卡，请先点『 检测硬件』", parent=self.root)
+            messagebox.showwarning("提示", "没有找到这块显卡，请先点『🔍 检测硬件』", parent=self.root)
             return
         env = HardwareProbe.device_env(gpu)
         env.update(self.models_env())
@@ -2324,8 +2491,8 @@ class HuimengAIClient:
         self.save_config()
 
         def task():
-            self.queue_message("system", "正在切换计算显卡并重启 Ollama ...")
-            self.root.after(0, lambda: self.update_status("重启服务中..."))
+            self.queue_message("system", "🔧 正在切换计算显卡并重启 Ollama ...")
+            self.root.after(0, lambda: self.update_status("🟡 重启服务中..."))
             try:
                 subprocess.run(["taskkill", "/F", "/IM", "ollama.exe"], capture_output=True,
                                creationflags=subprocess.CREATE_NO_WINDOW)
@@ -2333,16 +2500,16 @@ class HuimengAIClient:
                                creationflags=subprocess.CREATE_NO_WINDOW)
                 time.sleep(2)
                 ok, msg = self.ollama_manager.start_ollama_service(extra_env=env)
-                self.queue_message("system", ("" if ok else "") + msg)
+                self.queue_message("system", ("✅ " if ok else "❌ ") + msg)
                 if ok:
                     self.root.after(0, lambda: self.update_device_hint(
-                        "已绑定 GPU %d「%s」，环境变量 %s" % (idx, gpu["name"], HardwareProbe.env_desc(env))))
+                        "✅ 已绑定 GPU %d「%s」，环境变量 %s" % (idx, gpu["name"], HardwareProbe.env_desc(env))))
                     self.refresh_models()
-                    self.root.after(0, lambda: self.update_status("就绪"))
+                    self.root.after(0, lambda: self.update_status("🟢 就绪"))
                 else:
-                    self.root.after(0, lambda: self.update_status("服务启动失败"))
+                    self.root.after(0, lambda: self.update_status("🔴 服务启动失败"))
             except Exception as e:
-                self.queue_message("system", "切换失败:" + str(e))
+                self.queue_message("system", "❌ 切换失败: " + str(e))
 
         threading.Thread(target=task, daemon=True).start()
 
@@ -2369,12 +2536,12 @@ class HuimengAIClient:
                     if size <= 0:
                         return
                     if vram >= size * 0.9:
-                        txt = "本次实际: GPU 推理（显存 %.2f GB / 模型 %.2f GB）" % (vram / (1024.0 ** 3), size / (1024.0 ** 3))
+                        txt = "🟢 本次实际: GPU 推理（显存 %.2f GB / 模型 %.2f GB）" % (vram / (1024.0 ** 3), size / (1024.0 ** 3))
                     elif vram > 0:
-                        txt = "本次实际: GPU+CPU 混合（显存 %.2f GB，内存 %.2f GB）" % (
+                        txt = "🟡 本次实际: GPU+CPU 混合（显存 %.2f GB，内存 %.2f GB）" % (
                             vram / (1024.0 ** 3), (size - vram) / (1024.0 ** 3))
                     else:
-                        txt = "本次实际: CPU 推理（模型 %.2f GB 全在内存）" % (size / (1024.0 ** 3))
+                        txt = "🔵 本次实际: CPU 推理（模型 %.2f GB 全在内存）" % (size / (1024.0 ** 3))
                     self.root.after(0, lambda t=txt: self.update_device_hint(t))
                     return
             except Exception:
@@ -2395,7 +2562,7 @@ class HuimengAIClient:
         cpu = self.hw.get("cpu") or {}
         gpus = self.hw.get("gpus") or []
         info = ("CPU : %s\n"
-                "物理核心 %d 逻辑线程 %d 主频 %d MHz 架构 %s\n"
+                "       物理核心 %d     逻辑线程 %d     主频 %d MHz     架构 %s\n"
                 "内存 : %.1f GB\n"
                 "显卡 : %d 张（已过滤虚拟显示适配器）") % (
             cpu.get("name", "未知"), cpu.get("cores", 0), cpu.get("threads", 0), cpu.get("mhz", 0),
@@ -2415,7 +2582,7 @@ class HuimengAIClient:
         cur = str(self.config.get("compute_device", "auto"))
         tail = ("当前设置: %s\n"
                 "说明: 选「纯 CPU」只在请求里带 num_gpu=0，不重启服务；选某张卡会用 CUDA_VISIBLE_DEVICES 等环境变量\n"
-                "重启 Ollama 服务，让其它卡对它不可见。Ollama 不支持在单次请求里指定物理卡号。") % cur
+                "      重启 Ollama 服务，让其它卡对它不可见。Ollama 不支持在单次请求里指定物理卡号。") % cur
         ttk.Label(dlg, text=tail, justify=tk.LEFT, foreground="gray", wraplength=780).pack(
             anchor=tk.W, padx=16, pady=8)
         ttk.Button(dlg, text="关闭", command=dlg.destroy).pack(pady=(0, 12))
@@ -2426,20 +2593,20 @@ class HuimengAIClient:
             return
 
         def check_task():
-            self.queue_message("system", T("检查环境中...", "Checking environment..."))
+            self.queue_message("system", T("🔍 检查环境中...", "🔍 Checking environment..."))
             if not self.ollama_manager.is_ollama_installed():
-                self.queue_message("system", "未检测到Ollama")
+                self.queue_message("system", "❌ 未检测到Ollama")
                 self.root.after(1000, self.ask_install_ollama)
                 return
             if self.ollama_manager.is_service_running():
-                self.queue_message("system", T("Ollama服务正在运行", "Ollama is running"))
+                self.queue_message("system", T("✅ Ollama服务正在运行", "✅ Ollama is running"))
                 self.update_connection_status(True)
                 self.refresh_models()
-                self.update_status("就绪")
+                self.update_status("🟢 就绪")
             else:
-                self.queue_message("system", "Ollama服务未运行")
+                self.queue_message("system", "⚠️ Ollama服务未运行")
                 self.update_connection_status(False)
-                self.update_status("服务未启动")
+                self.update_status("🟡 服务未启动")
                 if self.config.get("auto_start_service", True):
                     self.root.after(1000, self.start_service_manual)
 
@@ -2451,39 +2618,39 @@ class HuimengAIClient:
                                parent=self.root):
             self.install_ollama()
         else:
-            self.queue_message("system", "用户取消安装")
-            self.queue_message("system", "请手动访问 https://ollama.com 下载安装")
-            self.update_status("需要安装Ollama")
+            self.queue_message("system", "❌ 用户取消安装")
+            self.queue_message("system", "💡 请手动访问 https://ollama.com 下载安装")
+            self.update_status("🔴 需要安装Ollama")
 
     def install_ollama(self):
         def install_task():
-            self.queue_message("system", "正在下载Ollama...")
-            self.update_status("下载安装程序中...")
+            self.queue_message("system", "📥 正在下载Ollama...")
+            self.update_status("🟡 下载安装程序中...")
 
             def progress_callback(msg):
-                self.root.after(0, lambda: self.status_var.set(f"{msg}"))
+                self.root.after(0, lambda: self.status_var.set(f"🟡 {msg}"))
 
             success, msg = self.ollama_manager.install_ollama_silent(progress_callback)
             if success:
-                self.queue_message("system", "" + msg)
-                self.queue_message("system", "正在启动服务...")
-                self.update_status("启动服务中...")
+                self.queue_message("system", "✅ " + msg)
+                self.queue_message("system", "🚀 正在启动服务...")
+                self.update_status("🟡 启动服务中...")
                 time.sleep(3)
                 success2, msg2 = self.ollama_manager.start_ollama_service()
                 if success2:
-                    self.queue_message("system", "" + msg2)
+                    self.queue_message("system", "✅ " + msg2)
                     self.update_connection_status(True)
                     if self.config.get("auto_download_model", True):
                         self.root.after(1000, self.prompt_download_default_model)
                     else:
                         self.refresh_models()
-                        self.update_status("就绪")
+                        self.update_status("🟢 就绪")
                 else:
-                    self.queue_message("system", "" + msg2)
-                    self.update_status("服务启动异常")
+                    self.queue_message("system", "⚠️ " + msg2)
+                    self.update_status("🟡 服务启动异常")
             else:
-                self.queue_message("system", "" + msg)
-                self.update_status("安装失败")
+                self.queue_message("system", "❌ " + msg)
+                self.update_status("🔴 安装失败")
 
         threading.Thread(target=install_task, daemon=True).start()
 
@@ -2492,9 +2659,9 @@ class HuimengAIClient:
                                parent=self.root):
             self.download_model(DEFAULT_MODEL)
         else:
-            self.queue_message("system", "跳过默认模型下载")
+            self.queue_message("system", "⚠️ 跳过默认模型下载")
             self.refresh_models()
-            self.update_status("就绪")
+            self.update_status("🟢 就绪")
 
     def download_model(self, model_name):
         if REMOTE_MODE:
@@ -2522,14 +2689,14 @@ class HuimengAIClient:
             success, msg = self.ollama_manager.pull_model(model_name, progress_window, status_label, progress_bar, detail_label)
             progress_window.after(0, progress_window.destroy)
             if success:
-                self.queue_message("system", "" + msg)
+                self.queue_message("system", "✅ " + msg)
                 self.refresh_models()
-                self.update_status("就绪")
+                self.update_status("🟢 就绪")
                 self.root.after(0, lambda: messagebox.showinfo(
                     "下载完成", "模型 '%s' 下载完成！" % model_name, parent=self.root))
             else:
-                self.queue_message("system", "" + msg)
-                self.update_status("下载失败")
+                self.queue_message("system", "❌ " + msg)
+                self.update_status("🔴 下载失败")
                 self.root.after(0, lambda: messagebox.showerror(
                     "下载失败", "下载模型时出错：\n%s" % msg, parent=self.root))
 
@@ -2699,20 +2866,20 @@ class HuimengAIClient:
                         if m:
                             pct = int(m.group(1))
                             dlg.after(0, lambda p=pct, t=line[:110]: (prog.configure(value=p),
-                                                                      status_var.set("%d%% %s" % (p, t))))
+                                                                      status_var.set("%d%%  %s" % (p, t))))
                         elif "verifying" in line.lower() or "writing" in line.lower():
                             dlg.after(0, lambda t=line[:110]: status_var.set(t))
                     code = proc.wait()
                     if code == 0:
-                        dlg.after(0, lambda: status_var.set("%s 下载完成" % mid))
+                        dlg.after(0, lambda: status_var.set("✅ %s 下载完成" % mid))
                         dlg.after(0, lambda: (prog.configure(value=100),
                                               self.refresh_models(),
                                               refill()))
-                        self.queue_message("system", "模型已安装：%s" % mid)
+                        self.queue_message("system", "✅ 模型已安装：%s" % mid)
                     else:
-                        dlg.after(0, lambda: status_var.set("下载失败（退出码 %s）" % code))
+                        dlg.after(0, lambda: status_var.set("❌ 下载失败（退出码 %s）" % code))
                 except Exception as e:
-                    dlg.after(0, lambda e=e: status_var.set("下载出错：%s" % e))
+                    dlg.after(0, lambda e=e: status_var.set("❌ 下载出错：%s" % e))
                 finally:
                     state["proc"] = None
                     dlg.after(0, lambda: set_busy(False))
@@ -2772,7 +2939,7 @@ class HuimengAIClient:
                 self.config["last_model"] = models[0]
                 self.save_config()
             self.update_model_info()
-            self.queue_message("system", T("找到 %d 个模型" % len(models), "%d models found" % len(models)))
+            self.queue_message("system", T("📋 找到 %d 个模型" % len(models), "📋 %d models found" % len(models)))
         else:
             self.model_combo["values"] = ["无可用模型"]
             self.model_var.set("无可用模型")
@@ -2789,7 +2956,7 @@ class HuimengAIClient:
             bits = [info["name"], info["size"]]
             if tags:
                 bits.append(tags)
-            self.model_info_var.set("|".join(bits))
+            self.model_info_var.set(" | ".join(bits))
         elif current and current != "无可用模型":
             self.model_info_var.set(current)
         else:
@@ -2820,12 +2987,12 @@ class HuimengAIClient:
         self.model_caps = caps
         marks = []
         if "vision" in caps:
-            marks.append("能看图")
+            marks.append("👁 能看图")
         if "tools" in caps:
-            marks.append("能调工具")
+            marks.append("🛠 能调工具")
         base = self.model_info_var.get() or model
         if marks:
-            self.model_info_var.set(base + "" + "".join(marks))
+            self.model_info_var.set(base + "　" + " ".join(marks))
         if hasattr(self, "attach_hint_var") and self.attachments:
             self._render_chips()
 
@@ -2836,24 +3003,24 @@ class HuimengAIClient:
             self.config["last_model"] = selected
             self.save_config()
             self.update_model_info()
-            self.queue_message("system", f"已选择: {selected}")
+            self.queue_message("system", f"✅ 已选择: {selected}")
 
     def start_service_manual(self):
         if REMOTE_MODE:
             messagebox.showinfo("远程模式", "当前连接的是远程服务器，\n模型服务由服务器主人维护，无需在本地启动。", parent=self.root)
             return
         def start_task():
-            self.queue_message("system", "正在启动Ollama服务...")
-            self.update_status("启动服务中...")
+            self.queue_message("system", "🚀 正在启动Ollama服务...")
+            self.update_status("🟡 启动服务中...")
             success, msg = self.ollama_manager.start_ollama_service(extra_env=self.models_env())
             if success:
-                self.queue_message("system", "" + msg)
+                self.queue_message("system", "✅ " + msg)
                 self.update_connection_status(True)
                 self.refresh_models()
-                self.update_status("就绪")
+                self.update_status("🟢 就绪")
             else:
-                self.queue_message("system", "" + msg)
-                self.update_status("启动失败")
+                self.queue_message("system", "❌ " + msg)
+                self.update_status("🔴 启动失败")
 
         threading.Thread(target=start_task, daemon=True).start()
 
@@ -2862,7 +3029,7 @@ class HuimengAIClient:
             messagebox.showinfo("远程模式", "当前连接的是远程服务器，\n不能从客户端停止对方机器的模型服务。", parent=self.root)
             return
         def stop_task():
-            self.queue_message("system", "正在停止Ollama服务...")
+            self.queue_message("system", "⏹️ 正在停止Ollama服务...")
             try:
                 subprocess.run(["taskkill", "/F", "/IM", "ollama.exe"], capture_output=True,
                                creationflags=subprocess.CREATE_NO_WINDOW)
@@ -2870,9 +3037,9 @@ class HuimengAIClient:
                                creationflags=subprocess.CREATE_NO_WINDOW)
                 time.sleep(2)
                 if not self.ollama_manager.is_service_running():
-                    self.queue_message("system", "服务已停止")
+                    self.queue_message("system", "✅ 服务已停止")
                     self.update_connection_status(False)
-                    self.update_status("服务已停止")
+                    self.update_status("🟡 服务已停止")
 
                     def reset_ui():
                         self.model_combo["values"] = ["无可用模型"]
@@ -2881,9 +3048,9 @@ class HuimengAIClient:
 
                     self.root.after(0, reset_ui)
                 else:
-                    self.queue_message("system", "无法停止服务")
+                    self.queue_message("system", "⚠️ 无法停止服务")
             except Exception as e:
-                self.queue_message("system", f"停止失败: {str(e)}")
+                self.queue_message("system", f"❌ 停止失败: {str(e)}")
 
         threading.Thread(target=stop_task, daemon=True).start()
 
@@ -2892,10 +3059,10 @@ class HuimengAIClient:
         if (not user_input and not self.attachments) or self.is_processing:
             return
         if not self.ollama_manager.is_service_running():
-            self.queue_message("system", "模型服务未就绪")
+            self.queue_message("system", "❌ 模型服务未就绪")
             return
         if self.current_model in ["无可用模型", "请先启动Ollama服务"]:
-            self.queue_message("system", "请选择有效模型")
+            self.queue_message("system", "⚠️ 请选择有效模型")
             return
         user_name = self.config.get("user_name", "您")
         msg = {"role": "user", "content": self._compose_user_content(user_input)}
@@ -2905,7 +3072,7 @@ class HuimengAIClient:
         self.conversation_history.append(msg)
         shown = user_input or "（只发了附件）"
         if self.attachments:
-            marks = "".join(("" if a["kind"] == "image" else "") + a["name"]
+            marks = " ".join(("🖼 " if a["kind"] == "image" else "📄 ") + a["name"]
                              for a in self.attachments)
             shown = shown + "\n" + marks
         self.display_message("user", shown, prefix=user_name)
@@ -2996,7 +3163,7 @@ class HuimengAIClient:
                 items = []
                 for x in sorted(os.listdir(path))[:80]:
                     full = os.path.join(path, x)
-                    items.append(("[目录]" if os.path.isdir(full) else "[文件]") + x)
+                    items.append(("[目录] " if os.path.isdir(full) else "[文件] ") + x)
                 return "\n".join(items) or "(空目录)"
             if name == "server_status":
                 port = HOST.get("port", 11435)
@@ -3019,7 +3186,7 @@ class HuimengAIClient:
                     return "当前没有客户端连接。"
                 out = []
                 for c in clients:
-                    out.append("%s %s 请求%s 对话%s 最近%s" % (
+                    out.append("%s  %s  请求%s 对话%s  最近%s" % (
                         c.get("ip"), "在线" if c.get("online") else "离线",
                         c.get("requests", 0), c.get("conversations", 0),
                         str(c.get("last_seen", ""))[5:19]))
@@ -3033,7 +3200,7 @@ class HuimengAIClient:
                     return "最近没有请求。"
                 out = []
                 for r in recs:
-                    out.append("%s %s %s %sms" % (
+                    out.append("%s  %s  %s  %sms" % (
                         str(r.get("t", ""))[11:19], r.get("ip"), r.get("model"),
                         r.get("elapsed_ms", "-")))
                 return "\n".join(out)
@@ -3052,7 +3219,7 @@ class HuimengAIClient:
                                    "--format=csv,noheader,nounits"], capture_output=True, text=True, timeout=4,
                                   creationflags=getattr(_sp, "CREATE_NO_WINDOW", 0))
                     for ln in (out.stdout or "").strip().splitlines():
-                        info.append("GPU:" + ln)
+                        info.append("GPU: " + ln)
                 except Exception:
                     pass
                 return "\n".join(info)
@@ -3084,10 +3251,10 @@ class HuimengAIClient:
         use_tools = bool(self.config.get("enable_tools", True))
         tools = self._tool_specs() if use_tools else None
         msgs = self.conversation_history.copy()
-        self.message_queue.put(("trace", "%s REQ model=%s msgs=%d ctx%d temp=%.2f max_tok=%d tools=%s" % (
+        self.message_queue.put(("trace", "%s  REQ   model=%s  msgs=%d  ctx≤%d  temp=%.2f  max_tok=%d  tools=%s" % (
             self._now_ts(), self.current_model, len(msgs), num_ctx, temp, num_predict,
             ("%d 个" % len(tools)) if tools else "关闭")))
-        self.message_queue.put(("trace", "%s PATH 本机输入 gateway:11435 ollama:11434 %s 推理" % (
+        self.message_queue.put(("trace", "%s  PATH  本机输入 → gateway:11435 → ollama:11434 → %s 推理" % (
             self._now_ts(), "GPU" if device != "cpu" else "CPU")))
         t0 = time.time()
         final_answer = ""
@@ -3103,7 +3270,7 @@ class HuimengAIClient:
                 with requests.post(url, json=payload, stream=True, timeout=(15, int(self.config.get("api_timeout", 300) or 300)),
                                    headers=API_HEADERS) as resp:
                     if resp.status_code == 401:
-                        self.queue_message("system", "连接密钥无效，请检查配置")
+                        self.queue_message("system", "❌ 连接密钥无效，请检查配置")
                         return
                     if resp.status_code != 200:
                         detail = ""
@@ -3111,7 +3278,7 @@ class HuimengAIClient:
                             detail = resp.json().get("error", "")
                         except Exception:
                             pass
-                        self.queue_message("system", "模型服务错误: %d %s" % (resp.status_code, detail))
+                        self.queue_message("system", "❌ 模型服务错误: %d %s" % (resp.status_code, detail))
                         return
                     for raw in resp.iter_lines(decode_unicode=True):
                         if not raw:
@@ -3121,7 +3288,7 @@ class HuimengAIClient:
                         except Exception:
                             continue
                         if obj.get("error"):
-                            self.queue_message("system", "" + str(obj["error"]))
+                            self.queue_message("system", "❌ " + str(obj["error"]))
                             break
                         th = ((obj.get("message") or {}).get("thinking") or "")
                         if th:
@@ -3132,7 +3299,7 @@ class HuimengAIClient:
                         if piece:
                             if first_at is None:
                                 first_at = time.time()
-                                self.message_queue.put(("trace", "%s 首字 %.0f ms" % (
+                                self.message_queue.put(("trace", "%s  ◀     首字 %.0f ms" % (
                                     self._now_ts(), (first_at - t0) * 1000)))
                             collected.append(piece)
                             self.message_queue.put(("chunk", piece))
@@ -3140,13 +3307,13 @@ class HuimengAIClient:
                             final = obj
                             break
             except requests.exceptions.Timeout:
-                self.queue_message("system", "推理超时")
+                self.queue_message("system", "❌ 推理超时")
                 return
             except requests.exceptions.ConnectionError:
-                self.queue_message("system", "连接失败：本机模型服务未响应")
+                self.queue_message("system", "❌ 连接失败：本机模型服务未响应")
                 return
             except Exception as e:
-                self.queue_message("system", "请求异常: %s" % str(e))
+                self.queue_message("system", "❌ 请求异常: %s" % str(e))
                 return
 
             text = "".join(collected)
@@ -3157,7 +3324,7 @@ class HuimengAIClient:
                 ptok = final.get("prompt_eval_count") or 0
                 etok = final.get("eval_count") or len(text)
                 tps = (etok / eval_dur) if eval_dur else 0
-                self.message_queue.put(("trace", "%s 完成 %.2fs · 输出 %d tok · %.1f tok/s · 输入 %d tok" % (
+                self.message_queue.put(("trace", "%s  ✓     完成 %.2fs · 输出 %d tok · %.1f tok/s · 输入 %d tok" % (
                     self._now_ts(), total, etok, tps, ptok)))
                 if text:
                     self.conversation_history.append({"role": "assistant", "content": text})
@@ -3177,13 +3344,13 @@ class HuimengAIClient:
                         args = {}
                 else:
                     args = raw_args or {}
-                self.message_queue.put(("tool", "%s TOOL › %s %s" % (
+                self.message_queue.put(("tool", "%s  TOOL  › %s %s" % (
                     self._now_ts(), name, json.dumps(args, ensure_ascii=False)[:160])))
                 result = self._run_tool(name, args)
-                self.message_queue.put(("trace", "%s RESULT › %s" % (
-                    self._now_ts(), str(result).replace(chr(10), "")[:220])))
+                self.message_queue.put(("trace", "%s  RESULT › %s" % (
+                    self._now_ts(), str(result).replace(chr(10), " ")[:220])))
                 msgs.append({"role": "tool", "content": str(result), "tool_name": name})
-            self.message_queue.put(("trace", "%s 工具结果已回填，继续推理（第 %d 轮）" % (
+            self.message_queue.put(("trace", "%s  ↻     工具结果已回填，继续推理（第 %d 轮）" % (
                 self._now_ts(), round_idx + 2)))
         self.message_queue.put(("end", None))
         self.is_processing = False
@@ -3199,7 +3366,7 @@ class HuimengAIClient:
         if not getattr(self, "_stream_open", False):
             ai_name = self.config.get("ai_name", "AI助手")
             self._stream_start = self.chat_text.index("end-1c")
-            self.chat_text.insert(tk.END, "%s:" % ai_name, "assistant")
+            self.chat_text.insert(tk.END, "🤖 %s: " % ai_name, "assistant")
             self._stream_open = True
         self._stream_chars = int(getattr(self, "_stream_chars", 0)) + len(text)
         if getattr(self, "_t_first", None) is None:
@@ -3243,12 +3410,12 @@ class HuimengAIClient:
         if getattr(self, "_stream_open", False):
             self.end_assistant_message()
         if role == "user":
-            self._term("%s USER › %s\n" % (self._now_ts(), content), "user")
+            self._term("%s  USER  › %s\n" % (self._now_ts(), content), "user")
         elif role == "assistant":
-            self._term("%s MODEL › %s\n" % (self._now_ts(), content), "assistant")
+            self._term("%s  MODEL › %s\n" % (self._now_ts(), content), "assistant")
         else:
-            bad = any(k in str(content) for k in ("", "失败", "错误", "异常", "超时", "未响应", "无效"))
-            self._term("%s SYS · %s\n" % (self._now_ts(), content), "err" if bad else "system")
+            bad = any(k in str(content) for k in ("❌", "失败", "错误", "异常", "超时", "未响应", "无效"))
+            self._term("%s  SYS   · %s\n" % (self._now_ts(), content), "err" if bad else "system")
 
     def append_assistant_chunk(self, text):
         if not text:
@@ -3256,7 +3423,7 @@ class HuimengAIClient:
         try:
             self.chat_text.config(state=tk.NORMAL)
             if not getattr(self, "_stream_open", False):
-                self.chat_text.insert(tk.END, "%s MODEL ›" % self._now_ts(), "assistant")
+                self.chat_text.insert(tk.END, "%s  MODEL › " % self._now_ts(), "assistant")
                 self._stream_open = True
                 self._stream_chars = 0
             self._stream_chars = int(getattr(self, "_stream_chars", 0)) + len(text)
@@ -3301,9 +3468,9 @@ class HuimengAIClient:
                    "stream": True,
                    "options": options}
         timeout = int(self.config.get("api_timeout", 300) or 300)
-        self.message_queue.put(("trace", "%s REQ model=%s msgs=%d ctx%d temp=%.2f max_tok=%d" % (
+        self.message_queue.put(("trace", "%s  REQ   model=%s  msgs=%d  ctx≤%d  temp=%.2f  max_tok=%d" % (
             self._now_ts(), self.current_model, len(self.conversation_history), num_ctx, temp, num_predict)))
-        self.message_queue.put(("trace", "%s PATH 本机输入 gateway:11435 ollama:11434 %s 推理" % (
+        self.message_queue.put(("trace", "%s  PATH  本机输入 → gateway:11435 → ollama:11434 → %s 推理" % (
             self._now_ts(), "GPU" if device != "cpu" else "CPU")))
         collected = []
         final = {}
@@ -3312,7 +3479,7 @@ class HuimengAIClient:
         try:
             with requests.post(url, json=payload, stream=True, timeout=(15, timeout), headers=API_HEADERS) as resp:
                 if resp.status_code == 401:
-                    self.queue_message("system", "连接密钥无效，请检查配置")
+                    self.queue_message("system", "❌ 连接密钥无效，请检查配置")
                     return
                 if resp.status_code != 200:
                     detail = ""
@@ -3320,7 +3487,7 @@ class HuimengAIClient:
                         detail = resp.json().get("error", "")
                     except Exception:
                         pass
-                    self.queue_message("system", "模型服务错误: %d %s" % (resp.status_code, detail))
+                    self.queue_message("system", "❌ 模型服务错误: %d %s" % (resp.status_code, detail))
                     return
                 for raw in resp.iter_lines(decode_unicode=True):
                     if not raw:
@@ -3330,7 +3497,7 @@ class HuimengAIClient:
                     except Exception:
                         continue
                     if obj.get("error"):
-                        self.queue_message("system", "" + str(obj["error"]))
+                        self.queue_message("system", "❌ " + str(obj["error"]))
                         break
                     thinking = ((obj.get("message") or {}).get("thinking") or "")
                     if thinking:
@@ -3339,7 +3506,7 @@ class HuimengAIClient:
                     if piece:
                         if first_at is None:
                             first_at = time.time()
-                            self.message_queue.put(("trace", "%s 首字 %.0f ms" % (
+                            self.message_queue.put(("trace", "%s  ◀     首字 %.0f ms" % (
                                 self._now_ts(), (first_at - t0) * 1000)))
                         collected.append(piece)
                         self.message_queue.put(("chunk", piece))
@@ -3354,15 +3521,15 @@ class HuimengAIClient:
             ptok = final.get("prompt_eval_count") or 0
             etok = final.get("eval_count") or len(answer)
             tps = (etok / eval_dur) if eval_dur else 0
-            self.message_queue.put(("trace", "%s 完成 %.2fs · 输出 %d tok · %.1f tok/s · 输入 %d tok · 上下文 %d" % (
+            self.message_queue.put(("trace", "%s  ✓     完成 %.2fs · 输出 %d tok · %.1f tok/s · 输入 %d tok · 上下文 %d" % (
                 self._now_ts(), total, etok, tps, ptok,
                 (final.get("prompt_eval_count") or 0) + (final.get("eval_count") or 0))))
         except requests.exceptions.Timeout:
-            self.queue_message("system", "推理超时（%d 秒）" % timeout)
+            self.queue_message("system", "❌ 推理超时（%d 秒）" % timeout)
         except requests.exceptions.ConnectionError:
-            self.queue_message("system", "模型服务未响应")
+            self.queue_message("system", "❌ 模型服务未响应")
         except Exception as e:
-            self.queue_message("system", "请求异常: %s" % str(e))
+            self.queue_message("system", "❌ 请求异常: %s" % str(e))
         finally:
             self.message_queue.put(("end", None))
             self.is_processing = False
@@ -3408,7 +3575,7 @@ class HuimengAIClient:
 
     def update_connection_status(self, connected):
         def apply():
-            self.connection_status.set("" if connected else "")
+            self.connection_status.set("●" if connected else "○")
             try:
                 self.status_dot.configure(foreground=THEME["ok"] if connected else THEME["err"])
             except Exception:
@@ -3458,7 +3625,7 @@ class HuimengAIClient:
                 if filename not in self.config["history_files"]:
                     self.config["history_files"].append(filename)
                     self.save_config()
-                self.queue_message("system", f"已保存: {os.path.basename(filename)}")
+                self.queue_message("system", f"✅ 已保存: {os.path.basename(filename)}")
             except Exception as e:
                 messagebox.showerror("错误", f"保存失败:\n{str(e)}", parent=self.root)
 
@@ -3485,7 +3652,7 @@ class HuimengAIClient:
                         self.display_message(role, content, prefix=ai_name)
                     else:
                         self.display_message(role, content)
-                self.queue_message("system", f"已加载: {os.path.basename(filename)}")
+                self.queue_message("system", f"✅ 已加载: {os.path.basename(filename)}")
             except Exception as e:
                 messagebox.showerror("错误", f"加载失败:\n{str(e)}", parent=self.root)
 
@@ -3497,14 +3664,14 @@ class HuimengAIClient:
             self.chat_text.config(state=tk.NORMAL)
             self.chat_text.delete(1.0, tk.END)
             self.chat_text.config(state=tk.DISABLED)
-            self.queue_message("system", "历史已清空")
+            self.queue_message("system", "🗑️ 历史已清空")
 
     def clear_chat_display(self):
         self._stream_open = False
         self.chat_text.config(state=tk.NORMAL)
         self.chat_text.delete(1.0, tk.END)
         self.chat_text.config(state=tk.DISABLED)
-        self.queue_message("system", "显示已清空")
+        self.queue_message("system", "🗑️ 显示已清空")
 
     def copy_last_response(self):
         if not self.conversation_history:
@@ -3515,7 +3682,7 @@ class HuimengAIClient:
                 content = msg.get("content", "")
                 self.root.clipboard_clear()
                 self.root.clipboard_append(content)
-                self.queue_message("system", "已复制最后回复")
+                self.queue_message("system", "📋 已复制最后回复")
                 return
         messagebox.showinfo("复制", "没有找到AI回复", parent=self.root)
 
@@ -3602,7 +3769,7 @@ class HuimengAIClient:
                             f.write(f"**{ai_name}**: {content}\n\n")
                         else:
                             f.write(f"*系统*: {content}\n\n")
-            self.queue_message("system", f"已导出: {os.path.basename(filename)}")
+            self.queue_message("system", f"✅ 已导出: {os.path.basename(filename)}")
         except Exception as e:
             messagebox.showerror("错误", f"导出失败:\n{str(e)}", parent=self.root)
 
@@ -3636,8 +3803,8 @@ class HuimengAIClient:
     def attach_file(self):
         path = filedialog.askopenfilename(
             parent=self.root, title="选择要附上的文件",
-            filetypes=[("文本与图片", "*.txt *.md *.py *.json *.csv *.log *.ini *.yml *.yaml *.html"
-                                    "*.xml *.js *.ts *.c *.h *.cpp *.java *.go *.rs *.sql *.bat *.ps1"
+            filetypes=[("文本与图片", "*.txt *.md *.py *.json *.csv *.log *.ini *.yml *.yaml *.html "
+                                    "*.xml *.js *.ts *.c *.h *.cpp *.java *.go *.rs *.sql *.bat *.ps1 "
                                     "*.png *.jpg *.jpeg *.webp *.bmp"),
                        ("文本文件", "*.txt *.md *.py *.json *.csv *.log *.ini *.yml *.yaml"),
                        ("图片", "*.png *.jpg *.jpeg *.webp *.bmp"),
@@ -3649,7 +3816,7 @@ class HuimengAIClient:
         name = os.path.basename(path)
         ext = os.path.splitext(path)[1].lower()
         if any(a["path"] == path for a in self.attachments):
-            self.queue_message("system", "这个文件已经在列表里了：" + name)
+            self.queue_message("system", "📎 这个文件已经在列表里了：" + name)
             return
         if len(self.attachments) >= 6:
             messagebox.showinfo("附件", "一次最多 6 个附件。", parent=self.root)
@@ -3701,7 +3868,7 @@ class HuimengAIClient:
                 parent=self.root)
             return
         self._render_chips()
-        self.queue_message("system", "已附加：%s（%s）" % (name, self._human(size)))
+        self.queue_message("system", "📎 已附加：%s（%s）" % (name, self._human(size)))
 
     def _ask_cannot_see_image(self, name):
         """模型看不了图时的三选一：去下载视觉模型 / 仍然附加 / 取消"""
@@ -3717,9 +3884,9 @@ class HuimengAIClient:
                   style="Bg.TLabel", font=(UI_FONT, 11, "bold")).pack(anchor=tk.W, padx=18, pady=(16, 4))
         ttk.Label(dlg, text="图片「%s」需要视觉模型才能看懂。可选：" % name,
                   style="BgMuted.TLabel").pack(anchor=tk.W, padx=18)
-        ttk.Label(dlg, text="去下载一个视觉模型：qwen2.5vl:7b（约 6GB，中文读图最强）、qwen2.5vl:3b（轻量）\n"
-                             "仍然附加：图片会随请求发出去，但模型会忽略它\n"
-                             "取消：这次只发文字",
+        ttk.Label(dlg, text="① 去下载一个视觉模型：qwen2.5vl:7b（约 6GB，中文读图最强）、qwen2.5vl:3b（轻量）\n"
+                             "② 仍然附加：图片会随请求发出去，但模型会忽略它\n"
+                             "③ 取消：这次只发文字",
                   style="BgMuted.TLabel", justify=tk.LEFT).pack(anchor=tk.W, padx=18, pady=(8, 12))
 
         bar = ttk.Frame(dlg, style="Bg.TFrame")
@@ -3757,12 +3924,12 @@ class HuimengAIClient:
             return
         self.attach_frame.grid()
         for i, a in enumerate(self.attachments):
-            icon = "" if a["kind"] == "image" else ""
+            icon = "🖼 " if a["kind"] == "image" else "📄 "
             chip = ttk.Frame(self.attach_frame, style="Card.TFrame")
             chip.pack(side=tk.LEFT, padx=(0, 10))
             ttk.Label(chip, text="%s%s（%s）" % (icon, a["name"], self._human(a["size"])),
                       style="CardSmall.TLabel").pack(side=tk.LEFT)
-            ttk.Button(chip, text="", width=2, style="Ghost.TButton",
+            ttk.Button(chip, text="✕", width=2, style="Ghost.TButton",
                        command=lambda k=i: self.remove_attachment(k)).pack(side=tk.LEFT, padx=(2, 0))
         has_image = any(a["kind"] == "image" for a in self.attachments)
         if has_image and "vision" not in (self.model_caps or set()):
@@ -3821,7 +3988,7 @@ class HuimengAIClient:
                 self.config["max_history"] = int(max_history_var.get())
                 self.save_config()
                 dialog.destroy()
-                self.queue_message("system", "设置已保存")
+                self.queue_message("system", "✅ 设置已保存")
             except ValueError:
                 messagebox.showerror("错误", "请输入有效的数字", parent=dialog)
 
@@ -3863,7 +4030,7 @@ class HuimengAIClient:
                 self.chat_text.config(font=("Microsoft YaHei", self.config["font_size"]))
                 self.input_entry.config(font=("Microsoft YaHei", self.config["font_size"]))
                 dialog.destroy()
-                self.queue_message("system", "个性化设置已保存")
+                self.queue_message("system", "✅ 个性化设置已保存")
             except ValueError:
                 messagebox.showerror("错误", "字体大小必须为数字", parent=dialog)
 
@@ -3883,7 +4050,7 @@ class HuimengAIClient:
     def reset_window(self):
         if messagebox.askyesno("重置窗口", "确定要重置窗口位置和大小吗？", parent=self.root):
             self.root.geometry("1000x750")
-            self.queue_message("system", "窗口已重置")
+            self.queue_message("system", "🔄 窗口已重置")
 
     def show_changelog(self):
         """更新日志：按版本倒序，写清改了什么、什么时候改的、怎么改的"""
@@ -3909,10 +4076,10 @@ class HuimengAIClient:
         box.tag_config("gap", font=(UI_FONT, 5))
 
         for idx, entry in enumerate(CHANGELOG):
-            box.insert(tk.END, entry["version"] + "" + entry["title"] + "\n", ("ver",))
+            box.insert(tk.END, entry["version"] + "   " + entry["title"] + "\n", ("ver",))
             box.insert(tk.END, entry["time"] + "\n", ("time",))
             for item in entry["items"]:
-                box.insert(tk.END, "•" + item + "\n", ("item",))
+                box.insert(tk.END, "• " + item + "\n", ("item",))
             if idx != len(CHANGELOG) - 1:
                 box.insert(tk.END, "\n", ("gap",))
         box.config(state=tk.DISABLED)
@@ -3920,29 +4087,42 @@ class HuimengAIClient:
         ttk.Button(dlg, text="关闭", style="Accent.TButton", command=dlg.destroy).pack(pady=12)
 
     def show_help(self):
-        help_text = """Hymnix 使用帮助 基本操作：
+        help_text = """Hymnix 使用帮助
+
+基本操作：
 1. 首次使用会自动检测并安装Ollama
 2. 安装完成后可下载AI模型
-3. 选择模型后即可开始对话 模型管理：
+3. 选择模型后即可开始对话
+
+模型管理：
 • 点击"刷新模型"更新模型列表
 • 点击"下载模型"选择并下载新模型
-• 点击"模型管理"查看和删除已安装模型 对话功能：
-• 输入消息后按回车或点击"发送"• 使用"保存"功能保存对话历史
+• 点击"模型管理"查看和删除已安装模型
+
+对话功能：
+• 输入消息后按回车或点击"发送"
+• 使用"保存"功能保存对话历史
 • 使用"加载"功能恢复之前对话
-• 使用"清空"清除当前对话 注意事项：
+• 使用"清空"清除当前对话
+
+注意事项：
 • 确保网络连接正常
 • 首次下载模型可能需要较长时间
-• 大型模型需要更多系统资源 遇到问题：
+• 大型模型需要更多系统资源
+
+遇到问题：
 1. 检查Ollama服务是否运行
 2. 确保已安装所需模型
-3. 查看状态栏提示信息 技术支持：
+3. 查看状态栏提示信息
+
+技术支持：
 • 开发者：Hymnix Studio
 • Ollama开发商：Ollama Inc."""
         messagebox.showinfo("使用帮助", help_text)
 
     def check_updates(self):
-        self.queue_message("system", "正在检查更新...")
-        self.queue_message("system", "当前已是最新版本 v26W05d")
+        self.queue_message("system", "🔍 正在检查更新...")
+        self.queue_message("system", "✅ 当前已是最新版本 v26W05d")
 
     def show_about(self):
         """关于：把版本、环境、硬件、能力、隐私一次说清，并可一键复制给排障用"""
@@ -3993,7 +4173,7 @@ class HuimengAIClient:
             ("kv", ("内存", "%.1f GB" % (hw.get("ram_gb") or 0))),
             ("h2", "功能"),
             ("li", "对话：流式输出、收笔落墨、思考计时、生成字速"),
-            ("li", "附件：文本 / 代码文件（200KB，自动识别 UTF-8 / GBK）；图片需视觉模型（pqwen2.5vl、llava、minicpm-v 等）"),
+            ("li", "附件：文本 / 代码文件（≤200KB，自动识别 UTF-8 / GBK）；图片需视觉模型（pqwen2.5vl、llava、minicpm-v 等）"),
             ("li", "模型：33 个可选（中文 / 通用 / 轻量 / 视觉 / 代码 / 推理 / 向量），多源下载、断点续传、sha256 校验"),
             ("li", "算力：自动 / 纯 CPU / 指定显卡，切换时注入 CUDA_VISIBLE_DEVICES 等环境变量并重启服务"),
             ("li", "监视：GPU（驱动 NVML 直读）、显存、AI 进程 CPU、系统 CPU、内存、模型占用"),
@@ -4041,7 +4221,7 @@ class HuimengAIClient:
                 box.insert(tk.END, "%-10s" % key, ("k",))
                 box.insert(tk.END, str(val) + "\n", ("v",))
             elif kind == "li":
-                box.insert(tk.END, "·" + payload + "\n", ("li",))
+                box.insert(tk.END, "· " + payload + "\n", ("li",))
             else:
                 box.insert(tk.END, payload + "\n", ("note",))
         box.config(state=tk.DISABLED)
@@ -4052,7 +4232,7 @@ class HuimengAIClient:
         def copy_all():
             self.root.clipboard_clear()
             self.root.clipboard_append(box.get("1.0", "end").strip())
-            self.queue_message("system", "关于信息已复制到剪贴板")
+            self.queue_message("system", "📋 关于信息已复制到剪贴板")
 
         ttk.Button(bar, text="复制全部信息", style="Ghost.TButton", command=copy_all).pack(side=tk.LEFT)
         ttk.Button(bar, text="关闭", style="Accent.TButton", command=dlg.destroy).pack(side=tk.RIGHT)
@@ -4100,26 +4280,26 @@ class HuimengAIClient:
 
     def delete_selected_model(self, model_name):
         def delete_task():
-            self.queue_message("system", f"正在删除模型 '{model_name}'...")
+            self.queue_message("system", f"🗑️ 正在删除模型 '{model_name}'...")
             try:
                 process = subprocess.Popen(["ollama", "rm", model_name], stdout=subprocess.PIPE,
                                            stderr=subprocess.PIPE, text=True,
                                            creationflags=subprocess.CREATE_NO_WINDOW)
                 output, _ = process.communicate()
                 if process.returncode == 0:
-                    self.queue_message("system", f"已删除模型 '{model_name}'")
+                    self.queue_message("system", f"✅ 已删除模型 '{model_name}'")
                     self.refresh_models()
                 else:
-                    self.queue_message("system", f"删除失败: {output}")
+                    self.queue_message("system", f"❌ 删除失败: {output}")
             except Exception as e:
-                self.queue_message("system", f"删除出错: {str(e)}")
+                self.queue_message("system", f"❌ 删除出错: {str(e)}")
 
         threading.Thread(target=delete_task, daemon=True).start()
 
     # ==================== 远程网关：连接、监控 ====================
     def start_remote_health_loop(self):
-        self.update_status("正在唤醒本机模型…")
-        self.queue_message("system", "本机模型 terminal · gateway:11435 · ollama:11434")
+        self.update_status("🟡 正在唤醒本机模型…")
+        self.queue_message("system", "🖥️ 本机模型 terminal  ·  gateway:11435  ·  ollama:11434")
 
         def loop():
             first_ok = False
@@ -4133,37 +4313,37 @@ class HuimengAIClient:
                     data = {}
                 self.update_connection_status(ok)
                 if ok:
-                    self.update_status("模型已就绪")
+                    self.update_status("🟢 模型已就绪")
                     if not first_ok:
                         first_ok = True
-                        self.queue_message("system", "本机模型已就绪（%s）" % ("GPU 推理" if data.get("ollama") else "等待加载"))
+                        self.queue_message("system", "✅ 本机模型已就绪（%s）" % ("GPU 推理" if data.get("ollama") else "等待加载"))
                         self.root.after(0, self.refresh_models)
                 else:
-                    self.update_status("模型服务未就绪")
+                    self.update_status("🔴 模型服务未就绪")
                 time.sleep(5)
 
         threading.Thread(target=loop, daemon=True).start()
 
     def manual_remote_check(self):
         def task():
-            self.update_status("检测连接...")
+            self.update_status("🟡 检测连接...")
             try:
                 r = requests.get(GATEWAY_HEALTH_URL, timeout=6)
                 data = r.json()
                 ok = bool(data.get("ok"))
                 self.update_connection_status(ok)
                 if ok:
-                    self.queue_message("system", "连接正常：网关 v%s · 模型服务%s · 在线客户端 %s" % (
+                    self.queue_message("system", "✅ 连接正常：网关 v%s · 模型服务%s · 在线客户端 %s" % (
                         data.get("gateway", "?"), "在线" if data.get("ollama") else "离线",
                         data.get("clients_online", 0)))
-                    self.update_status("模型已就绪")
+                    self.update_status("🟢 模型已就绪")
                     self.refresh_models()
                 else:
-                    self.queue_message("system", "服务器返回异常")
-                    self.update_status("模型服务未就绪")
+                    self.queue_message("system", "❌ 服务器返回异常")
+                    self.update_status("🔴 模型服务未就绪")
             except Exception as e:
-                self.queue_message("system", "连接失败：%s" % e)
-                self.update_status("模型服务未就绪")
+                self.queue_message("system", "❌ 连接失败：%s" % e)
+                self.update_status("🔴 模型服务未就绪")
         threading.Thread(target=task, daemon=True).start()
 
     def open_connection_settings(self):
@@ -4218,16 +4398,16 @@ class HuimengAIClient:
             try:
                 r = requests.get(cfg["server_url"] + "/health", timeout=6)
                 d = r.json()
-                result.set("可连接：网关 v%s，模型服务%s" % (d.get("gateway", "?"), "在线" if d.get("ollama") else "离线"))
+                result.set("✅ 可连接：网关 v%s，模型服务%s" % (d.get("gateway", "?"), "在线" if d.get("ollama") else "离线"))
             except Exception as e:
-                result.set("连接失败：%s" % e)
+                result.set("❌ 连接失败：%s" % e)
 
         def save():
             cfg = collect()
             self.config.update(cfg)
             apply_remote_settings(self.config)
             self.save_config()
-            result.set("已保存并应用")
+            result.set("✅ 已保存并应用")
             self.manual_remote_check()
 
         btns = ttk.Frame(win)
@@ -4320,8 +4500,8 @@ class HuimengAIClient:
             return
         rec = recs[idx]
         lines = []
-        lines.append("时间：%s 来源：%s 模型：%s" % (rec.get("t", ""), rec.get("ip", ""), rec.get("model", "")))
-        lines.append("耗时：%s ms 输入 %s tok / 输出 %s tok 接口：%s" % (
+        lines.append("时间：%s    来源：%s    模型：%s" % (rec.get("t", ""), rec.get("ip", ""), rec.get("model", "")))
+        lines.append("耗时：%s ms    输入 %s tok / 输出 %s tok    接口：%s" % (
             rec.get("elapsed_ms", "-"), rec.get("prompt_tokens") or "-",
             rec.get("reply_tokens") or "-", rec.get("path", "")))
         lines.append("-" * 70)
@@ -4356,12 +4536,12 @@ class HuimengAIClient:
                 self._mon_client_ips = [c.get("ip", "") for c in clients if c.get("ip")]
                 txt = []
                 for c in clients:
-                    txt.append("%s %s" % (c.get("ip", ""), "在线" if c.get("online") else "离线"))
-                    txt.append("请求 %s · 对话 %s" % (c.get("requests", 0), c.get("conversations", 0)))
-                    txt.append("最近 %s" % str(c.get("last_seen", ""))[5:19])
+                    txt.append("● %s   %s" % (c.get("ip", ""), "在线" if c.get("online") else "离线"))
+                    txt.append("   请求 %s · 对话 %s" % (c.get("requests", 0), c.get("conversations", 0)))
+                    txt.append("   最近 %s" % str(c.get("last_seen", ""))[5:19])
                     if c.get("last_prompt"):
-                        txt.append("“%s”" % c["last_prompt"][:40])
-                    txt.append("")
+                        txt.append("   “%s”" % c["last_prompt"][:40])
+                    txt.append("────────────────")
                 if not txt:
                     txt = ["还没有客户端连接。", "", "把公网地址和密钥发给朋友，", "他连上来之后这里会出现。"]
                 self.mon_clients.config(state="normal")
@@ -4389,7 +4569,7 @@ class HuimengAIClient:
                     q = ""
                     for m in reversed(rec.get("messages") or []):
                         if m.get("role") == "user":
-                            q = str(m.get("content", "")).replace(chr(10), "")[:90]
+                            q = str(m.get("content", "")).replace(chr(10), " ")[:90]
                             break
                     t = str(rec.get("t", ""))
                     if "T" in t:
@@ -4455,16 +4635,16 @@ class HuimengAIClient:
             self._host_srv = gateway_core.start_server()
             threading.Thread(target=self._host_srv.serve_forever, daemon=True).start()
             HOST["ready"] = True
-            self.queue_message("system", T("内置网关已启动（端口 %s）", "Gateway started on port %s") % HOST["port"])
+            self.queue_message("system", T("🛰️ 内置网关已启动（端口 %s）", "🛰️ Gateway started on port %s") % HOST["port"])
         except Exception as e:
             HOST["error"] = str(e)
-            self.queue_message("system", "网关启动失败：%s" % e)
+            self.queue_message("system", "❌ 网关启动失败：%s" % e)
             return
         if self.config.get("tunnel_auto_start", False):
             self.start_host_tunnel()
         else:
             HOST["tunnel_state"] = "off"
-            self.queue_message("system", T("公网隧道未分配（需要时点上方「启动隧道」按钮，避免频繁申请被限流）", "Public tunnel not allocated (click Start tunnel when needed)."))
+            self.queue_message("system", T("🌐 公网隧道未分配（需要时点上方「启动隧道」按钮，避免频繁申请被限流）", "🌐 Public tunnel not allocated (click Start tunnel when needed)."))
 
     def start_host_tunnel(self):
         mode = str(self.config.get("tunnel_mode", "cloudflared") or "cloudflared").lower()
@@ -4478,7 +4658,7 @@ class HuimengAIClient:
         if not os.path.exists(cf):
             cf = self._download_cloudflared()
         if not cf:
-            self.queue_message("system", "缺少隧道组件 cloudflared，自动下载失败，请检查网络后重试")
+            self.queue_message("system", "⚠️ 缺少隧道组件 cloudflared，自动下载失败，请检查网络后重试")
             return
         try:
             self._host_tun = subprocess.Popen(
@@ -4495,7 +4675,7 @@ class HuimengAIClient:
                 self._cf_wd_started = True
                 threading.Thread(target=self._cloudflared_watchdog, daemon=True).start()
         except Exception as e:
-            self.queue_message("system", "隧道启动失败：%s" % e)
+            self.queue_message("system", "⚠️ 隧道启动失败：%s" % e)
 
     def _pump_host_tunnel(self, proc):
         import re as _re
@@ -4510,7 +4690,7 @@ class HuimengAIClient:
                         f.write(HOST["url"])
                 except Exception:
                     pass
-                self.queue_message("system", "公网隧道已就绪：%s" % HOST["url"])
+                self.queue_message("system", "🌍 公网隧道已就绪：%s" % HOST["url"])
 
     def toggle_host_tunnel(self):
         if getattr(self, "_host_tun", None) is not None and self._host_tun.poll() is None:
@@ -4528,7 +4708,7 @@ class HuimengAIClient:
                         and HOST.get("ready")):
                     proc = getattr(self, "_host_tun", None)
                     if proc is None or proc.poll() is not None:
-                        self.queue_message("system", "公网隧道掉线，正在自动重连…")
+                        self.queue_message("system", "⚠️ 公网隧道掉线，正在自动重连…")
                         self.start_host_tunnel()
             except Exception:
                 pass
@@ -4549,7 +4729,7 @@ class HuimengAIClient:
                 f.write("")
         except Exception:
             pass
-        self.queue_message("system", "公网隧道已停止（地址已失效，需要时再点「启动隧道」）")
+        self.queue_message("system", "⏹️ 公网隧道已停止（地址已失效，需要时再点「启动隧道」）")
         self.refresh_host_bar()
 
     def restart_host_tunnel(self):
@@ -4559,7 +4739,7 @@ class HuimengAIClient:
         except Exception:
             pass
         HOST["url"] = ""
-        self.queue_message("system", "正在重建公网隧道…")
+        self.queue_message("system", "🔄 正在重建公网隧道…")
         self.start_host_tunnel()
 
     def copy_host_url(self):
@@ -4570,7 +4750,7 @@ class HuimengAIClient:
         text = "Hymnix 服务器连接信息\n服务器地址：%s\n连接密钥：%s\n" % (url, HOST.get("api_key", ""))
         self.root.clipboard_clear()
         self.root.clipboard_append(text)
-        self.queue_message("system", "已复制连接信息（地址 + 密钥），直接发给朋友即可")
+        self.queue_message("system", "📋 已复制连接信息（地址 + 密钥），直接发给朋友即可")
 
     def open_host_dashboard(self):
         import webbrowser
@@ -4616,7 +4796,7 @@ class HuimengAIClient:
                     _g = _sp.run(["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits"],
                                  capture_output=True, text=True, timeout=3,
                                  creationflags=getattr(_sp, "CREATE_NO_WINDOW", 0))
-                    _mem = (_g.stdout or "").strip().splitlines()[0] + "MB"
+                    _mem = (_g.stdout or "").strip().splitlines()[0] + " MB"
                 except Exception:
                     pass
                 self.side_status.config(text=T("网关 %s\n隧道 %s\n显存 %s", "Gateway %s\nTunnel %s\nVRAM %s") % (
@@ -4626,11 +4806,11 @@ class HuimengAIClient:
             except Exception:
                 pass
             if HOST.get("url"):
-                self.host_url_var.set(T("公网地址：%s · 在线客户端 %d", "Public address: %s · Clients online %d") % (HOST["url"], clients))
+                self.host_url_var.set(T("公网地址：%s   ·   在线客户端 %d", "Public address: %s   ·   Clients online %d") % (HOST["url"], clients))
             elif tun_state == "starting":
-                self.host_url_var.set(T("公网地址：正在分配… · 在线客户端 %d", "Public address: allocating... · Clients online %d") % clients)
+                self.host_url_var.set(T("公网地址：正在分配…   ·   在线客户端 %d", "Public address: allocating...   ·   Clients online %d") % clients)
             else:
-                self.host_url_var.set(T("公网地址：未分配（点「启动隧道」） · 在线客户端 %d", "Public address: not allocated (click Start tunnel) · Clients online %d") % clients)
+                self.host_url_var.set(T("公网地址：未分配（点「启动隧道」）   ·   在线客户端 %d", "Public address: not allocated (click Start tunnel)   ·   Clients online %d") % clients)
             try:
                 if tun_ok:
                     self.tunnel_btn.configure(text=T("停止隧道", "Stop tunnel"), style="Ghost.TButton")
@@ -4689,17 +4869,17 @@ class HuimengAIClient:
         tk.Label(side, text="1.0.0", bg="#FFFFFF", fg="#9AA6B4",
                  font=(UI_FONT, 9)).pack(anchor="w", padx=18, pady=(2, 16))
 
-        items = [(T("终端 · 轨迹", "Terminal · Trace"), ""),
-                 (T("服务端监控", "Server Monitor"), ""),
-                 (T("API 接口", "API"), ""),
-                 (T("插件", "Plugins"), "")]
+        items = [(T("终端 · 轨迹", "Terminal · Trace"), "▤"),
+                 (T("服务端监控", "Server Monitor"), "◉"),
+                 (T("API 接口", "API"), "⇄"),
+                 (T("插件", "Plugins"), "✧")]
         self._nav_rows = []
         for idx, (name, glyph) in enumerate(items):
             row = tk.Frame(side, bg="#FFFFFF", cursor="hand2")
             row.pack(fill="x", padx=10, pady=2)
             bar = tk.Frame(row, bg="#FFFFFF", width=3)
             bar.pack(side="left", fill="y")
-            lab = tk.Label(row, text="%s %s" % (glyph, name), anchor="w", bg="#FFFFFF",
+            lab = tk.Label(row, text="  %s   %s" % (glyph, name), anchor="w", bg="#FFFFFF",
                            fg="#4A5A6E", font=(UI_FONT, 10), cursor="hand2")
             lab.pack(side="left", fill="x", expand=True, ipady=9)
             self._nav_rows.append((row, bar, lab))
@@ -4761,32 +4941,32 @@ class HuimengAIClient:
             msgs = rec.get("messages") or []
             tok = ""
             if rec.get("prompt_tokens") or rec.get("reply_tokens"):
-                tok = "· %s%s tok" % (rec.get("prompt_tokens") or "-", rec.get("reply_tokens") or "-")
+                tok = " · %s→%s tok" % (rec.get("prompt_tokens") or "-", rec.get("reply_tokens") or "-")
             head_tag = "hist" if prefix == "HIST" else "server"
             stamp = str(rec.get("t") or "")
             ts = stamp.split("T")[1][:8] if "T" in stamp else self._now_ts()
-            self._term("%s %-7s %s %s %.1fs%s\n" % (
-                ts, prefix + "›", ip, rec.get("model", ""), elapsed, tok), head_tag)
+            self._term("%s  %-7s %s  %s  %.1fs%s\n" % (
+                ts, prefix + " ›", ip, rec.get("model", ""), elapsed, tok), head_tag)
             dim = (prefix == "HIST")
             think = (rec.get("thinking") or "").strip()
             if think:
                 for ln in think.splitlines()[:8]:
                     if ln.strip():
-                        self._term("THINK › %s\n" % ln.strip()[:220],
+                        self._term("            THINK › %s\n" % ln.strip()[:220],
                                    "hist" if dim else "think")
             gpu = rec.get("gpu") or {}
             if gpu:
-                self._term("算力 › GPU %s%% · 显存 %.1fG · %sW · %.4fWh · ¥%.7f · %s GPU秒\n" % (
+                self._term("            ⚡ 算力 › GPU %s%% · 显存 %.1fG · %sW · %.4fWh · ¥%.7f · %s GPU秒\n" % (
                     gpu.get("gpu_util", "-"), (gpu.get("vram_mb") or 0) / 1024.0,
                     gpu.get("power_w", "-"), gpu.get("energy_wh", 0),
                     gpu.get("cost_yuan", 0), gpu.get("gpu_seconds", "-")),
                     "hist" if (prefix == "HIST") else "stats")
             for note in (rec.get("injected_notes") or []):
-                self._term("转达 › %s\n" % str(note)[:200], "tool")
+                self._term("            📨 转达 › %s\n" % str(note)[:200], "tool")
             for tc in (rec.get("tool_calls") or []):
                 name = tc.get("name", "") if isinstance(tc, dict) else str(tc)
                 args = tc.get("arguments", "") if isinstance(tc, dict) else ""
-                self._term("TOOL › %s %s\n" % (name, str(args)[:160]),
+                self._term("            TOOL  › %s %s\n" % (name, str(args)[:160]),
                            "hist" if dim else "tool")
             q = ""
             for m in reversed(msgs):
@@ -4794,11 +4974,11 @@ class HuimengAIClient:
                     q = str(m.get("content", ""))
                     break
             if q:
-                self._term("USER › %s\n" % q.replace(chr(10), "")[:240],
+                self._term("            USER  › %s\n" % q.replace(chr(10), " ")[:240],
                            "hist" if prefix == "HIST" else "srv_user")
             rep = (rec.get("reply") or "").strip()
             if rep:
-                self._term("REPLY › %s\n" % rep.replace(chr(10), "")[:320],
+                self._term("            REPLY › %s\n" % rep.replace(chr(10), " ")[:320],
                            "hist" if prefix == "HIST" else "srv_reply")
         except Exception:
             pass
@@ -4820,9 +5000,9 @@ class HuimengAIClient:
             self._server_seen = set(rec.get("t") for rec in items)
             for rec in sorted(items, key=lambda x: str(x.get("t") or "")):
                 self._print_server_record(rec, prefix="HIST")
-            self._term("%s SYSTEM 已加载历史记录 %d 条，实时回显已开启\n" % (self._now_ts(), len(items)), "system")
+            self._term("%s  SYSTEM 已加载历史记录 %d 条，实时回显已开启\n" % (self._now_ts(), len(items)), "system")
         except Exception as e:
-            self._term("%s SYSTEM 加载历史失败：%s\n" % (self._now_ts(), e), "system")
+            self._term("%s  SYSTEM 加载历史失败：%s\n" % (self._now_ts(), e), "system")
 
     def poll_server_trace(self):
         if not self.config.get("enable_server_trace", False):
@@ -5053,7 +5233,7 @@ class HuimengAIClient:
                 r = requests.get(API_BASE + "/api/inbox", headers=API_HEADERS, timeout=4)
                 if r.status_code == 200:
                     for m in (r.json().get("messages") or []):
-                        self.queue_message("system", "服务端消息：" + str(m.get("text", "")))
+                        self.queue_message("system", "📨 服务端消息：" + str(m.get("text", "")))
         except Exception:
             pass
         self.root.after(5000, self.poll_inbox)
@@ -5070,23 +5250,33 @@ class HuimengAIClient:
                                         relief="flat", padx=16, pady=14)
         txt.pack(fill="both", expand=True, padx=12, pady=12)
         txt.insert("1.0", """Hymnix AI Server · 本次更新
-================================================ 【模型升级】
+================================================
+
+【模型升级】
 · 主力模型从 qwen2.5:7b 换成 qwen3:8b：中文表达更稳、工具调用更准、抗长上下文能力更好。
 · 所有带 tools 的请求自动路由到 qwen3:8b，并关闭思考模式，响应更快。
-· 普通聊天同样走 qwen3:8b，不再出现“嘴上说 7B”的错乱。 【以前的痛点 现在怎么解决】
-1. 工具调用调不动 网关把 OpenAI 兼容请求转成 Ollama 原生格式，tool_calls 正常返回； 客户端内置工具执行循环（时间/计算/读文件/列目录/系统信息），最多 4 轮。
-2. 模型不知道现在几点 每条请求自动注入北京时间（日期 + 星期）。
-3. 看不到朋友那边的状态 终端实时打印 SERVER 轨迹（含思考、工具、回复、耗时、能耗）。
-4. 历史记录断了/看不清 启动时全量加载历史；服务端监控支持按时间、IP、关键词筛选。
-5. 不知道一轮对话花了多少电和算力 每条记录附带 GPU 利用率、显存、功耗、耗电 Wh、电费。
-6. 模型瞎扯日期/身份 系统提示词修正，时间显式注入。 【新增】
-· 服务端可向指定客户端推送消息（服务端 客户端），显示在终端。
+· 普通聊天同样走 qwen3:8b，不再出现“嘴上说 7B”的错乱。
+
+【以前的痛点 → 现在怎么解决】
+1. 工具调用调不动 → 网关把 OpenAI 兼容请求转成 Ollama 原生格式，tool_calls 正常返回；
+   客户端内置工具执行循环（时间/计算/读文件/列目录/系统信息），最多 4 轮。
+2. 模型不知道现在几点 → 每条请求自动注入北京时间（日期 + 星期）。
+3. 看不到朋友那边的状态 → 终端实时打印 SERVER 轨迹（含思考、工具、回复、耗时、能耗）。
+4. 历史记录断了/看不清 → 启动时全量加载历史；服务端监控支持按时间、IP、关键词筛选。
+5. 不知道一轮对话花了多少电和算力 → 每条记录附带 GPU 利用率、显存、功耗、耗电 Wh、电费。
+6. 模型瞎扯日期/身份 → 系统提示词修正，时间显式注入。
+
+【新增】
+· 服务端可向指定客户端推送消息（服务端 → 客户端），显示在终端。
 · 模型管理界面重做：搜索、分类、已安装/可下载、进度、取消、删除。
 · API 模型接口板块（设计稿）：DeepSeek / OpenAI / Gemini 接入界面。
 · 插件板块：工具调用、服务端消息、联网搜索（占位）、长期记忆（占位）。
-· 报错统一红色，历史记录灰色，其他设备消息橙色。 【界面】
+· 报错统一红色，历史记录灰色，其他设备消息橙色。
+
+【界面】
 · 全软件品牌统一为 Hymnix。
-· 问题反馈：GitHub Issues""")
+· 问题反馈：GitHub Issues
+""")
         txt.config(state="disabled")
         ttk.Button(dlg, text="关闭", command=dlg.destroy).pack(pady=(0, 12))
     def open_send_dialog(self):
@@ -5181,7 +5371,7 @@ class HuimengAIClient:
             ng = str(self.config.get("ngrok_path") or "") or (_sh.which("ngrok") or "")
         domain = str(self.config.get("ngrok_domain") or "").strip()
         if not ng or not os.path.exists(ng) or not domain:
-            self.queue_message("system", "ngrok 未配置：缺少 ngrok.exe 路径或固定域名")
+            self.queue_message("system", "❌ ngrok 未配置：缺少 ngrok.exe 路径或固定域名")
             return
         # 清掉旧的 ngrok，保证 4040 端口可用
         try:
@@ -5205,7 +5395,7 @@ class HuimengAIClient:
                 self._ngrok_wd_started = True
                 threading.Thread(target=self._ngrok_watchdog, daemon=True).start()
         except Exception as e:
-            self.queue_message("system", "ngrok 启动失败：%s" % e)
+            self.queue_message("system", "❌ ngrok 启动失败：%s" % e)
 
     def _watch_ngrok(self, domain):
         url = "https://" + domain
@@ -5221,11 +5411,11 @@ class HuimengAIClient:
                             f.write(url)
                     except Exception:
                         pass
-                    self.queue_message("system", "固定地址已上线：%s" % url)
+                    self.queue_message("system", "🌍 固定地址已上线：%s" % url)
                     return
             except Exception:
                 pass
-        self.queue_message("system", "ngrok 隧道 80 秒内没就绪，请检查 token/域名")
+        self.queue_message("system", "⚠️ ngrok 隧道 80 秒内没就绪，请检查 token/域名")
 
     def _ngrok_watchdog(self):
         time.sleep(30)
@@ -5239,7 +5429,7 @@ class HuimengAIClient:
                     except Exception:
                         ok = False
                 if not ok:
-                    self.queue_message("system", "固定隧道掉线，正在自动重连…")
+                    self.queue_message("system", "⚠️ 固定隧道掉线，正在自动重连…")
                     self._start_ngrok()
             except Exception:
                 pass
