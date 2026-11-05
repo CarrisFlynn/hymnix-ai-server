@@ -2121,10 +2121,13 @@ class HuimengAIClient:
         self.build_monitor_tab(tab_mon)
         tab_api = ttk.Frame(self.notebook, style="Bg.TFrame")
         tab_plug = ttk.Frame(self.notebook, style="Bg.TFrame")
+        tab_support = ttk.Frame(self.notebook, style="Bg.TFrame")
         self.notebook.add(tab_api, text="   API 接口   ")
         self.notebook.add(tab_plug, text="   插件   ")
+        self.notebook.add(tab_support, text="   " + T("赞助", "Support") + "   ")
         self.build_api_tab(tab_api)
         self.build_plugins_tab(tab_plug)
+        self.build_support_tab(tab_support)
         self._build_sidebar(shell)
 
         main_frame = ttk.Frame(tab_chat, style="Bg.TFrame", padding=(14, 12, 14, 12))
@@ -4872,7 +4875,8 @@ class HuimengAIClient:
         items = [(T("终端 · 轨迹", "Terminal · Trace"), "▤"),
                  (T("服务端监控", "Server Monitor"), "◉"),
                  (T("API 接口", "API"), "⇄"),
-                 (T("插件", "Plugins"), "✧")]
+                 (T("插件", "Plugins"), "✧"),
+                 (T("赞助", "Support"), "♥")]
         self._nav_rows = []
         for idx, (name, glyph) in enumerate(items):
             row = tk.Frame(side, bg="#FFFFFF", cursor="hand2")
@@ -4894,7 +4898,7 @@ class HuimengAIClient:
                                     fg="#6C7A8C", font=(UI_FONT, 9))
         self.side_status.pack(fill="x")
 
-        for i in range(4):
+        for i in range(5):
             self.root.bind("<Control-Key-%d>" % (i + 1), lambda e, x=i: self.select_nav(x))
         self.root.bind("<Control-Return>", lambda e: self.send_message())
         self.select_nav(0)
@@ -5170,6 +5174,83 @@ class HuimengAIClient:
         b2.pack(side="left", padx=8)
         ttk.Label(outer, text="设计目标：两套模型并存——本地负责隐私与免费，云端负责难任务；在输入框右侧一键切换。",
                   style="BgMuted.TLabel", wraplength=920).pack(anchor="w", pady=(6, 0))
+
+
+    # ==================== 赞助 ====================
+    AFDIAN_URL = "https://ifdian.net/a/hymnixstudio"
+
+    def build_support_tab(self, parent):
+        try:
+            self._section_header(parent, T("赞助与支持", "Support"), "support")
+        except Exception:
+            pass
+        import webbrowser as _wb
+
+        outer = ttk.Frame(parent, padding=(24, 8))
+        outer.pack(fill="both", expand=True)
+
+        intro = T("如果这个小工具帮你省了时间，欢迎请我喝杯咖啡。赞助完全自愿，功能和更新不会因此打折。",
+                  "If this little tool saves you some time, you can buy me a coffee. Support is optional and never changes what you get.")
+        ttk.Label(outer, text=intro, style="BgMuted.TLabel", wraplength=900).pack(anchor="w", pady=(0, 18))
+
+        cards = ttk.Frame(outer)
+        cards.pack(fill="x", anchor="w")
+
+        def make_card(title, desc, btn_text, command):
+            box = tk.Frame(cards, bg="#FFFFFF", highlightbackground="#D8E0EA", highlightthickness=1)
+            box.pack(side="left", padx=(0, 18), ipadx=20, ipady=16)
+            tk.Label(box, text=title, bg="#FFFFFF", fg="#1C2430",
+                     font=(UI_FONT, 13, "bold")).pack(anchor="w")
+            tk.Label(box, text=desc, bg="#FFFFFF", fg="#6B7A8D", font=(UI_FONT, 9),
+                     justify="left", wraplength=320).pack(anchor="w", pady=(8, 14))
+            ttk.Button(box, text=btn_text, style="Accent.TButton",
+                       command=command).pack(anchor="w")
+            return box
+
+        make_card(
+            T("爱发电", "Afdian"),
+            T("一次性或按月赞助，支持微信 / 支付宝，可留言。适合想长期支持项目的朋友。",
+              "One-off or monthly support via WeChat / Alipay. Best if you want to support the project long term."),
+            T("打开爱发电", "Open Afdian"),
+            lambda: _wb.open(self.AFDIAN_URL),
+        )
+
+        qr_box = tk.Frame(cards, bg="#FFFFFF", highlightbackground="#D8E0EA", highlightthickness=1)
+        qr_box.pack(side="left", padx=(0, 18), ipadx=20, ipady=16)
+        tk.Label(qr_box, text=T("微信 / 支付宝", "WeChat / Alipay"), bg="#FFFFFF",
+                 fg="#1C2430", font=(UI_FONT, 13, "bold")).pack(anchor="w")
+        qr_path = ""
+        try:
+            base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+            cands = []
+            for name in ("wechat.png", "sponsor_wechat.png", "qr.png"):
+                cands.append(os.path.join(base, "assets", name))
+                try:
+                    cands.append(os.path.join(BASE_DIR, name))
+                except Exception:
+                    pass
+            for cand in cands:
+                if os.path.exists(cand):
+                    qr_path = cand
+                    break
+        except Exception:
+            pass
+        if qr_path:
+            try:
+                self._qr_image = tk.PhotoImage(file=qr_path)
+                tk.Label(qr_box, image=self._qr_image, bg="#FFFFFF").pack(pady=(8, 4))
+            except Exception:
+                tk.Label(qr_box, text=T("收款码加载失败", "Failed to load QR code"),
+                         bg="#FFFFFF", fg="#C0392B").pack(pady=(8, 4))
+        else:
+            tk.Label(qr_box, text=T("把微信收款码保存为 assets/wechat.png，这里会自动显示",
+                                    "Save your WeChat QR code as assets/wechat.png to show it here"),
+                     bg="#FFFFFF", fg="#8A97A8", font=(UI_FONT, 9),
+                     justify="left", wraplength=300).pack(anchor="w", pady=(8, 4))
+
+        ttk.Label(outer, text=T("赞助名单：感谢每一位支持者，名字会列在这里。",
+                                "Supporters: thank you. Names will be listed here."),
+                  style="BgMuted.TLabel").pack(anchor="w", pady=(22, 0))
 
     # ==================== 插件 ====================
     def build_plugins_tab(self, parent):
