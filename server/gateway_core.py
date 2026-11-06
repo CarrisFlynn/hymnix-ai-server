@@ -33,7 +33,7 @@ if not os.path.isdir(BASE_DIR):
     os.makedirs(BASE_DIR, exist_ok=True)
 CONFIG_PATH = os.path.join(BASE_DIR, "gateway_config.json")
 LOG_DIR = os.path.join(BASE_DIR, "logs")
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 DEFAULT_CONFIG = {
     "listen_host": "0.0.0.0",
@@ -64,6 +64,13 @@ os.makedirs(LOG_DIR, exist_ok=True)
 
 LAST_ACTIVITY = [time.time()]
 CLIENT_LOCKS = {}
+CLIENT_LOCK_LAST_USED = {}
+CLIENT_LOCK_LIMIT = 512
+_CLIENT_LOCK_FALLBACK = threading.Lock()
+# Streaming safeguards: keep the client connection alive without hanging forever.
+SSE_FIRST_BYTE_TIMEOUT = 30.0
+SSE_HEARTBEAT_INTERVAL = 15.0
+UPSTREAM_RETRIES = 2
 
 
 def _trim_messages(msgs, limit_chars):
@@ -110,20 +117,22 @@ def _today_str():
 
 
 def _quota_used(ip):
-    rec = _IP_USAGE.get(ip) or {}
-    if rec.get("day") != _today_str():
-        return 0
-    return int(rec.get("tokens") or 0)
+    with LOCK:
+        rec = _IP_USAGE.get(ip) or {}
+        if rec.get("day") != _today_str():
+            return 0
+        return int(rec.get("tokens") or 0)
 
 
 def _quota_add(ip, tokens):
     try:
-        day = _today_str()
-        rec = _IP_USAGE.get(ip)
-        if not rec or rec.get("day") != day:
-            rec = {"day": day, "tokens": 0}
-        rec["tokens"] = int(rec.get("tokens") or 0) + max(0, int(tokens or 0))
-        _IP_USAGE[ip] = rec
+        with LOCK:
+            day = _today_str()
+            rec = _IP_USAGE.get(ip)
+            if not rec or rec.get("day") != day:
+                rec = {"day": day, "tokens": 0}
+            rec["tokens"] = int(rec.get("tokens") or 0) + max(0, int(tokens or 0))
+            _IP_USAGE[ip] = rec
     except Exception:
         pass
 
@@ -209,8 +218,20 @@ def _client_lock(ip):
     with LOCK:
         lk = CLIENT_LOCKS.get(ip)
         if lk is None:
+            # Evict only idle locks; never remove a lock another request may hold.
+            if len(CLIENT_LOCKS) >= CLIENT_LOCK_LIMIT:
+                candidates = [(ts, key) for key, ts in CLIENT_LOCK_LAST_USED.items()
+                              if not CLIENT_LOCKS[key].locked() and key != ip]
+                if candidates:
+                    _, old_key = min(candidates)
+                    CLIENT_LOCKS.pop(old_key, None)
+                    CLIENT_LOCK_LAST_USED.pop(old_key, None)
+                else:
+                    CLIENT_LOCK_LAST_USED[ip] = time.monotonic()
+                    return _CLIENT_LOCK_FALLBACK
             lk = threading.Lock()
             CLIENT_LOCKS[ip] = lk
+        CLIENT_LOCK_LAST_USED[ip] = time.monotonic()
         return lk
 
 
@@ -354,6 +375,7 @@ START_TS = time.time()
 LOCK = threading.RLock()
 CLIENTS = {}                                  # ip -> session dict
 RECENT = deque(maxlen=500)                    # 最近对话（内存）
+ERROR_RECENT = deque(maxlen=200)             # 最近上游错误（环形缓冲）
 STATS = {"requests": 0, "conversations": 0, "errors": 0, "auth_fail": 0,
          "started_at": datetime.now().isoformat(timespec="seconds")}
 
@@ -375,23 +397,25 @@ def read_tunnel_url():
 
 
 def banned(ip):
-    rec = BANS.get(ip)
-    if not rec:
+    with LOCK:
+        rec = BANS.get(ip)
+        if not rec:
+            return None
+        if time.time() < rec[0]:
+            return rec
+        BANS.pop(ip, None)
         return None
-    if time.time() < rec[0]:
-        return rec
-    BANS.pop(ip, None)
-    return None
 
 
 def note_auth_failure(ip):
-    now = time.time()
-    arr = [t for t in FAILS.get(ip, []) if now - t < BAN_WINDOW]
-    arr.append(now)
-    FAILS[ip] = arr
-    if len(arr) >= BAN_THRESHOLD:
-        BANS[ip] = (now + BAN_SECONDS, "auth failures")
-        log_event("ip_banned", ip=ip, seconds=BAN_SECONDS)
+    with LOCK:
+        now = time.time()
+        arr = [t for t in FAILS.get(ip, []) if now - t < BAN_WINDOW]
+        arr.append(now)
+        FAILS[ip] = arr
+        if len(arr) >= BAN_THRESHOLD:
+            BANS[ip] = (now + BAN_SECONDS, "auth failures")
+            log_event("ip_banned", ip=ip, seconds=BAN_SECONDS)
 
 
 def _now_iso():
@@ -419,6 +443,36 @@ def _usage_store():
     return _USAGE_STORE if _USAGE_STORE is not False else None
 
 
+def _estimate_missing_usage(rec):
+    """Fill absent upstream usage without affecting the proxy response path."""
+    try:
+        prompt = rec.get("prompt_tokens")
+        completion = rec.get("reply_tokens")
+        if prompt and completion:
+            return
+        from hxcore import tokens
+        if not prompt:
+            messages = rec.get("messages") or []
+            prompt = int(tokens.count_messages(messages))
+        if not completion:
+            reply = str(rec.get("reply") or "")
+            thinking = str(rec.get("thinking") or "")
+            completion = int(tokens.estimate_tokens(reply + thinking))
+        rec["prompt_tokens"] = max(1, int(prompt or 0))
+        rec["reply_tokens"] = max(1, int(completion or 0))
+        rec["estimated"] = True
+    except Exception:
+        pass
+
+
+def _record_token_usage(rec):
+    try:
+        from hxcore import tokens
+        tokens.record(rec.get("model") or "", int(rec.get("prompt_tokens") or 0),
+                     int(rec.get("reply_tokens") or 0), source="gateway")
+    except Exception:
+        pass
+
 def append_log(filename, record):
     try:
         path = os.path.join(LOG_DIR, filename)
@@ -426,6 +480,11 @@ def append_log(filename, record):
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
     except Exception:
         traceback.print_exc()
+    try:
+        from hxcore import logindex
+        logindex.record("gateway", str(filename), record)
+    except Exception:
+        pass
 
 
 def log_event(kind, **kw):
@@ -433,8 +492,47 @@ def log_event(kind, **kw):
     append_log("events-%s.jsonl" % _today(), kw)
 
 
+def _normalize_upstream_error(exc=None, status=None, raw="", upstream_url=""):
+    """Return stable OpenAI-compatible error and retain a bounded diagnostic."""
+    text = str(raw or exc or "upstream error")
+    low = text.lower()
+    if status in (401, 403):
+        code, out_status = "upstream_auth", 502
+    elif status == 404:
+        code, out_status = "upstream_not_found", 404
+    elif status == 429:
+        code, out_status = "upstream_rate_limit", 429
+    elif status is not None and int(status) >= 500:
+        code, out_status = "upstream_bad_gateway", 502
+    elif isinstance(exc, (socket.timeout, TimeoutError)) or "timed out" in low or "timeout" in low:
+        code, out_status = "upstream_timeout", 504
+    elif isinstance(exc, (ConnectionRefusedError, ConnectionResetError, socket.gaierror)) or any(x in low for x in ("refused", "name or service", "nodename", "getaddrinfo")):
+        code, out_status = "upstream_unreachable", 502
+    else:
+        code, out_status = "upstream_bad_gateway", 502
+    item = {"ts": _now_iso(), "code": code, "status": out_status,
+            "upstream_url": str(upstream_url or ""), "message": text[:300]}
+    with LOCK:
+        ERROR_RECENT.append(item)
+        STATS["last_error"] = text[:300]
+        STATS["errors"] = STATS.get("errors", 0) + 1
+    log_event("upstream_error_normalized", **item)
+    return out_status, {"error": {"code": code, "message": text[:300], "type": "upstream_error"}}
+
+
+def _error_response(exc=None, status=None, raw="", upstream_url=""):
+    out_status, body = _normalize_upstream_error(exc, status, raw, upstream_url)
+    return out_status, body
+
+
 def log_conversation(rec):
     append_log("conversations-%s.jsonl" % _today(), rec)
+
+
+def active_clients():
+    """当前正在处理的连接数（持有 CLIENT_LOCKS 的 IP 个数），用于断连回归判断。"""
+    with LOCK:
+        return sum(1 for lk in CLIENT_LOCKS.values() if lk.locked())
 
 
 def touch_client(ip, ua, model=None, ok=True):
@@ -473,6 +571,25 @@ def clients_snapshot():
             })
         out.sort(key=lambda x: x["last_seen"], reverse=True)
         return out
+
+
+def _open_upstream(method, target, body=None, headers=None, timeout=900):
+    """Open an upstream request with bounded retries before client output."""
+    last = None
+    for attempt in range(UPSTREAM_RETRIES + 1):
+        conn = http.client.HTTPConnection(UP_HOST, UP_PORT, timeout=timeout)
+        try:
+            conn.request(method, target, body=body, headers=headers or {})
+            return conn, conn.getresponse()
+        except Exception as exc:
+            last = exc
+            try:
+                conn.close()
+            except Exception:
+                pass
+            if attempt < UPSTREAM_RETRIES:
+                time.sleep(0.15 * (2 ** attempt))
+    raise last or OSError("upstream unavailable")
 
 
 def upstream_json(path, timeout=3):
@@ -855,6 +972,45 @@ class Handler(BaseHTTPRequestHandler):
             log_event("admin_auth_fail", ip=self._ip(), path=path)
             return self._json(401, {"error": "admin key required"})
 
+        if path == "/admin/usage":
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            try:
+                days = max(1, int(q.get("days", ["7"])[0] or 7))
+            except Exception:
+                days = 7
+            try:
+                from hxcore import tokens
+                return self._json(200, tokens.summary(days=days))
+            except Exception:
+                return self._json(200, {"days": days, "calls": 0, "prompt": 0, "completion": 0, "total": 0, "usd": 0.0, "cny": 0.0, "by_model": {}, "by_day": {}})
+
+        if path == "/admin/health":
+            with LOCK:
+                clients_count = len(CLIENTS)
+                last_error = STATS.get("last_error", "")
+            index_queue = 0
+            try:
+                from hxcore import logindex
+                index_queue = int((logindex.stats() or {}).get("queue", 0) or 0)
+            except Exception:
+                pass
+            return self._json(200, {"ok": True, "version": VERSION,
+                                    "clients": clients_count,
+                                    "active": active_clients(),
+                                    "uptime_s": round(time.time() - START_TS, 3),
+                                    "last_error": last_error,
+                                    "index_queue": index_queue})
+
+        if path == "/admin/errors":
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            try:
+                limit = max(1, min(200, int(q.get("limit", ["50"])[0] or 50)))
+            except (TypeError, ValueError):
+                limit = 50
+            with LOCK:
+                items = list(ERROR_RECENT)[-limit:][::-1]
+            return self._json(200, items)
+
         if path == "/admin/status":
             st = upstream_status()
             with LOCK:
@@ -1018,15 +1174,21 @@ class Handler(BaseHTTPRequestHandler):
                 "tools": [((t.get("function") or {}).get("name")) for t in (payload.get("tools") or [])],
                 "_t0": t0, "_ts": t0}
         try:
-            conn = http.client.HTTPConnection(UP_HOST, UP_PORT, timeout=900)
-            conn.request("POST", "/api/chat", body=body,
-                         headers={"Content-Type": "application/json"})
-            resp = conn.getresponse()
+            conn, resp = _open_upstream("POST", "/api/chat", body=body,
+                                       headers={"Content-Type": "application/json"}, timeout=900)
         except Exception as e:
-            with LOCK:
-                STATS["errors"] += 1
-            return self._json(502, {"error": {"message": "上游 Ollama 不可用：%s" % e, "code": "upstream",
-                                             "hint": "确认 ollama 服务在运行"}})
+            status, body_obj = _error_response(exc=e, upstream_url="/api/chat")
+            return self._json(status, body_obj)
+
+        if resp.status != 200:
+            try:
+                raw_error = resp.read(4096)
+            finally:
+                conn.close()
+            status, body_obj = _error_response(status=resp.status,
+                                               raw=raw_error.decode("utf-8", "ignore"),
+                                               upstream_url="/api/chat")
+            return self._json(status, body_obj)
 
         def conv_calls(tcs):
             out = []
@@ -1040,7 +1202,10 @@ class Handler(BaseHTTPRequestHandler):
             return out
 
         if not stream:
-            raw = resp.read()
+            try:
+                raw = resp.read()
+            finally:
+                conn.close()
             try:
                 d = json.loads(raw.decode("utf-8", "ignore"))
             except Exception:
@@ -1078,6 +1243,37 @@ class Handler(BaseHTTPRequestHandler):
             self._record_conversation(meta, client)
             return
 
+        first_byte_deadline = time.monotonic() + SSE_FIRST_BYTE_TIMEOUT
+        first_line = None
+        try:
+            sock = getattr(getattr(resp, "fp", None), "raw", None)
+            sock = getattr(sock, "_sock", None)
+            if sock is not None:
+                sock.settimeout(min(1.0, SSE_FIRST_BYTE_TIMEOUT))
+            while time.monotonic() < first_byte_deadline:
+                try:
+                    first_line = resp.readline()
+                    if first_line:
+                        break
+                except socket.timeout:
+                    continue
+            if not first_line:
+                raise TimeoutError("upstream first byte timeout")
+        except (socket.timeout, TimeoutError) as exc:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            status, body_obj = _error_response(exc=exc, upstream_url="/api/chat")
+            log_event("upstream_stream_timeout", ip=ip, error=str(exc))
+            return self._json(status, body_obj)
+        except Exception as exc:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            return self._json(502, {"error": {"message": "upstream stream failed: %s" % exc, "code": "upstream"}})
+
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-cache")
@@ -1086,9 +1282,35 @@ class Handler(BaseHTTPRequestHandler):
         self.close_connection = True
         text_parts, calls, usage = [], [], {}
         think_parts = []
+        sent_client_bytes = False
+        last_heartbeat = time.monotonic()
         try:
+            try:
+                sock = getattr(getattr(resp, "fp", None), "raw", None)
+                sock = getattr(sock, "_sock", None)
+                if sock is not None:
+                    sock.settimeout(1.0)
+            except Exception:
+                sock = None
             while True:
-                line = resp.readline()
+                try:
+                    line = first_line
+                    first_line = None
+                    if line is None:
+                        line = resp.readline()
+                except socket.timeout:
+                    now = time.monotonic()
+                    if not text_parts and now >= first_byte_deadline:
+                        raise TimeoutError("upstream first byte timeout")
+                    if now - last_heartbeat >= SSE_HEARTBEAT_INTERVAL:
+                        try:
+                            self.wfile.write(b": keepalive\n\n")
+                            self.wfile.flush()
+                            sent_client_bytes = True
+                            last_heartbeat = now
+                        except (BrokenPipeError, ConnectionResetError):
+                            raise
+                    continue
                 if not line:
                     break
                 line = line.strip()
@@ -1103,12 +1325,14 @@ class Handler(BaseHTTPRequestHandler):
                     think_parts.append(m["thinking"])
                 if m.get("content"):
                     text_parts.append(m["content"])
+                    sent_client_bytes = True
                     self._sse({"id": "chatcmpl-stream", "object": "chat.completion.chunk",
                                "model": model,
                                "choices": [{"index": 0, "delta": {"content": m["content"]}}]})
                 new_calls = conv_calls(m.get("tool_calls"))
                 for k, c in enumerate(new_calls):
                     calls.append(c)
+                    sent_client_bytes = True
                     self._sse({"id": "chatcmpl-stream", "object": "chat.completion.chunk",
                                "model": model,
                                "choices": [{"index": 0, "delta": {"tool_calls": [
@@ -1131,17 +1355,22 @@ class Handler(BaseHTTPRequestHandler):
                 pass
         except (BrokenPipeError, ConnectionResetError):
             log_event("client_disconnect", ip=ip, path="/v1/chat/completions")
-        finally:
-            text = "".join(text_parts)
-            if not usage.get("prompt_tokens") and not usage.get("completion_tokens"):
+        except Exception as exc:
+            status, body_obj = _error_response(exc=exc, upstream_url="/api/chat")
+            log_event("upstream_stream_error", ip=ip, error=str(exc), retryable=not sent_client_bytes)
+            if sent_client_bytes:
+                self._sse(body_obj)
                 try:
-                    _pchars = sum(len(str(m.get("content") or "")) for m in (meta.get("messages") or []))
-                    usage = {"prompt_tokens": max(1, _pchars // 4),
-                             "completion_tokens": max(1, len(text) // 4)}
-                    usage["total_tokens"] = usage["prompt_tokens"] + usage["completion_tokens"]
-                    usage["estimated"] = True
+                    self.wfile.write(b"data: [DONE]\n\n")
+                    self.wfile.flush()
                 except Exception:
                     pass
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            text = "".join(text_parts)
             meta.update({"reply": text, "reply_chars": len(text),
                          "thinking": "".join(think_parts)[:20000],
                          "prompt_tokens": usage.get("prompt_tokens"),
@@ -1288,23 +1517,43 @@ class Handler(BaseHTTPRequestHandler):
                 continue
             headers[k] = v
         headers["Host"] = "%s:%s" % (UP_HOST, UP_PORT)
+        auth_header = self.headers.get("Authorization", "")
+        if auth_header:
+            headers["Authorization"] = auth_header
 
         conn = None
         try:
-            conn = http.client.HTTPConnection(UP_HOST, UP_PORT, timeout=900)
-            conn.request(method, target, body=body if body else None, headers=headers)
-            resp = conn.getresponse()
+            conn, resp = _open_upstream(method, target, body=body if body else None,
+                                        headers=headers, timeout=900)
         except Exception as e:
-            with LOCK:
-                STATS["errors"] += 1
+            status, body_obj = _error_response(exc=e, upstream_url=target)
             log_event("upstream_error", ip=ip, path=path, error=str(e))
-            return self._json(502, {"error": {"message": "上游 Ollama 未运行或无法连接：%s" % e, "code": "upstream",
-                                             "hint": "确认 ollama 服务在运行"}})
+            return self._json(status, body_obj)
+
+        if resp.status != 200:
+            try:
+                raw_error = resp.read(300)
+            except Exception as exc:
+                raw_error = str(exc).encode("utf-8", "ignore")
+            try:
+                conn.close()
+            except Exception:
+                pass
+            status, body_obj = _error_response(status=resp.status, raw=raw_error.decode("utf-8", "ignore"), upstream_url=target)
+            return self._json(status, body_obj)
 
         meta["status"] = resp.status
         capture = Capture(is_chat and resp.status == 200, meta["stream"], meta)
 
         try:
+            content_type = (resp.getheader("Content-Type", "") or "").lower()
+            stream_requested = bool(meta.get("stream"))
+            first_chunk = b""
+            stream_mode = "text/event-stream" in content_type
+            sent_client_bytes = False
+            if stream_requested or stream_mode:
+                first_chunk = resp.readline()
+                stream_mode = stream_mode or first_chunk.lstrip().startswith(b"data:")
             self.send_response(resp.status)
             for k, v in resp.getheaders():
                 if k.lower() in ("transfer-encoding", "connection", "content-length",
@@ -1315,15 +1564,58 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             self.close_connection = True
-            while True:
-                chunk = resp.read(4096)
-                if not chunk:
-                    break
-                self.wfile.write(chunk)
-                self.wfile.flush()
-                capture.feed(chunk)
-        except (BrokenPipeError, ConnectionResetError):
+            if stream_mode:
+                pending = first_chunk
+                last_heartbeat = time.monotonic()
+                stream_terminal = False
+                while True:
+                    chunk = pending if pending else resp.readline()
+                    pending = b""
+                    if not chunk:
+                        if not stream_terminal:
+                            status, body_obj = _error_response(
+                                exc=ConnectionResetError("upstream closed mid-stream"),
+                                upstream_url=target)
+                            self._sse(body_obj)
+                            self.wfile.write(b"data: [DONE]\n\n")
+                            self.wfile.flush()
+                        break
+                    self.wfile.write(chunk)
+                    self.wfile.flush()
+                    sent_client_bytes = True
+                    capture.feed(chunk)
+                    if b"data: [DONE]" in chunk or b"finish_reason" in chunk:
+                        stream_terminal = True
+                    if time.monotonic() - last_heartbeat >= SSE_HEARTBEAT_INTERVAL:
+                        self.wfile.write(b": keepalive\n\n")
+                        self.wfile.flush()
+                        last_heartbeat = time.monotonic()
+            else:
+                if first_chunk:
+                    self.wfile.write(first_chunk)
+                    self.wfile.flush()
+                    capture.feed(first_chunk)
+                while True:
+                    chunk = resp.read(4096)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    self.wfile.flush()
+                    capture.feed(chunk)
+        except BrokenPipeError:
             log_event("client_disconnect", ip=ip, path=path)
+        except Exception as exc:
+            if stream_mode and sent_client_bytes:
+                exc = ConnectionResetError("upstream closed mid-stream")
+            status, body_obj = _error_response(exc=exc, upstream_url=target)
+            log_event("upstream_stream_error", ip=ip, path=path, error=str(exc))
+            if stream_mode:
+                self._sse(body_obj)
+                try:
+                    self.wfile.write(b"data: [DONE]\n\n")
+                    self.wfile.flush()
+                except Exception:
+                    pass
         finally:
             try:
                 conn.close()
@@ -1358,6 +1650,8 @@ class Handler(BaseHTTPRequestHandler):
                 last_user = m.get("content") or ""
                 break
         rec["_ts"] = time.time()
+        _estimate_missing_usage(rec)
+        _record_token_usage(rec)
         try:
             st = _usage_store()
             if st is not None:

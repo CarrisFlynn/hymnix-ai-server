@@ -17,8 +17,8 @@ from typing import Callable, Mapping, Optional
 
 OWNER = "CarrisFlynn"
 REPO = "hymnix-ai-server"
-__version__ = "1.1.0"
-CODENAME = "1.1.0"
+__version__ = "1.2.0"
+CODENAME = "1.2.0"
 API_ROOT = f"https://api.github.com/repos/{OWNER}/{REPO}"
 USER_AGENT = f"Hymnix-Updater/{__version__}"
 _VERSION_RE = re.compile(r"^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$")

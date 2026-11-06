@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""pages_modern.py - Hymnix 1.1.0 现代扁平风页面.
+"""pages_modern.py - Hymnix 现代扁平风页面.
 
 主程序调用方式::
 
@@ -1288,8 +1288,8 @@ def build_sponsor_page(app, parent):
         empty_hint.grid(row=2, column=0, sticky="w", pady=(ui.px(4), 0))
         _dynamic_wrap(supporter_body, empty_hint, ui, reserve=ui.px(2), minimum=220)
 
-    footer = _label(content, text=ui.t("Hymnix 1.1.0 · 感谢每一份支持",
-                                          "Hymnix 1.1.0 · Thanks for every bit of support"),
+    footer = _label(content, text=ui.t("Hymnix " + APP_VER + " · 感谢每一份支持",
+                                          "Hymnix " + APP_VER + " · Thanks for every bit of support"),
                       font=ui.font_obj(8), fg=theme["text_dim"], bg=theme["bg"], anchor="w")
     footer.grid(row=5, column=0, sticky="w", pady=(ui.px(16), 0))
 

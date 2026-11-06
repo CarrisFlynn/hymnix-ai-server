@@ -31,6 +31,7 @@ _NAMES = [
     ("history", "history", "Show command history", "history"),
     ("logtail", "logtail <n>", "Show recent tunnel logs", "logtail 20"),
     ("ps", "ps", "List Hymnix processes", "ps"),
+    ("dir", "dir", "List workspace directory", "dir"),
 ]
 COMMANDS = {n: {"name": n, "usage": u, "desc": d, "example": e} for n, u, d, e in _NAMES}
 
@@ -51,6 +52,20 @@ def execute(line: str, context: Any = None) -> dict[str, Any]:
         return _result(f"error: {exc}\n")
     name = parts[0].lower()
     args = parts[1:]
+    try:
+        from hxcore import approvals
+        decision = approvals.check(raw, origin="terminal")
+        approvals.record(decision, raw)
+        if decision.get("decision")=="deny":
+            return _result("已按只读策略拦截：" + ",".join(decision.get("reasons", [])) + "\n", False)
+        if decision.get("risk")=="danger" and decision.get("decision")=="ask":
+            callback = getattr(context, "approve", None) if context is not None else None
+            if not callable(callback):
+                return _result("需要审批：" + ",".join(decision.get("reasons", [])) + "\n", False)
+            if not callback(raw, decision):
+                return _result("已拒绝：" + ",".join(decision.get("reasons", [])) + "\n", False)
+    except ImportError:
+        pass
     if name in ("?", "h"): name = "help"
     if name in ("cls",): name = "clear"
     if name not in COMMANDS:

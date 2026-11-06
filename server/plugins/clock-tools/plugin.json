@@ -1,0 +1,11 @@
+{
+  "id": "clock-tools",
+  "name": "Clock Tools",
+  "version": "1.0.0",
+  "apiVersion": "1",
+  "entry": "main.py",
+  "permissions": [
+    "tools.register"
+  ],
+  "description": "Registers a world clock tool."
+}

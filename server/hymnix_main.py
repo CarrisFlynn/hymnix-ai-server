@@ -18,12 +18,102 @@ import hashlib
 import base64
 import ctypes
 
+try:
+    from hxcore import timing as _hxt
+    _hxt.mark("import")
+except Exception:
+    _hxt = None
+
 DEFAULT_MODEL = "llama3.2:3b"
 API_BASE = "http://127.0.0.1:11434"
 API_HEADERS = {}
 REMOTE_MODE = False
 ADMIN_KEY = ""
 GATEWAY_HEALTH_URL = ""
+
+
+def _compress_config():
+    """Read optional compression settings without creating or changing config."""
+    cfg = {"chat_compress_max_tokens": 4000, "chat_compress_enabled": True}
+    try:
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config", "app.json")
+        if os.path.isfile(path):
+            with open(path, "r", encoding="utf-8") as fh:
+                loaded = json.load(fh)
+            if isinstance(loaded, dict):
+                cfg.update(loaded)
+    except Exception:
+        pass
+    try:
+        cfg["chat_compress_max_tokens"] = max(1, int(cfg.get("chat_compress_max_tokens", 4000)))
+    except Exception:
+        cfg["chat_compress_max_tokens"] = 4000
+    cfg["chat_compress_enabled"] = bool(cfg.get("chat_compress_enabled", True))
+    return cfg
+
+
+def _maybe_compress_messages(messages, root=None, config=None):
+    """Best-effort pre-send compression; failures always return original messages."""
+    original = list(messages or [])
+    out = {"messages": original, "compressed": False, "drop": 0, "saved_tokens": 0,
+           "plan": None, "result": None, "error": ""}
+    try:
+        cfg = dict(_compress_config())
+        if isinstance(config, dict):
+            cfg.update(config)
+        if not cfg.get("chat_compress_enabled", True):
+            out["status"] = "disabled"
+            return out
+        from hxcore import compress as _compress
+        plain = [{"role": m.get("role", "user"), "content": str(m.get("content", ""))}
+                 for m in original if isinstance(m, dict)]
+        plan = _compress.plan(plain, max_tokens=cfg.get("chat_compress_max_tokens", 4000), keep_last=4)
+        out["plan"] = plan
+        if not plan.get("ok"):
+            out["status"] = "within_budget"
+            return out
+        mode = "auto"
+        try:
+            from hxcore import approvals as _approvals
+            mode = _approvals.get_mode()
+        except Exception:
+            pass
+        if mode != "auto" and root is not None:
+            question = ("将被裁剪 %d 条，预计节省 %d token；压缩后约 %d / 目标 %d token。是否继续？\n\n"
+                        "This will drop %d messages and save tokens. Compress now?" %
+                        (int(plan.get("drop", 0)), max(0, int(plan.get("total_tokens", 0)) - int(plan.get("target", 0))),
+                         int(plan.get("total_tokens", 0)) - max(0, int(plan.get("drop", 0))), int(plan.get("target", 0)),
+                         int(plan.get("drop", 0))))
+            if not messagebox.askyesno("上下文压缩", question, parent=root):
+                out["status"] = "rejected"
+                return out
+        try:
+            result = _compress.apply(plain, plan)
+        except Exception as exc:
+            out["status"] = "apply_error"
+            out["error"] = str(exc)
+            return out
+        if not result.get("ok"):
+            out["status"] = "apply_error"
+            out["error"] = str(result.get("error", "apply failed"))
+            return out
+        # Retain non-content fields (notably image attachments) for messages kept verbatim.
+        merged = []
+        for item in result.get("messages", []):
+            match = next((m for m in original if isinstance(m, dict) and
+                          m.get("role") == item.get("role") and m.get("content") == item.get("content")), None)
+            merged.append(dict(match) if match is not None else item)
+        out.update({"messages": merged, "compressed": True, "drop": int(plan.get("drop", 0)),
+                    "saved_tokens": int(result.get("saved_tokens", 0)), "result": result})
+        try:
+            _compress.record(plan, result)
+        except Exception as exc:
+            out["status"] = "record_error"
+            out["error"] = str(exc)
+        return out
+    except Exception as exc:
+        out["error"] = str(exc)
+        return out
 
 
 def apply_remote_settings(cfg):
@@ -53,8 +143,8 @@ _BUNDLE_DIR = getattr(sys, "_MEIPASS", _APP_DIR)
 
 # ==================== 发行版标识 ====================
 APP_NAME = "Hymnix"
-APP_VERSION = "1.1.0"
-APP_BUILD_DATE = "2026-11-05"
+APP_VERSION = "1.2.0"
+APP_BUILD_DATE = "2026-11-06"
 
 
 def app_version():
@@ -208,7 +298,7 @@ THEME = {
     "button_fg": "#1C2430", "button_active": "#DCE4EE", "entry_bg": "#FBFCFE",
     "entry_fg": "#1C2430", "text_bg": "#FBFCFE", "text_fg": "#1C2430",
     "label_bg": "#F2F5F9", "label_fg": "#1C2430", "combo_bg": "#FFFFFF",
-    "combo_fg": "#1C2430", "scroll_bg": "#DCE4EE", "scroll_active": "#C9D3DE",
+    "combo_fg": "#1C2430", "scroll_bg": "#D0D5DD", "scroll_active": "#98A2B3",
     "border_color": "#E4E7EC", "highlight_color": "#2563EB",
     "success_color": "#1F7A55", "error_color": "#B23A32",
     "warning_color": "#B07714", "info_color": "#2563EB",
@@ -228,7 +318,7 @@ ZH2EN = {
     "模型": "Model",
     "公网地址": "Public address",
     "在线客户端": "Clients online",
-    "复制地址": "Copy connection info",
+    "复制地址": "Copy address",
     "看监控": "Open monitor",
     "启动隧道": "Start tunnel",
     "停止隧道": "Stop tunnel",
@@ -324,26 +414,6 @@ def T(zh, en=None):
     return en if lang.startswith("en") else en if lang not in ("zh",) else zh
 
 
-def AI_NAME(cfg):
-    """Display name for the assistant; the built-in default follows the UI language."""
-    value = str((cfg or {}).get("ai_name") or "").strip()
-    if not value:
-        value = "AI助手"
-    if LANG.get("cur") == "en" and value == "AI助手":
-        return "AI assistant"
-    return value
-
-
-def USER_NAME(cfg):
-    """Display name for the local user; the built-in default follows the UI language."""
-    value = str((cfg or {}).get("user_name") or "").strip()
-    if not value:
-        value = "您"
-    if LANG.get("cur") == "en" and value == "您":
-        return "You"
-    return value
-
-
 ZH2EN.update({
     "使用帮助": "Help",
     "更新日志": "Changelog",
@@ -375,8 +445,40 @@ ZH2EN.update({
     "应用": "Apply",
     "详情": "Info",
     "就绪": "Ready",
+    "🟢 就绪": "🟢 Ready",
+    "🔴 异常退出": "🔴 Abnormal exit",
     "检测硬件": "Detect",
+    "对话来源": "Chat source",
+    "会话": "Session",
+    "当前会话": "Current session",
+    "加载会话…": "Loading sessions...",
+    "新建": "New",
+    "崩溃报告": "Crash reports",
+    "报告总数": "Reports",
+    "最近崩溃": "Last crash",
+    "正在读取服务器状态…": "Reading server status...",
+    "给客户端发消息（暂停）": "Send message to clients (paused)",
+    "给客户端发消息（暂时停用）": "Send message to clients (disabled)",
+    "配置云端 API": "Configure cloud API",
+    "🟡 正在初始化...": "🟡 Initializing...",
+    "未启动": "not started",
+    "启动中": "starting",
+    "连接中": "connecting",
+    "在线": "online",
+    "未分配": "not allocated",
+    "正在检测 CPU / 显卡 ...": "Detecting CPU / GPU ...",
+    "公网地址：启动中…": "Public address: starting up...",
+    "加载更早 / Load earlier": "Load earlier",
+    "回到最新 / Back to latest": "Back to latest",
+    "开始对话 / Start a conversation": "Start a conversation",
+    "总结这段代码": "Summarize this code",
+    "帮我写一个正则": "Write me a regex",
+    "解释这个报错": "Explain this error",
+    "查看异常记录与上次会话状态。": "Review crash records and the last session status.",
+    "页面": "Page",
+    "本地": "Local",
 })
+
 
 
 def normalize_button_icons(root):
@@ -445,52 +547,6 @@ TERMS = {
     "未连接": "Disconnected", "可用": "Available", "不可用": "Unavailable",
     "选择": "Select", "浏览": "Browse", "编辑": "Edit", "添加": "Add",
 }
-
-ZH2EN.update({
-    "AI助手": "AI assistant",
-    "您": "You",
-    "对话来源": "Chat source",
-    "本地模型": "Local model",
-    "云端 API": "Cloud API",
-    "配置云端 API": "Configure cloud API",
-    "云端 · OpenAI": "Cloud - OpenAI",
-    "正在初始化...": "Initializing...",
-    "正在初始化…": "Initializing…",
-    "检测 CPU / GPU ...": "Detecting CPU / GPU ...",
-    "检测 CPU / GPU …": "Detecting CPU / GPU …",
-    "系统": "System",
-    "在线客户端": "Clients online",
-    "本地": "Local",
-    "云端": "Cloud",
-    "分享给朋友的模型": "Model shared with friends",
-    "保存限额": "Save limit",
-    "计费": "Billing",
-    "每日限额(tokens, 0=不限)": "Daily limit (tokens, 0 = unlimited)",
-    "🟡 正在初始化...": "Initializing...",
-    "🟡 正在初始化…": "Initializing…",
-    "🟢 模型已就绪": "Model ready",
-    "正在检测 CPU / 显卡 ...": "Detecting CPU / GPU ...",
-    "正在检测 CPU / 显卡 …": "Detecting CPU / GPU …",
-    "公共隧道未分配（需要时点上方「启动隧道」按钮，避免频繁申请被限流）":
-        "Public tunnel not allocated - use Start tunnel when needed to avoid rate limits",
-})
-
-TERMS.update({
-    "AI助手": "AI assistant",
-    "正在初始化": "Initializing",
-    "检测 CPU / 显卡": "Detecting CPU / GPU",
-    "检测 CPU / GPU": "Detecting CPU / GPU",
-    "系统": "System",
-    "本地": "Local",
-    "云端": "Cloud",
-    "在线客户端": "Clients online",
-})
-
-_MON_KEY_BACK = {"All": "全部", "Today": "今天", "Last hour": "最近1小时", "All IPs": "全部IP"}
-
-
-def _mon_key(value):
-    return _MON_KEY_BACK.get(str(value).strip(), value)
 
 def _en_text(value):
     if not isinstance(value, str) or not value.strip():
@@ -1119,22 +1175,43 @@ VIRTUAL_GPU_KEYWORDS = ("idd", "virtual", "基本显示", "basic display", "remo
 # ==================== 更新日志数据 ====================
 CHANGELOG = [
     {
+        "version": "1.2.0",
+        "time": "2026-11-06",
+        "title": "本地 AI 工作台 · 插件与工具 · 用量可见",
+        "items": [
+            "[新增] 工作台扩到 17 个页面：对话 / 终端 / 服务端监控 / 云端 API / 云 hub / 插件 / 工具 / 崩溃报告 / 历史 / 会话 / 文件 / 差异 / 赞助 / 审批 / 用量 / 截图取字 / Git",
+            "[新增] 插件内核：按需启停的能力开关、插件市场、权限声明与索引",
+            "[新增] 工具调用与 MCP：工具注册表、审批弹窗、可中断执行、HTTP MCP 客户端",
+            "[新增] 文件与仓库：文件树、搜索、读取工具，分块差异预览与应用 / 回滚",
+            "[新增] 会话与压缩：多会话分页切换、上下文压缩、按 token 预算裁剪",
+            "[新增] 用量与成本：prompt / reply token、费用与 GPU 能耗逐条可见",
+            "[新增] 云 hub：把多台云上游收进同一入口，带契约探针",
+            "[新增] 截图取字（OCR）：截图或图片路径直接提字进对话",
+            "[新增] Git 加速：镜像规则、环境代理、证书与 DNS 说明，改动前自动备份",
+            "[新增] 一键更新通道：检查 / 下载 / SHA-256 校验 / 替换重启",
+            "[优化] 对话页重做：空态、聚焦外环、Markdown 渲染、流式光标、可复制代码块",
+            "[优化] 终端页加固：日志行高自适应、退出清理、真实自检；冷启动 p95 仍在 0.3s 内",
+            "[优化] 五种语言与高 DPI 全量覆盖，界面默认英文优先",
+            "[修复] 终端日志悬停高亮在多显示器与高缩放下崩溃",
+        ],
+    },
+    {
         "version": "1.1.0",
         "time": "2026-11-05",
         "title": "终端 HUD · 一键更新 · 扁平化界面 · 启动提速",
         "items": [
-            "[新增] 终端页新的深色控制台：状态芯片、信号波形、遥测条、分级着色实时日志",
-            "[新增] 终端内置 19 条命令（help 查看全部），支持 ↑↓ 历史、Tab 补全、Ctrl+L 清屏",
-            "[新增] 破坏性操作二次确认",
-            "[新增] 隧道详情整合进终端页：公网地址、二维码、cloudflared / ngrok 切换、最近日志；首页入口保留",
-            "[新增] 一键更新：检查新版本、下载、SHA-256 校验、安装并重启",
-            "[优化] 全局扁平化：统一圆角与 1px 描边，界面更干净",
-            "[优化] 换页动画 280ms 缓出；插件页 / 赞助页首次进入不再错位",
-            "[优化] 小字统一为微软雅黑 / Segoe UI，显示更清晰",
-            "[优化] 侧栏图标与分组标题调整，默认以窗口模式启动",
-            "[优化] 冷启动更快（约 2.0s → 0.7s）",
-            "[修复] 终端内容限制在标签页内，底部命令行与页脚不再被裁切",
-            "[修复] 窗口按屏幕 DPI 与可用区域自适应，高缩放下不超出屏幕",
+            "[新增] 终端页重做为深色 HUD 控制台：LINK/TUN/PROC 状态芯片、信号波形、遥测条、分级着色实时日志",
+            "[新增] 终端内置 19 条命令：help / status / version / models / model / sharemodel / config / path / tunnel / quota / billing / lang / service / hardware / export / history / logtail / clear / ps",
+            "[新增] 终端支持 ↑↓ 历史、Tab 补全、Ctrl+L 清屏，危险命令二次确认",
+            "[新增] 隧道详情整合进终端页（公网地址、二维码、cloudflared / ngrok 切换、最近日志），首页入口保留",
+            "[新增] 客户端内一键检查更新、下载、sha256 校验、安装重启（GitHub Releases）",
+            "[优化] 全局扁平化：8/12/16px 圆角、1px 描边、无阴影，去掉系统凸起灰边控件",
+            "[优化] 换页动画 280ms 缓出；首次进入插件页 / 赞助页不再错位抖动",
+            "[优化] 小字统一为微软雅黑 / Segoe UI，不再使用仿宋",
+            "[优化] 侧栏深色 H 图标、分组标题字距修正；默认以窗口模式启动",
+            "[优化] 启动去掉端口绑定的反向 DNS 解析，冷启动约 2.0s → 0.7s",
+            "[修复] 终端内容溢出标签页、底部命令行与页脚被裁切",
+            "[修复] 版本号统一为公版 v1.1.0，内部快照号全部移除",
         ],
     },
     {
@@ -1148,7 +1225,7 @@ CHANGELOG = [
             "[新增] 界面语言扩到五种：中文 / English / Français / Русский / Español",
             "[新增] 云端 API 页可用：保存配置、测试连接、拉取模型列表、费用估算",
             "[新增] 用量统计：请求数、prompt/reply tokens、费用，按今日/累计汇总",
-            "[新增] 首次启动欢迎页：选择界面语言，本地模式直接使用",
+            "[新增] 首次启动欢迎页：选择界面语言，本地模式直接使用（GitHub 登录预留）",
             "[优化] 按钮去掉前置图标，对齐统一；移除冗余面板",
             "[优化] 状态栏、弹窗、菜单接入新的翻译体系",
             "[修复] 长对话裁剪保留全部 system 提示；同源请求串行处理",
@@ -2078,7 +2155,7 @@ class Theme:
                         font=(UI_FONT, 12, "bold"))
         style.configure("BgMuted.TLabel", background=THEME["bg"], foreground=THEME["text_muted"])
         style.configure("CardCaption.TLabel", background=THEME["card"],
-                        foreground=THEME["text_muted"], font=(UI_FONT, 10))
+                        foreground="#667085", font=(UI_FONT, 12))
         style.configure("CardMuted.TLabel", background=THEME["card"], foreground=THEME["text_muted"])
         style.configure("CardAccent.TLabel", background=THEME["card"], foreground=THEME["accent"])
         style.configure("CardThink.TLabel", background=THEME["card"], foreground=THEME["accent"],
@@ -2089,7 +2166,7 @@ class Theme:
         style.configure("CardSmall.TLabel", background=THEME["card"], foreground=THEME["text_dim"],
                         font=(SMALL_CJK, 10))
         style.configure("SideCaption.TLabel", background=THEME["surface"],
-                        foreground=THEME["text_muted"], font=(UI_FONT, 10))
+                        foreground="#667085", font=(UI_FONT, 12))
         style.configure("SideMuted.TLabel", background=THEME["surface"], foreground=THEME["text_muted"])
         # 按钮：白底 + 细边框，明确的可点击感
         style.configure("TButton", background="#FFFFFF", foreground=THEME["text"],
@@ -2115,7 +2192,7 @@ class Theme:
                         darkcolor="#1D4ED8", relief="solid", padding=(18, 9),
                         font=(UI_FONT, 10, "bold"))
         style.map("Accent.TButton",
-                  background=[("pressed", "#1E40AF"), ("active", "#3B82F6")],
+                  background=[("pressed", "#1E40AF"), ("active", "#1D4ED8")],
                   lightcolor=[("pressed", "#1E40AF"), ("active", "#3B82F6")],
                   bordercolor=[("active", "#1D4ED8")],
                   foreground=[("disabled", "#DDE4EE")])
@@ -2198,6 +2275,14 @@ class HuimengAIClient:
             pass
         self.root = root
         try:
+            from hxcore import crash as _hxcrash
+            _hxcrash.install(app_name="Hymnix", root=self.root, on_report=None)
+            self._hxcrash = _hxcrash
+            self._hxcrash_info = _hxcrash.boot_guard()
+        except Exception:
+            self._hxcrash = None
+            self._hxcrash_info = {}
+        try:
             install_runtime_i18n()
             install_button_icon_hooks()
             install_widget_text_hooks()
@@ -2214,22 +2299,46 @@ class HuimengAIClient:
                 self.root.iconphoto(True, self._app_icon)
         except Exception:
             pass
-        self.root.title("Hymnix 1.1.0")
+        self.root.title("Hymnix %s" % app_version())
         self.root.geometry(self._geo(1200, 800))
         Theme.apply(root)
         self.setup_icon()
         self.config = self.load_config()
         try:
+            from hxcore import plugins as _hxplugins
+            def _plugin_toast(text):
+                def _show_toast():
+                    try:
+                        messagebox.showinfo("Hymnix", str(text), parent=self.root)
+                    except Exception:
+                        pass
+                try:
+                    self.root.after(0, _show_toast)
+                except Exception:
+                    pass
+            _hxplugins.set_ui_hooks(toast=_plugin_toast)
+        except Exception:
+            pass
+        try:
+            from hxcore import tools as _hxtools
+            _hxtools.builtin_tools()
+            if not self.config.get("enable_tools", True):
+                _hxtools.off()
+        except Exception:
+            pass
+        try:
             import i18n as _i18n
             if not self.config.get("language"):
                 self.config["language"] = detect_language(self.config)
-            LANG["cur"] = os.environ.get("HYMNIX_LANG") or self.config.get("language") or "zh"
+            LANG["cur"] = self.config.get("language") or "zh"
             _i18n.init(LANG["cur"])
         except Exception:
             pass
         apply_remote_settings(self.config)
         self.current_model = self.config.get("last_model", DEFAULT_MODEL)
         self.conversation_history = []
+        self._chat_session_id = datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + os.urandom(2).hex()
+        self._session_history_snapshots = {}
         self.is_processing = False
         self.message_queue = Queue()
         self.ollama_manager = OllamaManager()
@@ -2252,8 +2361,13 @@ class HuimengAIClient:
         try:
             if not self.config.get("language"):
                 self.config["language"] = detect_language(self.config)
-            self._lang = os.environ.get("HYMNIX_LANG") or detect_language(self.config)
+            self._lang = detect_language(self.config)
             LANG["cur"] = self._lang
+            if str(LANG.get("cur") or "").lower().startswith("en"):
+                if (self.config.get("ai_name") or "").strip() in ("", "AI助手", "AI 助手"):
+                    self.config["ai_name"] = "AI assistant"
+                if (self.config.get("user_name") or "").strip() in ("", "您", "你"):
+                    self.config["user_name"] = "You"
             if self._lang == "en":
                 apply_zh2en(self.root, self._lang_memo)
                 try:
@@ -2297,6 +2411,18 @@ class HuimengAIClient:
         # __maximize_patch__
         self.root.after(6000, self.load_terminal_history)
         self._start_trace_thread()
+        try:
+            def _load_mcp():
+                try:
+                    from hxcore.mcp import McpManager
+                    from hxcore import tools as _mcp_tools
+                    self._mcp_manager = McpManager()
+                    self._mcp_manager.register_into(_mcp_tools)
+                except Exception:
+                    pass
+            threading.Thread(target=_load_mcp, daemon=True).start()
+        except Exception:
+            pass
         # 服务端留言改为注入 AI 回复，不再轮询收件箱
         self.root.after(9000, self.load_terminal_history)
         if "--models" in sys.argv:
@@ -2320,6 +2446,11 @@ class HuimengAIClient:
                 pass
         import atexit
         def _cleanup():
+            try:
+                job = getattr(self, "_trace_clock_job", None)
+                if job is not None: self.root.after_cancel(job)
+            except Exception:
+                pass
             try:
                 if HOST.get("tunnel") and HOST["tunnel"].poll() is None:
                     HOST["tunnel"].kill()
@@ -2472,15 +2603,48 @@ class HuimengAIClient:
         tab_api = ttk.Frame(self.notebook, style="Bg.TFrame")
         tab_plug = ttk.Frame(self.notebook, style="Bg.TFrame")
         tab_support = ttk.Frame(self.notebook, style="Bg.TFrame")
+        tab_tools = ttk.Frame(self.notebook, style="Bg.TFrame")
+        tab_crash = ttk.Frame(self.notebook, style="Bg.TFrame")
+        tab_history = ttk.Frame(self.notebook, style="Bg.TFrame")
+        tab_files = ttk.Frame(self.notebook, style="Bg.TFrame")
+        tab_diff = ttk.Frame(self.notebook, style="Bg.TFrame")
+        tab_approvals = ttk.Frame(self.notebook, style="Bg.TFrame")
+        tab_usage = ttk.Frame(self.notebook, style="Bg.TFrame")
+        tab_ocr = ttk.Frame(self.notebook, style="Bg.TFrame")
+        tab_sessions = ttk.Frame(self.notebook, style="Bg.TFrame")
+        tab_git = ttk.Frame(self.notebook, style="Bg.TFrame")
+        tab_cloud = ttk.Frame(self.notebook, style="Bg.TFrame")
         self.notebook.add(tab_api, text="   API 接口   ")
+        self.notebook.add(tab_cloud, text="   Cloud hub   ")
         self.notebook.add(tab_plug, text="   插件   ")
+        self.notebook.add(tab_tools, text="   " + T("工具", "Tools") + "   ")
+        self.notebook.add(tab_crash, text="   " + T("崩溃报告", "Crash Reports") + "   ")
+        self.notebook.add(tab_history, text="   " + T("历史记录", "History") + "   ")
+        self.notebook.add(tab_sessions, text="   " + T("会话", "Sessions") + "   ")
+        self.notebook.add(tab_files, text="   " + T("文件", "Files") + "   ")
+        self.notebook.add(tab_diff, text="   " + T("差异", "Diff") + "   ")
         self.notebook.add(tab_support, text="   " + T("赞助", "Support") + "   ")
+        self.notebook.add(tab_approvals, text="   " + T("审批与安全", "Approvals & Safety") + "   ")
+        self.notebook.add(tab_usage, text="   " + T("用量与成本", "Usage & Cost") + "   ")
+        self.notebook.add(tab_ocr, text="   " + T("截图取字", "OCR") + "   ")
+        self.notebook.add(tab_git, text="   " + T("Git 加速", "Git Acceleration") + "   ")
         # 懒构建：页面首次进入时再建，缩短启动时间
         self._lazy_pages = {
             2: (tab_mon, self.build_monitor_tab),
             3: (tab_api, self.build_api_tab),
-            4: (tab_plug, self.build_plugins_tab),
-            5: (tab_support, self.build_support_tab),
+            4: (tab_cloud, self.build_cloudhub_tab),
+            5: (tab_plug, self.build_plugins_tab),
+            6: (tab_tools, self.build_tools_tab),
+            7: (tab_crash, self.build_crash_tab),
+            8: (tab_history, self.build_history_tab),
+            9: (tab_sessions, self.build_sessions_tab),
+            10: (tab_files, self.build_files_tab),
+            11: (tab_diff, self.build_diff_tab),
+            12: (tab_support, self.build_support_tab),
+            13: (tab_approvals, self.build_approvals_tab),
+            14: (tab_usage, self.build_usage_tab),
+            15: (tab_ocr, self.build_ocr_tab),
+            16: (tab_git, self.build_git_tab),
         }
         self._build_sidebar(shell)
 
@@ -2495,7 +2659,7 @@ class HuimengAIClient:
         status_frame = ttk.Frame(main_frame, style="Bg.TFrame")
         status_frame.grid(row=0, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 10))
         status_frame.columnconfigure(0, weight=1)
-        self.status_var = tk.StringVar(value="🟡 正在初始化...")
+        self.status_var = tk.StringVar(value=T("🟡 正在初始化...", "🟡 Initializing..."))
         ttk.Label(status_frame, textvariable=self.status_var, style="Status.TLabel",
                   anchor=tk.W).grid(row=0, column=0, sticky=(tk.W, tk.E))
         self.connection_status = tk.StringVar(value="●")
@@ -2511,13 +2675,13 @@ class HuimengAIClient:
         self.host_tun_dot.pack(side=tk.LEFT, padx=(10, 0))
         self.host_oll_dot = tk.Label(sbar, text=T("● 模型", "● Model"), fg="#9AA0A6", bg=THEME["bg"])
         self.host_oll_dot.pack(side=tk.LEFT, padx=(10, 0))
-        self.host_url_var = tk.StringVar(value="公网地址：启动中…")
+        self.host_url_var = tk.StringVar(value=T("公网地址：启动中…", "Public address: starting up..."))
         ttk.Label(sbar, textvariable=self.host_url_var, foreground="#71757C",
                   style="Status.TLabel").pack(side=tk.LEFT, padx=(14, 0))
         self.tunnel_btn = ttk.Button(sbar, text="启动隧道", style="Accent.TButton",
                                      command=self.toggle_host_tunnel)
         self.tunnel_btn.pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Button(sbar, text=T("复制信息", "Copy info"), style="Ghost.TButton",
+        ttk.Button(sbar, text="复制地址", style="Ghost.TButton",
                    command=self.copy_host_url).pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(sbar, text="看监控", style="Ghost.TButton",
                    command=self.show_monitor_tab).pack(side=tk.LEFT, padx=(6, 0))
@@ -2546,10 +2710,10 @@ class HuimengAIClient:
                   wraplength=190).pack(anchor=tk.W, pady=(0, 8))
 
         ttk.Label(cf, text="对话来源", style="SideCaption.TLabel").pack(anchor=tk.W, pady=(6, 4))
-        self.source_var = tk.StringVar(value="本地模型")
+        self.source_var = tk.StringVar(value=T("本地模型", "Local model"))
         self.source_combo = ttk.Combobox(
             cf, textvariable=self.source_var, state="readonly",
-            values=["本地模型", "云端 API"])
+            values=[T("本地模型", "Local model"), T("云端 API", "Cloud API")])
         self.source_combo.pack(fill=tk.X, pady=(0, 4))
         self.source_combo.bind("<<ComboboxSelected>>", self.on_source_selected)
         self.source_status_var = tk.StringVar(value="")
@@ -2577,17 +2741,47 @@ class HuimengAIClient:
         chat_card = ttk.Frame(main_frame, style="Card.TFrame", padding=(12, 10, 12, 10))
         chat_card.grid(row=2, column=1, sticky=(tk.N, tk.S, tk.W, tk.E))
         chat_card.columnconfigure(0, weight=1)
-        chat_card.rowconfigure(1, weight=1)
+        chat_card.rowconfigure(2, weight=1)
         ttk.Label(chat_card, text="对话", style="CardCaption.TLabel").grid(row=0, column=0,
                                                                           sticky=tk.W, pady=(0, 6))
+        self._build_chat_session_selector(chat_card)
         fs = int(self.config.get("font_size", 12) or 12)
+        try:
+            from hxcore import md_render as _md_render
+            self._md_render = _md_render
+        except Exception:
+            self._md_render = None
+            try: self.status_var.set("Markdown 渲染不可用，已降级为纯文本 / Markdown unavailable; using plain text")
+            except Exception: pass
         self.chat_text = scrolledtext.ScrolledText(
             chat_card, wrap=tk.WORD, width=70, height=21, font=(UI_FONT, int(self.config.get("font_size", 12) or 12)),
             bg="#FFFFFF", fg="#1F2937", insertbackground="#1F2937",
             relief="flat", borderwidth=0, highlightthickness=0, padx=18, pady=14,
             selectbackground="#DBEAFE", selectforeground="#111827", spacing1=2, spacing3=2)
-        self.chat_text.grid(row=1, column=0, sticky=(tk.N, tk.S, tk.W, tk.E))
+        self.chat_text.grid(row=2, column=0, sticky=(tk.N, tk.S, tk.W, tk.E))
+        self.chat_text.bind("<MouseWheel>", self._on_chat_manual_scroll, add="+")
+        self.chat_text.bind("<Control-c>", self._copy_chat_selection, add="+")
+        self._chat_cards_enabled = False
+        self._chat_list = None
+        if not os.environ.get("HYMNIX_NO_CHAT_CARDS"):
+            try:
+                from hxcore.chat_bubble import MessageList
+                self._chat_list = MessageList(chat_card, on_copy=self._copy_chat_text)
+                self._chat_cards_enabled = True
+                self._chat_list.grid(row=2, column=0, sticky=(tk.N, tk.S, tk.W, tk.E))
+                self._chat_list.on_jump(self._jump_latest)
+                self.chat_text.grid_remove()
+            except Exception as _chat_card_error:
+                self._chat_list = None
+                print("CHAT CARDS FALLBACK:", repr(_chat_card_error), flush=True)
+                try: self.status_var.set("卡片渲染不可用，已降级为文本 / Chat cards unavailable; using text")
+                except Exception: pass
         self.chat_text.config(state=tk.DISABLED)
+        self._build_chat_empty_state(chat_card)
+        self._back_latest_button = ttk.Button(chat_card, text="回到最新 / Back to latest",
+                                              style="Ghost.TButton", command=self._jump_latest)
+        self._back_latest_button.grid(row=2, column=0, sticky=tk.SE, padx=12, pady=8)
+        self._back_latest_button.grid_remove()
         self.chat_text.tag_config("user", foreground="#1E40AF", font=(UI_FONT, 11, "bold"),
                                   justify="right", spacing1=10, spacing3=2)
         self.chat_text.tag_config("assistant", foreground="#111827", font=(UI_FONT, 11),
@@ -2602,9 +2796,37 @@ class HuimengAIClient:
         self.chat_text.tag_config("srv_user", foreground="#B45309", font=(UI_FONT, 10))
         self.chat_text.tag_config("srv_reply", foreground="#92400E", font=(UI_FONT, 10))
         self.chat_text.tag_config("hist", foreground="#9CA3AF", font=(UI_FONT, 10))
+        self.chat_text.tag_config("meta_left", foreground="#98A2B3", font=(UI_FONT, 9))
+        self.chat_text.tag_config("meta_right", foreground="#98A2B3", font=(UI_FONT, 9), justify="right")
+        self.chat_text.tag_config("bubble_user", foreground="#101828", background="#EFF6FF",
+                                  lmargin1=80, lmargin2=80, rmargin=12, spacing1=8, spacing3=8, justify="left")
+        self.chat_text.tag_config("bubble_ai", foreground="#101828", background="#FFFFFF",
+                                  lmargin1=12, lmargin2=12, rmargin=80, spacing1=8, spacing3=8, justify="left")
+        self.chat_text.tag_config("md_h1", foreground="#101828", font=(UI_FONT, 15, "bold"))
+        self.chat_text.tag_config("md_h2", foreground="#101828", font=(UI_FONT, 14, "bold"))
+        self.chat_text.tag_config("md_h3", foreground="#101828", font=(UI_FONT, 13, "bold"))
+        self.chat_text.tag_config("inline_code", foreground="#0F172A", background="#F2F4F7")
+        self.chat_text.tag_config("md_code", foreground="#E6EDF3", background="#0F172A",
+                                  font=("Consolas", 10), lmargin1=20, lmargin2=20, rmargin=20)
+        self.chat_text.tag_config("md_list", lmargin1=28, lmargin2=48)
+        self.chat_text.tag_config("md_quote", foreground="#475467", lmargin1=24, lmargin2=24)
+        self.chat_text.tag_config("stream_cursor", foreground="#2563EB", background="#2563EB")
+        if self._md_render is not None:
+            try:
+                for _tag, _spec in self._md_render.styles().items():
+                    _spec = dict(_spec)
+                    if "font" in _spec and isinstance(_spec["font"], tuple):
+                        _spec["font"] = (UI_FONT,) + _spec["font"][1:]
+                    self.chat_text.tag_config("md_" + _tag, **_spec)
+            except Exception:
+                self._md_render = None
+        self.chat_text.tag_bind("md_link", "<Button-1>", self._copy_markdown_link)
+        self._chat_max_bubble_px = 780
+        self._chat_bubble_ratio = 0.78
 
         ctrl_row = ttk.Frame(chat_card, style="Card.TFrame")
-        ctrl_row.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(8, 0))
+        self.ctrl_row = ctrl_row
+        ctrl_row.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(8, 0))
         for text, command in (("复制最后回复", self.copy_last_response),
                               ("清空显示", self.clear_chat_display),
                               ("导出对话", self.export_conversation)):
@@ -2627,16 +2849,237 @@ class HuimengAIClient:
         self.attach_frame.grid(row=0, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 6))
         self.attach_frame.grid_remove()
         self.input_var = tk.StringVar()
+        self._input_placeholder = T("输入消息…", "Type a message...")
         self.input_entry = tk.Entry(input_card, textvariable=self.input_var, font=(UI_FONT, max(fs, 10)),
-                                    relief="flat", borderwidth=0, highlightthickness=0,
-                                    bg="#F3F4F8", fg=THEME["text"], insertbackground=THEME["text"])
+                                    relief="flat", borderwidth=0, highlightthickness=2,
+                                    highlightbackground="#EAECF0", highlightcolor="#CBDDF9",
+                                    bg="#FFFFFF", fg=THEME["text"], insertbackground=THEME["text"])
+        self.input_entry.insert(0, self._input_placeholder)
+        self.input_entry.configure(fg="#98A2B3")
+        self.input_entry.bind("<FocusIn>", self._input_focus_in)
+        self.input_entry.bind("<FocusOut>", self._input_focus_out)
         self.input_entry.grid(row=1, column=0, sticky=(tk.W, tk.E), ipady=10, padx=(2, 12))
-        self.input_entry.bind("<Return>", lambda e: self.send_message())
+        self.input_entry.bind("<Return>", self._input_return)
         self.send_button = ttk.Button(input_card, text="发送", style="Accent.TButton",
                                       command=self.send_message, width=9)
         self.send_button.grid(row=1, column=1)
-        ttk.Button(input_card, text="附件", style="Ghost.TButton", width=5,
-                   command=self.attach_file).grid(row=1, column=2, padx=(8, 0))
+        self.attach_button = ttk.Button(input_card, text="附件", style="Ghost.TButton", width=5,
+                                         command=self.attach_file)
+        self.attach_button.grid(row=1, column=2, padx=(8, 0))
+
+    def _input_focus_in(self, _event=None):
+        if self.input_var.get() == getattr(self, "_input_placeholder", ""):
+            self.input_var.set("")
+            self.input_entry.configure(fg=THEME["text"])
+
+    def _input_focus_out(self, _event=None):
+        if not self.input_var.get().strip():
+            self.input_var.set(getattr(self, "_input_placeholder", T("输入消息…", "Type a message...")))
+            self.input_entry.configure(fg="#98A2B3")
+
+    def _input_return(self, event=None):
+        if event is not None and (event.state & 0x0001):
+            return None
+        self.send_message()
+        return "break"
+
+    def _fill_example_prompt(self, text):
+        self._input_focus_in()
+        self.input_var.set(text)
+        self.input_entry.configure(fg=THEME["text"])
+        self.input_entry.focus_set()
+        return "break"
+
+    def _build_chat_empty_state(self, parent):
+        try:
+            frame = tk.Frame(parent, bg="#FFFFFF", highlightthickness=0, bd=0)
+            self._chat_empty_state = frame
+            frame.grid(row=2, column=0, sticky=(tk.N, tk.S, tk.E, tk.W), padx=24, pady=24)
+            frame.columnconfigure(0, weight=1)
+            tk.Label(frame, text="H", bg="#FFFFFF", fg=THEME["accent"],
+                     font=(UI_FONT, 30, "bold")).grid(row=0, column=0, pady=(42, 4))
+            tk.Label(frame, text="开始对话 / Start a conversation", bg="#FFFFFF",
+                     fg=THEME["text"], font=(UI_FONT, 14, "bold")).grid(row=1, column=0, pady=(0, 14))
+            pills = tk.Frame(frame, bg="#FFFFFF")
+            pills.grid(row=2, column=0)
+            for col, text in enumerate(("总结这段代码", "帮我写一个正则", "解释这个报错")):
+                button = tk.Button(pills, text=text, command=lambda value=text: self._fill_example_prompt(value),
+                                   bg="#F2F6FC", fg="#344054", activebackground="#E5EDFA",
+                                   activeforeground=THEME["text"], relief="flat", bd=0,
+                                   padx=12, pady=7, cursor="hand2", font=(UI_FONT, 9))
+                button.grid(row=0, column=col, padx=4)
+        except Exception:
+            self._chat_empty_state = None
+
+    def _hide_chat_empty_state(self):
+        try:
+            if getattr(self, "_chat_empty_state", None) is not None:
+                self._chat_empty_state.grid_remove()
+        except Exception:
+            pass
+
+    def _build_chat_session_selector(self, parent):
+        try:
+            bar = ttk.Frame(parent, style="Card.TFrame")
+            self._chat_session_bar = bar
+            bar.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 6))
+            bar.columnconfigure(1, weight=1)
+            ttk.Label(bar, text="会话", style="CardSmall.TLabel").grid(row=0, column=0, padx=(0, 6))
+            self._chat_session_var = tk.StringVar(value="加载会话…")
+            self._chat_session_combo = ttk.Combobox(bar, textvariable=self._chat_session_var, state="readonly")
+            self._chat_session_combo.grid(row=0, column=1, sticky=(tk.W, tk.E))
+            self._chat_session_combo.bind("<<ComboboxSelected>>", self._on_chat_session_selected)
+            ttk.Button(bar, text="新建", command=self._new_chat_session).grid(row=0, column=2, padx=(6, 0))
+            self._chat_session_ids = []
+            self._chat_session_rows = []
+            self._session_load_seq = 0
+            self._session_page_sid = None
+            self._session_page_rows = []
+            self._session_page_total = 0
+            self._session_page_offset = 0
+            self._chat_page_status_var = tk.StringVar(value="")
+            ttk.Label(bar, textvariable=self._chat_page_status_var, style="CardSmall.TLabel").grid(row=1, column=0, columnspan=2, sticky=tk.W)
+            self._chat_earlier_button = ttk.Button(bar, text="加载更早 / Load earlier", command=self._load_earlier_chat_messages, state=tk.DISABLED)
+            self._chat_earlier_button.grid(row=1, column=0, columnspan=2, sticky=tk.W, pady=(4, 0))
+            self._refresh_chat_sessions()
+        except Exception:
+            self._hide_chat_session_selector()
+
+    def _schedule_session_ui(self, callback):
+        try:
+            self.root.after(0, callback)
+        except Exception:
+            pass
+
+    def _refresh_chat_sessions(self, select_id=None):
+        def load():
+            try:
+                from hxcore import sessions
+                rows = sessions.list_sessions(limit=50)
+                self._schedule_session_ui(lambda: self._set_chat_sessions(rows, select_id))
+            except Exception:
+                self._schedule_session_ui(self._hide_chat_session_selector)
+        threading.Thread(target=load, daemon=True).start()
+
+    def _set_chat_sessions(self, rows, select_id=None):
+        try:
+            self._chat_session_rows = list(rows or [])
+            valid = [row for row in self._chat_session_rows if row.get("id")]
+            self._chat_session_ids = [str(row.get("id")) for row in valid]
+            labels = ["%s (%s)" % (str(row.get("title") or row.get("id")), row.get("count", 0)) for row in valid]
+            self._chat_session_combo.configure(values=labels)
+            chosen = select_id if select_id in self._chat_session_ids else self._chat_session_id
+            if chosen in self._chat_session_ids:
+                self._chat_session_var.set(labels[self._chat_session_ids.index(chosen)])
+            elif not labels:
+                self._chat_session_var.set("当前会话")
+        except Exception:
+            self._hide_chat_session_selector()
+
+    def _hide_chat_session_selector(self):
+        try:
+            self._chat_session_bar.grid_remove()
+        except Exception:
+            pass
+
+    def _on_chat_session_selected(self, _event=None):
+        try:
+            index = self._chat_session_combo.current()
+            if index < 0 or index >= len(self._chat_session_ids):
+                return
+            self._load_chat_session(self._chat_session_ids[index])
+        except Exception:
+            pass
+
+    def _load_chat_session(self, sid):
+        self._session_history_snapshots[self._chat_session_id] = [dict(m) for m in self.conversation_history]
+        self._session_load_seq = int(getattr(self, "_session_load_seq", 0)) + 1
+        seq = self._session_load_seq
+        self._session_page_sid, self._session_page_offset = sid, 0
+        self._session_page_rows, self._session_page_total = [], 0
+        def load():
+            try:
+                from hxcore import sessions
+                rows = sessions.messages(sid, limit=100)
+                history = [{"role": row.get("role", ""), "content": row.get("text", "")} for row in rows
+                           if row.get("role") in ("user", "assistant", "system")]
+                self._schedule_session_ui(lambda: self._display_chat_session(sid, rows, seq, True))
+            except Exception:
+                self._schedule_session_ui(lambda: self._hide_chat_session_selector() if seq == self._session_load_seq else None)
+        threading.Thread(target=load, daemon=True).start()
+
+    def _display_chat_session(self, sid, history, seq=None, reset=True):
+        if seq is not None and (seq != getattr(self, "_session_load_seq", 0) or sid != getattr(self, "_session_page_sid", None)):
+            print("DROP seq=%s current=%s" % (seq, getattr(self, "_session_load_seq", 0)))
+            return
+        try:
+            if getattr(self, "_chat_list", None) is not None:
+                self._chat_list.clear()
+            self.chat_text.config(state=tk.NORMAL)
+            self.chat_text.delete("1.0", tk.END)
+            self.chat_text.config(state=tk.DISABLED)
+            rows = history if isinstance(history, list) and (not history or "role" in history[0] and "content" not in history[0]) else []
+            if rows and isinstance(rows[0], dict) and "content" not in rows[0]:
+                rows = [{"role": row.get("role", ""), "content": row.get("text", "")} for row in rows]
+            self._session_page_rows = rows
+            self._session_page_offset = len(rows)
+            self._session_page_total = max(len(rows), getattr(self, "_session_page_total", 0))
+            self._chat_session_id = sid
+            self.conversation_history = [dict(m) for m in self._session_history_snapshots.pop(sid, rows)]
+            for msg in self.conversation_history:
+                role, content = msg.get("role", ""), msg.get("content", "")
+                if role == "user":
+                    self.display_message(role, content, prefix=self.config.get("user_name", "您"))
+                elif role == "assistant":
+                    self.display_message(role, content, prefix=self.config.get("ai_name", "Hymnix"))
+                else:
+                    self.display_message(role, content)
+            self._set_chat_sessions(self._chat_session_rows, sid)
+            shown = len(self.conversation_history)
+            self._chat_page_status_var.set("已显示 %d / 共 %d · Showing %d / %d" % (shown, self._session_page_total, shown, self._session_page_total))
+            self._chat_earlier_button.configure(state=(tk.NORMAL if shown < min(self._session_page_total, 1000) else tk.DISABLED))
+        except Exception:
+            pass
+
+    def _load_earlier_chat_messages(self):
+        sid = getattr(self, "_session_page_sid", None)
+        seq = getattr(self, "_session_load_seq", 0)
+        offset = getattr(self, "_session_page_offset", 0)
+        if not sid or offset >= 1000:
+            return
+        def load():
+            try:
+                from hxcore import sessions
+                rows = sessions.messages(sid, limit=min(1000, offset + 100))
+                self._schedule_session_ui(lambda: self._append_chat_page(sid, rows, seq))
+            except Exception:
+                pass
+        threading.Thread(target=load, daemon=True).start()
+
+    def _append_chat_page(self, sid, rows, seq):
+        if seq != getattr(self, "_session_load_seq", 0) or sid != getattr(self, "_session_page_sid", None):
+            print("DROP seq=%s current=%s" % (seq, getattr(self, "_session_load_seq", 0)))
+            return
+        history = [{"role": row.get("role", ""), "content": row.get("text", "")} for row in rows if row.get("role") in ("user", "assistant", "system")]
+        self._session_page_rows = history[-1000:]
+        self._session_page_offset = len(self._session_page_rows)
+        self._session_page_total = len(history)
+        self._display_chat_session(sid, self._session_page_rows, seq)
+
+    def _new_chat_session(self):
+        self._session_history_snapshots[self._chat_session_id] = [dict(m) for m in self.conversation_history]
+        def create():
+            try:
+                from hxcore import sessions
+                result = sessions.create()
+                sid = str(result.get("id") or "")
+                if not sid:
+                    raise RuntimeError("session create failed")
+                self._schedule_session_ui(lambda: self._display_chat_session(sid, []))
+                self._refresh_chat_sessions(sid)
+            except Exception:
+                self._schedule_session_ui(self._hide_chat_session_selector)
+        threading.Thread(target=create, daemon=True).start()
 
     # ==================== 思考计时 / 资源占用 ====================
     def start_thinking(self):
@@ -2729,7 +3172,7 @@ class HuimengAIClient:
             else:
                 bits.append("AI %.0f%%" % snap["ai_cpu"])
         if snap.get("sys_cpu") is not None:
-            bits.append("系统 %.0f%%" % snap["sys_cpu"])
+            bits.append(T("系统 %.0f%%", "System %.0f%%") % snap["sys_cpu"])
         if snap.get("mem_total"):
             bits.append("内存 %.1f/%.1fG" % (snap["mem_used"], snap["mem_total"]))
         if snap.get("model_size"):
@@ -2804,12 +3247,12 @@ class HuimengAIClient:
         if gpus:
             gpu_txt = T("、", ", ").join("%s %.1fG" % (g["name"], g["vram_gb"]) for g in gpus)
         else:
-            gpu_txt = T("未检测到独立显卡，只能用 CPU", "no discrete GPU detected, CPU only")
-        self.hw_summary_var.set(
-            T("CPU: %s（%d 核 / %d 线程 @ %d MHz）   |   显卡 %d 张：%s   |   内存 %.1f GB",
-              "CPU: %s  (%d cores / %d threads @ %d MHz)   |   GPUs: %d - %s   |   RAM %.1f GB") % (
-                cpu.get("name", "未知"), cpu.get("cores", 0), cpu.get("threads", 0), cpu.get("mhz", 0),
-                len(gpus), gpu_txt, data.get("ram_gb", 0)))
+            gpu_txt = T("未检测到独立显卡，只能用 CPU", "No discrete GPU detected, CPU only")
+        self.hw_summary_var.set(T(
+            "CPU: %s（%d 核 / %d 线程 @ %d MHz）   |   显卡 %d 张：%s   |   内存 %.1f GB",
+            "CPU: %s (%d cores / %d threads @ %d MHz)   |   GPU %d: %s   |   RAM %.1f GB") % (
+            cpu.get("name", T("未知", "Unknown")), cpu.get("cores", 0), cpu.get("threads", 0), cpu.get("mhz", 0),
+            len(gpus), gpu_txt, data.get("ram_gb", 0)))
         self.queue_message("system", T("🖥️ 硬件: %s，检测到 %d 张显卡" % (cpu.get("name", "未知"), len(gpus)),
                 "🖥️ Hardware: %s, %d GPU(s) detected" % (cpu.get("name", "Unknown"), len(gpus))))
         if current.startswith("gpu:"):
@@ -2906,15 +3349,12 @@ class HuimengAIClient:
                     if size <= 0:
                         return
                     if vram >= size * 0.9:
-                        txt = T("🟢 本次实际: GPU 推理（显存 %.2f GB / 模型 %.2f GB）",
-                                "🟢 This run: GPU inference (VRAM %.2f GB / model %.2f GB)") % (vram / (1024.0 ** 3), size / (1024.0 ** 3))
+                        txt = "🟢 本次实际: GPU 推理（显存 %.2f GB / 模型 %.2f GB）" % (vram / (1024.0 ** 3), size / (1024.0 ** 3))
                     elif vram > 0:
-                        txt = T("🟡 本次实际: GPU+CPU 混合（显存 %.2f GB，内存 %.2f GB）",
-                                "🟡 This run: GPU+CPU split (VRAM %.2f GB, RAM %.2f GB)") % (
+                        txt = "🟡 本次实际: GPU+CPU 混合（显存 %.2f GB，内存 %.2f GB）" % (
                             vram / (1024.0 ** 3), (size - vram) / (1024.0 ** 3))
                     else:
-                        txt = T("🔵 本次实际: CPU 推理（模型 %.2f GB 全在内存）",
-                                "🔵 This run: CPU inference (model %.2f GB in RAM)") % (size / (1024.0 ** 3))
+                        txt = "🔵 本次实际: CPU 推理（模型 %.2f GB 全在内存）" % (size / (1024.0 ** 3))
                     self.root.after(0, lambda t=txt: self.update_device_hint(t))
                     return
             except Exception:
@@ -3318,8 +3758,8 @@ class HuimengAIClient:
             self.model_var.set("无可用模型")
             self.model_info_var.set("请下载模型")
 
-    TAG_NAMES = {"cn": T("中文", "Chinese"), "tools": T("工具", "tools"), "vision": T("看图", "vision"),
-                 "think": T("思考", "thinking"), "code": T("代码", "code"), "embed": T("向量", "embeddings")}
+    TAG_NAMES = {"cn": "中文", "tools": "工具", "vision": "看图", "think": "思考",
+                 "code": "代码", "embed": "向量"}
 
     def update_model_info(self):
         current = self.model_var.get()
@@ -3360,9 +3800,9 @@ class HuimengAIClient:
         self.model_caps = caps
         marks = []
         if "vision" in caps:
-            marks.append(T("👁 能看图", "👁 vision"))
+            marks.append("👁 能看图")
         if "tools" in caps:
-            marks.append(T("🛠 能调工具", "🛠 tool calls"))
+            marks.append("🛠 能调工具")
         base = self.model_info_var.get() or model
         if marks:
             self.model_info_var.set(base + "　" + " ".join(marks))
@@ -3427,8 +3867,24 @@ class HuimengAIClient:
 
         threading.Thread(target=stop_task, daemon=True).start()
 
+    def _persist_chat_message(self, role, text):
+        try:
+            from hxcore.paths import logs_dir
+            folder = os.path.join(logs_dir(), "chats")
+            os.makedirs(folder, exist_ok=True)
+            row = {"ts": datetime.now().astimezone().isoformat(), "session_id": self._chat_session_id,
+                   "role": role, "text": str(text)[:4000], "model": self.current_model}
+            path = os.path.join(folder, datetime.now().strftime("%Y%m%d") + ".jsonl")
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+
     def send_message(self):
-        user_input = self.input_var.get().strip()
+        raw_input = self.input_var.get()
+        if raw_input == getattr(self, "_input_placeholder", ""):
+            raw_input = ""
+        user_input = raw_input.strip()
         if (not user_input and not self.attachments) or self.is_processing:
             return
         use_cloud = str(self.config.get("chat_source", "local")) == "cloud"
@@ -3443,18 +3899,31 @@ class HuimengAIClient:
         if not use_cloud and self.current_model in ["无可用模型", "请先启动Ollama服务"]:
             self.queue_message("system", "⚠️ 请选择有效模型")
             return
-        user_name = USER_NAME(self.config)
+        user_name = self.config.get("user_name", "您")
         msg = {"role": "user", "content": self._compose_user_content(user_input)}
         images = [a["b64"] for a in self.attachments if a.get("kind") == "image"]
         if images:
             msg["images"] = images
         self.conversation_history.append(msg)
+        self._hide_chat_empty_state()
+        # Compress only the request snapshot; persistent chat history stays complete.
+        compressed = _maybe_compress_messages(self.conversation_history, self.root, self.config)
+        self._send_messages = compressed.get("messages") or self.conversation_history.copy()
+        if not compressed.get("compressed"):
+            self.message_queue.put(("trace", "%s  COMPRESS skip=%s" % (self._now_ts(), compressed.get("status") or "error")))
+        elif compressed.get("status") == "record_error":
+            self.message_queue.put(("trace", "%s  COMPRESS record_error" % self._now_ts()))
+        if compressed.get("compressed"):
+            self.queue_message("system", "已压缩 %d 条历史消息，节省 %d token / Compressed %d messages, saved %d tokens" % (
+                compressed.get("drop", 0), compressed.get("saved_tokens", 0),
+                compressed.get("drop", 0), compressed.get("saved_tokens", 0)))
         shown = user_input or "（只发了附件）"
         if self.attachments:
             marks = " ".join(("🖼 " if a["kind"] == "image" else "📄 ") + a["name"]
                              for a in self.attachments)
             shown = shown + "\n" + marks
         self.display_message("user", shown, prefix=user_name)
+        self._persist_chat_message("user", shown)
         self.clear_attachments()
         self.input_var.set("")
         self.is_processing = True
@@ -3478,9 +3947,10 @@ class HuimengAIClient:
             pass
 
     def on_source_selected(self, _evt=None):
-        want = "cloud" if self.source_var.get().startswith("云端") else "local"
+        _src = self.source_var.get()
+        want = "cloud" if (_src.startswith("云端") or _src.lower().startswith("cloud")) else "local"
         if want == "cloud" and not self._cloud_cfg():
-            self.source_var.set("本地模型")
+            self.source_var.set(T("本地模型", "Local model"))
             self.config["chat_source"] = "local"
             self.save_config()
             messagebox.showinfo("云端 API", "还没有配置云端 API。\n先点下面的「配置云端 API」填写地址、Key 和模型。",
@@ -3502,14 +3972,14 @@ class HuimengAIClient:
             if src == "cloud":
                 c = self._cloud_cfg()
                 if c:
-                    self.source_var.set("云端 API")
+                    self.source_var.set(T("云端 API", "Cloud API"))
                     self.source_status_var.set(("云端 · %s" % c.get("provider", "cloud"))[:34])
                 else:
-                    self.source_var.set("本地模型")
-                    self.source_status_var.set("本地 · %s（云端未配置）" % (self.model_var.get() or ""))
+                    self.source_var.set(T("本地模型", "Local model"))
+                    self.source_status_var.set(T("本地 · %s（云端未配置）", "Local · %s (cloud not configured)") % (self.model_var.get() or ""))
             else:
-                self.source_var.set("本地模型")
-                self.source_status_var.set("本地 · %s" % (self.model_var.get() or ""))
+                self.source_var.set(T("本地模型", "Local model"))
+                self.source_status_var.set(T("本地 · %s", "Local · %s") % (self.model_var.get() or ""))
         except Exception:
             pass
 
@@ -3528,8 +3998,9 @@ class HuimengAIClient:
             key = str(c.get("api_key") or "").strip()
             model = str(c.get("model") or "").strip()
             provider = str(c.get("provider") or "cloud")
+            source_msgs = getattr(self, "_send_messages", self.conversation_history)
             msgs = [{"role": m.get("role"), "content": m.get("content")}
-                    for m in self.conversation_history if m.get("role") in ("user", "assistant")]
+                    for m in source_msgs if m.get("role") in ("user", "assistant")]
             if not msgs:
                 raise RuntimeError("没有可发送的消息")
             t0 = time.time()
@@ -3631,6 +4102,56 @@ class HuimengAIClient:
 
         return ev(_ast.parse(expr, mode="eval"))
 
+    def _approval_decide(self, name, args, decision):
+        """Ask the UI for dangerous tool approval without touching Tk off-thread."""
+        result = {"decision": "deny", "remember": False}
+        event = threading.Event()
+        def finish(choice="deny", remember=False):
+            result["decision"] = choice if choice in ("allow", "deny") else "deny"
+            result["remember"] = bool(remember)
+            event.set()
+        def ask():
+            try:
+                from pages_approval_dialog import show_approval_dialog
+                show_approval_dialog(self.root, self, name, args,
+                                     decision.get("risk", "danger"),
+                                     decision.get("reasons", []), finish)
+            except Exception:
+                self.queue_message("system", "审批组件未就绪，已拒绝该操作 / Approval UI unavailable, action denied")
+                finish()
+        try:
+            self.root.after(0, ask)
+            if not event.wait(120.0):
+                self.queue_message("system", "审批超时，已拒绝该操作 / Approval timed out, action denied")
+        except Exception:
+            self.queue_message("system", "审批组件未就绪，已拒绝该操作 / Approval UI unavailable, action denied")
+            finish()
+        return result
+
+    def _run_approved_tool(self, name, args):
+        """Run hxcore tools with delayed approval, falling back to legacy tools."""
+        try:
+            from hxcore import tools as _tools
+            if not hasattr(self, "_approved_tools"):
+                self._approved_tools = set()
+            if name in self._approved_tools:
+                result = _tools.call(name, args, approve=lambda *_a: True)
+            else:
+                result = _tools.call(name, args)
+            if isinstance(result, dict) and result.get("error") == "needs_approval":
+                decision = result.get("decision") or {}
+                answer = self._approval_decide(name, args, decision)
+                if answer.get("decision") != "allow":
+                    return "操作已拒绝 / Action denied"
+                if answer.get("remember"):
+                    self._approved_tools.add(name)
+                result = _tools.call(name, args, approve=lambda *_a: True)
+            if isinstance(result, dict):
+                return result.get("result") if result.get("ok") else ("工具失败 / Tool failed: " + str(result.get("error") or "unknown"))
+            return result
+        except Exception:
+            return self._run_tool(name, args)
+
     def _run_tool(self, name, args):
         import platform
         try:
@@ -3718,7 +4239,8 @@ class HuimengAIClient:
         except Exception as e:
             return "工具执行失败: %s" % e
 
-    def generate_response(self, user_input):
+    # Legacy tool-aware implementation retained; generate_response below is effective.
+    def _generate_response_with_tools(self, user_input):
         url = f"{API_BASE}/api/chat"
         try:
             temp = float(self.config.get("temperature", 0.7) or 0.7)
@@ -3741,11 +4263,11 @@ class HuimengAIClient:
                 options["num_thread"] = int(cpu["cores"])
         use_tools = bool(self.config.get("enable_tools", True))
         tools = self._tool_specs() if use_tools else None
-        msgs = self.conversation_history.copy()
+        msgs = list(getattr(self, "_send_messages", self.conversation_history))
         self.message_queue.put(("trace", "%s  REQ   model=%s  msgs=%d  ctx≤%d  temp=%.2f  max_tok=%d  tools=%s" % (
             self._now_ts(), self.current_model, len(msgs), num_ctx, temp, num_predict,
             ("%d 个" % len(tools)) if tools else "关闭")))
-        self.message_queue.put(("trace", T("%s  PATH  本机输入 → gateway:11435 → ollama:11434 → %s 推理", "%s  PATH  local input -> gateway:11435 -> ollama:11434 -> %s inference") % (
+        self.message_queue.put(("trace", "%s  PATH  本机输入 → gateway:11435 → ollama:11434 → %s 推理" % (
             self._now_ts(), "GPU" if device != "cpu" else "CPU")))
         t0 = time.time()
         final_answer = ""
@@ -3790,7 +4312,7 @@ class HuimengAIClient:
                         if piece:
                             if first_at is None:
                                 first_at = time.time()
-                                self.message_queue.put(("trace", T("%s  ◀     首字 %.0f ms", "%s  ◀     first token %.0f ms") % (
+                                self.message_queue.put(("trace", "%s  ◀     首字 %.0f ms" % (
                                     self._now_ts(), (first_at - t0) * 1000)))
                             collected.append(piece)
                             self.message_queue.put(("chunk", piece))
@@ -3815,10 +4337,11 @@ class HuimengAIClient:
                 ptok = final.get("prompt_eval_count") or 0
                 etok = final.get("eval_count") or len(text)
                 tps = (etok / eval_dur) if eval_dur else 0
-                self.message_queue.put(("trace", T("%s  ✓     完成 %.2fs · 输出 %d tok · %.1f tok/s · 输入 %d tok", "%s  ✓     done %.2fs · output %d tok · %.1f tok/s · input %d tok") % (
+                self.message_queue.put(("trace", "%s  ✓     完成 %.2fs · 输出 %d tok · %.1f tok/s · 输入 %d tok" % (
                     self._now_ts(), total, etok, tps, ptok)))
                 if text:
                     self.conversation_history.append({"role": "assistant", "content": text})
+                    self._persist_chat_message("assistant", text)
                 break
 
             # 有工具调用：执行 → 回填 → 再来一轮
@@ -3837,7 +4360,7 @@ class HuimengAIClient:
                     args = raw_args or {}
                 self.message_queue.put(("tool", "%s  TOOL  › %s %s" % (
                     self._now_ts(), name, json.dumps(args, ensure_ascii=False)[:160])))
-                result = self._run_tool(name, args)
+                result = self._run_approved_tool(name, args)
                 self.message_queue.put(("trace", "%s  RESULT › %s" % (
                     self._now_ts(), str(result).replace(chr(10), " ")[:220])))
                 msgs.append({"role": "tool", "content": str(result), "tool_name": name})
@@ -3855,9 +4378,9 @@ class HuimengAIClient:
             return
         self.chat_text.config(state=tk.NORMAL)
         if not getattr(self, "_stream_open", False):
-            ai_name = AI_NAME(self.config)
+            ai_name = self.config.get("ai_name", "AI助手")
             self._stream_start = self.chat_text.index("end-1c")
-            self.chat_text.insert(tk.END, "%s\n" % (AI_NAME(self.config)), "assistant")
+            self.chat_text.insert(tk.END, "%s\n" % (self.config.get("ai_name") or "Hymnix"), "assistant")
             self._stream_open = True
         self._stream_chars = int(getattr(self, "_stream_chars", 0)) + len(text)
         if getattr(self, "_t_first", None) is None:
@@ -3897,44 +4420,243 @@ class HuimengAIClient:
         except Exception:
             pass
 
+    def _chat_render_specs(self):
+        try:
+            from hxcore import bubble
+        except Exception:
+            bubble = None
+        return bubble, getattr(self, "_md_render", None)
+
+    def _copy_markdown_link(self, event):
+        try:
+            index = self.chat_text.index("@%d,%d" % (event.x, event.y))
+            for tag in self.chat_text.tag_names(index):
+                if tag.startswith("md_url_"):
+                    target = tag[len("md_url_"):].replace("_", ".")
+                    self.root.clipboard_clear(); self.root.clipboard_append(target)
+                    self.status_var.set("链接已复制 / Link copied")
+                    break
+        except Exception:
+            pass
+
+    def _on_chat_manual_scroll(self, _event=None):
+        try:
+            if self.chat_text.yview()[1] < 0.999:
+                self.config["auto_scroll"] = False
+                if getattr(self, "_back_latest_button", None) is not None:
+                    self._back_latest_button.grid()
+        except Exception:
+            pass
+
+    def _chat_scroll_state(self):
+        if getattr(self, "_chat_list", None) is not None:
+            return self._chat_list.at_bottom()
+        try:
+            return float(self.chat_text.yview()[1]) >= 0.999
+        except Exception:
+            return True
+
+    def _show_back_latest(self):
+        try:
+            if getattr(self, "_back_latest_button", None) is not None and not self._chat_scroll_state():
+                self._back_latest_button.grid()
+        except Exception:
+            pass
+
+    def _jump_latest(self):
+        try:
+            if getattr(self, "_chat_list", None) is not None:
+                self._chat_list.scroll_to_bottom(True)
+                self._back_latest_button.grid_remove()
+                self.config["auto_scroll"] = True
+                return
+            self.chat_text.see(tk.END)
+            self.config["auto_scroll"] = True
+            self._back_latest_button.grid_remove()
+        except Exception:
+            pass
+
+    def _start_stream_cursor(self):
+        self._cursor_on = True
+        self._cursor_job = None
+        def tick():
+            if not getattr(self, "_stream_open", False):
+                self._cursor_job = None
+                return
+            try:
+                self.chat_text.config(state=tk.NORMAL)
+                if self._cursor_on:
+                    self.chat_text.insert(tk.END, "▌", "stream_cursor")
+                else:
+                    self.chat_text.delete("end-2c", "end-1c")
+                self._cursor_on = not self._cursor_on
+                self.chat_text.config(state=tk.DISABLED)
+            except Exception:
+                pass
+            self._cursor_job = self.root.after(500, tick)
+        self._cursor_job = self.root.after(500, tick)
+
+    def _stop_stream_cursor(self):
+        job = getattr(self, "_cursor_job", None)
+        if job:
+            try: self.root.after_cancel(job)
+            except Exception: pass
+        self._cursor_job = None
+        if getattr(self, "_cursor_on", False):
+            try:
+                self.chat_text.config(state=tk.NORMAL); self.chat_text.delete("end-2c", "end-1c"); self.chat_text.config(state=tk.DISABLED)
+            except Exception: pass
+        self._cursor_on = False
+
+    def _add_code_copy_button(self, code):
+        try:
+            row = tk.Frame(self.chat_text, bg="#FFFFFF")
+            button = tk.Button(row, text="复制 / Copy", relief="flat", bd=0, cursor="hand2",
+                               bg="#F2F4F7", fg="#344054", padx=8, pady=2)
+            def copy():
+                try:
+                    self.root.clipboard_clear(); self.root.clipboard_append(str(code))
+                    button.configure(text="已复制 / Copied")
+                    self.root.after(1200, lambda: button.winfo_exists() and button.configure(text="复制 / Copy"))
+                except Exception:
+                    pass
+            button.configure(command=copy)
+            button.pack(side="right", padx=8, pady=(0, 4))
+            row.pack(fill="x", padx=12, anchor="e")
+            self.chat_text.window_create(tk.END, window=row, align="right")
+            self.chat_text.insert(tk.END, "\n")
+        except Exception:
+            self.chat_text.insert(tk.END, "复制 / Copy\n", "md_code")
+
+    def _render_chat_message(self, role, content, prefix=None):
+        bubble, md_render = self._chat_render_specs()
+        name = prefix or (self.config.get("user_name") if role == "user" else self.config.get("ai_name") or "Hymnix")
+        name = name or ("你" if role == "user" else "Hymnix")
+        stamp = datetime.now().strftime("%H:%M")
+        try:
+            self.chat_text.config(state=tk.NORMAL)
+            side = bubble.side(role) if bubble else ("right" if role == "user" else "left")
+            tag = "bubble_user" if side == "right" else "bubble_ai"
+            if bubble:
+                try:
+                    container_px = max(320, int(self.chat_text.winfo_width() or 900))
+                    natural = max(80, min(780, int(self.chat_text.font.measure(str(content)) + 32)))
+                    self._chat_last_bubble_width = min(bubble.max_width_px(container_px, role), natural)
+                except Exception:
+                    self._chat_last_bubble_width = 780
+            avatar = bubble.avatar(role, name) if bubble else {"text":"U" if role == "user" else "H"}
+            meta = bubble.meta(name, datetime.now()) if bubble else {"name":name,"time":stamp,"sep":" · "}
+            self.chat_text.insert(tk.END, "%s %s%s%s\n" % (avatar.get("text", "H"), meta.get("name", name), meta.get("sep", " · "), meta.get("time", stamp)), "meta_right" if side == "right" else "meta_left")
+            if role == "assistant" and md_render:
+                blocks = md_render.parse(str(content))
+                for block in blocks:
+                    kind, text = block.get("type"), block.get("text", "")
+                    tagname = {"heading":"md_h%d" % block.get("level", 1), "code":"md_code", "list_item":"md_list", "quote":"md_quote"}.get(kind, tag)
+                    if kind == "code":
+                        self.chat_text.insert(tk.END, text + "\n", "md_code")
+                        self._add_code_copy_button(text)
+                    else:
+                        clean = str(text)
+                        if kind == "list_item":
+                            prefix = (str(block.get("indent", 0)) * "  ") + (str(block.get("ordered_index", "1")) + ". " if block.get("ordered") else "• ")
+                            clean = prefix + clean
+                        import re as _re
+                        parts = _re.split(r"(`[^`]+`)", clean)
+                        for part in parts:
+                            if part.startswith("`") and part.endswith("`"):
+                                self.chat_text.insert(tk.END, part[1:-1], "inline_code")
+                            else:
+                                self.chat_text.insert(tk.END, part, tagname)
+                        self.chat_text.insert(tk.END, "\n", tagname)
+            else:
+                self.chat_text.insert(tk.END, str(content) + "\n", tag)
+            self.chat_text.insert(tk.END, "\n", tag)
+            self.chat_text.config(state=tk.DISABLED)
+            if self.config.get("auto_scroll", True): self.chat_text.see(tk.END)
+        except Exception:
+            try: self._term("%s\n%s\n\n" % (name, content), "assistant" if role == "assistant" else "user")
+            except Exception: pass
+
+    def _copy_chat_selection(self, event=None):
+        try:
+            text = self.chat_text.get("sel.first", "sel.last")
+            if text:
+                self.root.clipboard_clear(); self.root.clipboard_append(text)
+        except Exception:
+            pass
+        return "break"
+
+    def _copy_chat_text(self, text):
+        try:
+            self.root.clipboard_clear(); self.root.clipboard_append(str(text or ""))
+            self.queue_message("system", "📋 已复制 / Copied")
+        except Exception:
+            pass
+
+    def _chat_card_append(self, role, content, prefix=None):
+        ml = getattr(self, "_chat_list", None)
+        if ml is None:
+            return False
+        name = prefix or ((self.config.get("ai_name") or "Hymnix") if role == "assistant" else (self.config.get("user_name") or "您"))
+        ml.append(role, name, datetime.now().strftime("%H:%M"), str(content or ""), md=(role == "assistant"))
+        return True
+
     def display_message(self, role, content, prefix=None):
-        if getattr(self, "_stream_open", False):
-            self.end_assistant_message()
-        if role == "user":
-            uname = self.config.get("user_name") or "你"
-            self._term("%s\n%s\n\n" % (uname, content), "user")
-        elif role == "assistant":
-            aname = AI_NAME(self.config)
-            self._term("%s\n%s\n\n" % (aname, content), "assistant")
+        if getattr(self, "_stream_open", False): self.end_assistant_message()
+        if role in ("user", "assistant"):
+            if not self._chat_card_append(role, content, prefix):
+                self._render_chat_message(role, content, prefix)
         else:
             bad = any(k in str(content) for k in ("❌", "失败", "错误", "异常", "超时", "未响应", "无效"))
             self._tterm("%s  SYS   · %s\n" % (self._now_ts(), content), "err" if bad else "system")
 
     def append_assistant_chunk(self, text):
-        if not text:
+        if not text: return
+        if getattr(self, "_chat_list", None) is not None:
+            ml = self._chat_list
+            if not getattr(self, "_stream_open", False):
+                name = self.config.get("ai_name") or "Hymnix"
+                self._stream_bubble = ml.append_streaming("assistant", name, datetime.now().strftime("%H:%M"))
+                self._stream_text = ""; self._stream_open = True; self._stream_chars = 0
+            self._stream_text = getattr(self, "_stream_text", "") + str(text)
+            self._stream_bubble.set_text(self._stream_text, md=False)
+            self._stream_chars += len(text)
+            if getattr(self, "_t_first", None) is None: self.first_token_arrived()
+            if self.config.get("auto_scroll", True): ml.scroll_to_bottom()
+            else: ml.show_jump(True)
             return
         try:
             self.chat_text.config(state=tk.NORMAL)
             if not getattr(self, "_stream_open", False):
-                self.chat_text.insert(tk.END, "%s\n" % (AI_NAME(self.config)), "assistant")
-                self._stream_open = True
-                self._stream_chars = 0
+                name = self.config.get("ai_name") or "Hymnix"
+                self.chat_text.insert(tk.END, "H  %s · %s\n" % (name, datetime.now().strftime("%H:%M")), "meta_left")
+                self._stream_open = True; self._stream_chars = 0; self._start_stream_cursor()
+            if self._cursor_on: self.chat_text.delete("end-2c", "end-1c")
             self._stream_chars = int(getattr(self, "_stream_chars", 0)) + len(text)
-            if getattr(self, "_t_first", None) is None:
-                self.first_token_arrived()
-            self.chat_text.insert(tk.END, text, "assistant")
-            if self.config.get("auto_scroll", True):
-                self.chat_text.see(tk.END)
+            if getattr(self, "_t_first", None) is None: self.first_token_arrived()
+            self.chat_text.insert(tk.END, text, "bubble_ai")
+            self._cursor_on = True; self.chat_text.insert(tk.END, "▌", "stream_cursor")
+            if self.config.get("auto_scroll", True): self.chat_text.see(tk.END)
+            else: self._show_back_latest()
             self.chat_text.config(state=tk.DISABLED)
-        except Exception:
-            pass
+        except Exception: pass
 
     def end_assistant_message(self):
-        if not getattr(self, "_stream_open", False):
+        if not getattr(self, "_stream_open", False): return
+        self._stop_stream_cursor()
+        if getattr(self, "_chat_list", None) is not None:
+            bubble = getattr(self, "_stream_bubble", None)
+            if bubble is not None:
+                bubble.set_streaming(False)
+                bubble.set_text(getattr(self, "_stream_text", ""), md=True)
+            self._stream_bubble = None; self._stream_text = ""; self._stream_open = False
+            if self.config.get("auto_scroll", True): self._chat_list.scroll_to_bottom()
             return
-        self._term("\n", "assistant")
+        self.chat_text.config(state=tk.NORMAL); self.chat_text.insert(tk.END, "\n\n", "bubble_ai"); self.chat_text.config(state=tk.DISABLED)
         self._stream_open = False
+        if self.config.get("auto_scroll", True): self.chat_text.see(tk.END)
 
+    # Effective local Ollama implementation; send_message populates _send_messages.
     def generate_response(self, user_input):
         url = f"{API_BASE}/api/chat"
         try:
@@ -3956,14 +4678,15 @@ class HuimengAIClient:
             cpu = (self.hw or {}).get("cpu") or {}
             if cpu.get("cores"):
                 options["num_thread"] = int(cpu["cores"])
+        msgs = list(getattr(self, "_send_messages", self.conversation_history))
         payload = {"model": self.current_model,
-                   "messages": self.conversation_history.copy(),
+                   "messages": msgs,
                    "stream": True,
                    "options": options}
         timeout = int(self.config.get("api_timeout", 300) or 300)
         self.message_queue.put(("trace", "%s  REQ   model=%s  msgs=%d  ctx≤%d  temp=%.2f  max_tok=%d" % (
             self._now_ts(), self.current_model, len(self.conversation_history), num_ctx, temp, num_predict)))
-        self.message_queue.put(("trace", T("%s  PATH  本机输入 → gateway:11435 → ollama:11434 → %s 推理", "%s  PATH  local input -> gateway:11435 -> ollama:11434 -> %s inference") % (
+        self.message_queue.put(("trace", "%s  PATH  本机输入 → gateway:11435 → ollama:11434 → %s 推理" % (
             self._now_ts(), "GPU" if device != "cpu" else "CPU")))
         collected = []
         final = {}
@@ -3999,7 +4722,7 @@ class HuimengAIClient:
                     if piece:
                         if first_at is None:
                             first_at = time.time()
-                            self.message_queue.put(("trace", T("%s  ◀     首字 %.0f ms", "%s  ◀     first token %.0f ms") % (
+                            self.message_queue.put(("trace", "%s  ◀     首字 %.0f ms" % (
                                 self._now_ts(), (first_at - t0) * 1000)))
                         collected.append(piece)
                         self.message_queue.put(("chunk", piece))
@@ -4009,12 +4732,13 @@ class HuimengAIClient:
             answer = "".join(collected)
             if answer:
                 self.conversation_history.append({"role": "assistant", "content": answer})
+                self._persist_chat_message("assistant", answer)
             total = (final.get("total_duration") or 0) / 1e9 or (time.time() - t0)
             eval_dur = (final.get("eval_duration") or 0) / 1e9
             ptok = final.get("prompt_eval_count") or 0
             etok = final.get("eval_count") or len(answer)
             tps = (etok / eval_dur) if eval_dur else 0
-            self.message_queue.put(("trace", T("%s  ✓     完成 %.2fs · 输出 %d tok · %.1f tok/s · 输入 %d tok · 上下文 %d", "%s  ✓     done %.2fs · output %d tok · %.1f tok/s · input %d tok · context %d") % (
+            self.message_queue.put(("trace", "%s  ✓     完成 %.2fs · 输出 %d tok · %.1f tok/s · 输入 %d tok · 上下文 %d" % (
                 self._now_ts(), total, etok, tps, ptok,
                 (final.get("prompt_eval_count") or 0) + (final.get("eval_count") or 0))))
         except requests.exceptions.Timeout:
@@ -4089,6 +4813,11 @@ class HuimengAIClient:
                 pass
 
     def update_status(self, message):
+        try:
+            if str((globals().get("LANG") or {}).get("cur") or "zh") != "zh":
+                message = _en_text(message)
+        except Exception:
+            pass
         if threading.current_thread() is threading.main_thread():
             self.status_var.set(message)
         else:
@@ -4136,12 +4865,15 @@ class HuimengAIClient:
             try:
                 with open(filename, 'r', encoding='utf-8') as f:
                     data = json.load(f)
+                if getattr(self, "_chat_list", None) is not None:
+                    self._chat_list.clear()
+                self._stream_open = False; self._stream_bubble = None; self._stream_text = ""
                 self.chat_text.config(state=tk.NORMAL)
                 self.chat_text.delete(1.0, tk.END)
                 self.chat_text.config(state=tk.DISABLED)
                 self.conversation_history = data.get("history", [])
-                user_name = USER_NAME(self.config)
-                ai_name = AI_NAME(self.config)
+                user_name = self.config.get("user_name", "您")
+                ai_name = self.config.get("ai_name", "AI助手")
                 for msg in self.conversation_history:
                     role = msg.get("role", "")
                     content = msg.get("content", "")
@@ -4160,6 +4892,9 @@ class HuimengAIClient:
             return
         if messagebox.askyesno("清空历史", "确定要清空对话历史吗？", parent=self.root):
             self.conversation_history = []
+            if getattr(self, "_chat_list", None) is not None:
+                self._chat_list.clear()
+            self._stream_open = False; self._stream_bubble = None; self._stream_text = ""
             self.chat_text.config(state=tk.NORMAL)
             self.chat_text.delete(1.0, tk.END)
             self.chat_text.config(state=tk.DISABLED)
@@ -4167,6 +4902,9 @@ class HuimengAIClient:
 
     def clear_chat_display(self):
         self._stream_open = False
+        if getattr(self, "_chat_list", None) is not None:
+            self._chat_list.clear()
+            self._stream_bubble = None; self._stream_text = ""
         self.chat_text.config(state=tk.NORMAL)
         self.chat_text.delete(1.0, tk.END)
         self.chat_text.config(state=tk.DISABLED)
@@ -4229,8 +4967,8 @@ class HuimengAIClient:
         if not filename:
             return
         try:
-            user_name = USER_NAME(self.config)
-            ai_name = AI_NAME(self.config)
+            user_name = self.config.get("user_name", "您")
+            ai_name = self.config.get("ai_name", "AI助手")
             if fmt == "txt":
                 with open(filename, 'w', encoding='utf-8') as f:
                     f.write(f"对话记录 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
@@ -4505,7 +5243,7 @@ class HuimengAIClient:
         settings_frame = ttk.Frame(dialog)
         settings_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
         ttk.Label(settings_frame, text="用户名称:").grid(row=0, column=0, sticky=tk.W, pady=5)
-        user_name_var = tk.StringVar(value=USER_NAME(self.config))
+        user_name_var = tk.StringVar(value=self.config.get("user_name", "您"))
         ttk.Entry(settings_frame, textvariable=user_name_var, width=15).grid(row=0, column=1, sticky=tk.W, pady=5)
         ttk.Label(settings_frame, text="AI助手名称:").grid(row=1, column=0, sticky=tk.W, pady=5)
         ai_name_var = tk.StringVar(value=self.config.get("ai_name", "AI助手"))
@@ -4970,7 +5708,7 @@ class HuimengAIClient:
         btns.grid(row=0, column=1, rowspan=3, sticky="e", padx=16)
         ttk.Button(btns, text=T("启动隧道", "Start tunnel"), style="Accent.TButton",
                    command=self.toggle_host_tunnel).pack(side="left")
-        ttk.Button(btns, text=T("复制信息", "Copy info"), style="Ghost.TButton",
+        ttk.Button(btns, text=T("复制地址", "Copy address"), style="Ghost.TButton",
                    command=self.copy_host_url).pack(side="left", padx=8)
         ttk.Button(btns, text=T("打开监控", "Open monitor"), style="Ghost.TButton",
                    command=self.show_monitor_tab).pack(side="left")
@@ -5087,13 +5825,13 @@ class HuimengAIClient:
             if self.config.get("welcome_done") and not force:
                 return
             win = tk.Toplevel(self.root)
-            win.title("Welcome · Hymnix 1.1.0")
+            win.title("Welcome · Hymnix %s" % app_version())
             win.configure(bg=THEME["bg"])
             win.geometry("620x520")
             win.transient(self.root)
             win.grab_set()
             win.resizable(False, False)
-            tk.Label(win, text="Hymnix 1.1.0", bg=THEME["bg"], fg=THEME["text"],
+            tk.Label(win, text="Hymnix %s" % app_version(), bg=THEME["bg"], fg=THEME["text"],
                      font=(UI_FONT, 22, "bold")).pack(anchor="w", padx=28, pady=(26, 2))
             tk.Label(win, text=T("本地 AI 网关 · 多语言 · 用量可见", "Local AI gateway · multilingual"),
                      bg=THEME["bg"], fg=THEME["text_muted"],
@@ -5178,6 +5916,16 @@ class HuimengAIClient:
         return box
 
     def build_trace_tab(self, parent):
+        self._term_view = None
+        if "--no-term-live" not in sys.argv:
+            try:
+                from pages_terminal_live import build_terminal_page
+                self._term_view = build_terminal_page(self, parent)
+                if self._term_view is not None:
+                    self._wire_terminal_live()
+                    return
+            except Exception:
+                self._term_view = None
         self._section_header(parent, T("终端", "Terminal"), "console")
         outer = tk.Frame(parent, bg=self.C_BG, highlightthickness=1,
                          highlightbackground=self.C_LINE2)
@@ -5212,7 +5960,6 @@ class HuimengAIClient:
         self._console_chip(left, "PROC", self.trace_tunnel_pid, self.C_DIM).pack(side="left", padx=(14, 0))
         btns = tk.Frame(stat, bg=self.C_PANEL)
         btns.pack(side="right", padx=(0, 8), pady=6)
-        self._cbtn(btns, "SHARE", self.show_share_dialog).pack(side="left", padx=3)
         self._cbtn(btns, "COPY", self.copy_trace_tunnel_url).pack(side="left", padx=3)
         self._cbtn(btns, "OPEN", self.open_trace_tunnel_url).pack(side="left", padx=3)
         self._cbtn(btns, "LINK", self.toggle_host_tunnel, accent=True).pack(side="left", padx=(3, 0))
@@ -5325,7 +6072,7 @@ class HuimengAIClient:
         tk.Label(foot, textvariable=self.trace_hint, bg=self.C_BG, fg=self.C_ACC,
                  font=("Consolas", 9), anchor="w").pack(fill="x")
         self.trace_hint.set(
-            T("命令: help · status · models · model <名称> · tunnel on|off · quota <n> · service · export · ps", "commands: help · status · models · model <name> · tunnel on|off · quota <n> · service · export · ps"))
+            "命令: help · status · models · model <名称> · tunnel on|off · quota <n> · service · export · ps")
 
         self._reset_trace_model_values()
         self._sync_trace_model_label()
@@ -5389,9 +6136,7 @@ class HuimengAIClient:
     def _refresh_trace_tunnel(self):
         try:
             state = HOST.get("tunnel_state") or ("online" if HOST.get("url") else "未启动")
-            _raw = {"在线": "up", "未启动": "off", "连接中": "starting"}.get(state, state)
-            _map = {"up": T("在线", "online"), "starting": T("连接中", "connecting"), "off": T("未启动", "not started")}
-            self.trace_tunnel_status.set(_map.get(_raw, T(state, state)))
+            self.trace_tunnel_status.set({"up": T("在线", "online"), "starting": T("连接中", "starting"), "off": T("未启动", "not started")}.get(state, state))
             self.trace_tunnel_url.set(HOST.get("url") or "未分配")
             proc=getattr(self, "_host_tun", None)
             self.trace_tunnel_pid.set("PID %s" % (getattr(proc, "pid", "-") if proc else "-"))
@@ -5684,8 +6429,193 @@ class HuimengAIClient:
         except Exception:
             pass
 
+    def _wire_terminal_live(self):
+        self.trace_cmd = tk.StringVar()
+        self.trace_clock = tk.StringVar(value="--:--:--")
+        self.trace_tunnel_status = tk.StringVar(value=T("未启动", "not started"))
+        self.trace_tunnel_url = tk.StringVar(value="未分配")
+        self.trace_tunnel_pid = tk.StringVar(value="PID -")
+        self.trace_tun_log_shown = False
+        self.trace_tunnel_log = tk.Label(self._term_view.widget(), text="", height=1)
+        try:
+            self.trace_text = getattr(self._term_view, "_text", self._term_view.widget())
+        except Exception:
+            self.trace_text = None
+        self._term_view.on_submit(self._terminal_live_submit)
+        self._term_view.set_chips([("LINK", "OK"), ("TUN", "SYS"), ("PROC", "SYS")])
+        cfg = self._term_view.set_config_line(self._term_view.widget())
+        try:
+            for _child in cfg.winfo_children():
+                if isinstance(_child, tk.Label) and "MODEL" in str(_child.cget("text")) and "APPLY" in str(_child.cget("text")):
+                    _child.pack_forget()
+        except Exception:
+            pass
+        tk.Label(cfg, text="MODEL", bg="#05080E", fg="#4E7C93", font=("Consolas", 9)).pack(side="left", padx=(34, 6), pady=6)
+        _share_model = self.config.get("share_model") or self.current_model or self.config.get("last_model") or ""
+        self.trace_share_model = tk.StringVar(value=str(_share_model))
+        self.trace_model_menu = tk.Menu(cfg, tearoff=0, bg="#05080E", fg="#9BE8FF")
+        self.trace_model_mb = tk.Menubutton(cfg, text=" —  v", menu=self.trace_model_menu, bg="#05080E", fg="#9BE8FF", relief="flat", bd=0, padx=8)
+        self.trace_model_mb.pack(side="left")
+        self._sync_trace_model_label()
+        self.trace_share_model.trace_add("write", lambda *a: self._sync_trace_model_label())
+        try:
+            _models = list(self.model_combo.cget("values") or [])
+            if not _models and self.current_model:
+                _models = [self.current_model]
+            self._set_trace_model_values(_models)
+        except Exception:
+            self._sync_trace_model_label()
+        self._cbtn(cfg, "APPLY", self.apply_share_model).pack(side="left", padx=6)
+        self.trace_billing = tk.BooleanVar(value=bool(self.config.get("billing_enabled", True)))
+        tk.Checkbutton(cfg, text="BILL", variable=self.trace_billing, command=self.apply_billing, bg="#05080E", fg="#4E7C93", selectcolor="#05080E", activebackground="#05080E").pack(side="left", padx=(14, 0))
+        tk.Label(cfg, text="QUOTA", bg="#05080E", fg="#4E7C93", font=("Consolas", 9)).pack(side="left", padx=(14, 6))
+        self.trace_quota = tk.StringVar(value=str(self.config.get("daily_quota_tokens", 0) or 0))
+        tk.Entry(cfg, textvariable=self.trace_quota, width=9, bg="#05080E", fg="#9BE8FF", insertbackground="#21A0C9", relief="flat").pack(side="left", padx=(0, 6))
+        self._cbtn(cfg, "SAVE", self.apply_quota).pack(side="left")
+        try:
+            self._term_view._text.configure(height=6)
+        except Exception:
+            pass
+        self._term_probe_widgets = {
+            "config": cfg,
+            "parent": self._term_view.widget(),
+            "log": getattr(self._term_view, "_widgets", {}).get("log"),
+            "text": getattr(self._term_view, "_text", None),
+            "copy": getattr(self._term_view, "_copy_button", None),
+            "clear": getattr(self._term_view, "_clear_button", None),
+            "telemetry": getattr(self._term_view, "_telemetry", None),
+            "command": getattr(self._term_view, "_entry", None),
+            "footer": getattr(self._term_view, "_widgets", {}).get("footer"),
+        }
+        try:
+            _root = self.root
+            _root.update_idletasks()
+            _root.deiconify()
+            _root.update()
+            _parent = getattr(self, "_term_probe_widgets", {}).get("parent")
+            if _parent is not None:
+                _parent.update_idletasks()
+                _parts_h = []
+                for _key in ("topbar", "chips", "config", "log", "telemetry", "command", "footer"):
+                    _w = getattr(self._term_view, "_widgets", {}).get(_key)
+                    if _w is not None:
+                        _parts_h.append(_w.winfo_reqheight())
+                _avail = max(1, _parent.winfo_height() - sum(_parts_h) - 12)
+                _rows = max(6, min(40, int(_avail / 18)))
+                _text = getattr(self._term_view, "_text", None)
+                if _text is not None:
+                    _text.configure(height=_rows)
+            _geom = []
+            for _name, _widget in self._term_probe_widgets.items():
+                if _widget is not None and _widget.winfo_exists():
+                    _geom.append("%s mapped=%s rooty=%s rootx=%s w=%s" % (_name, _widget.winfo_ismapped(), _widget.winfo_rooty(), _widget.winfo_rootx(), _widget.winfo_width()))
+            print("TERM PROBE %s" % " ; ".join(_geom), flush=True)
+            print("TERM SIZE root=%sx%s visible=%sx%s" % (_root.winfo_width(), _root.winfo_height(), _root.winfo_screenwidth(), _root.winfo_screenheight()), flush=True)
+        except Exception:
+            pass
+        self._term_resize_job = None
+        def _resize_terminal(_event=None):
+            try:
+                if self._term_resize_job:
+                    self.root.after_cancel(self._term_resize_job)
+            except Exception:
+                pass
+            def _apply_resize():
+                try:
+                    parent = getattr(self, "_term_probe_widgets", {}).get("parent")
+                    text = getattr(self._term_view, "_text", None)
+                    widgets = getattr(self._term_view, "_widgets", {})
+                    if parent is None or text is None:
+                        return
+                    parent.update_idletasks()
+                    view = self._term_view.widget()
+                    top = view.winfo_toplevel()
+                    fixed_keys = ("topbar", "chips", "config", "telemetry", "command", "footer")
+                    fixed_parts = [(k, int(widgets[k].winfo_reqheight())) for k in fixed_keys if widgets.get(k) is not None]
+                    fixed_sum = sum(h for _k, h in fixed_parts)
+                    avail_h = min(view.winfo_height(), view.master.winfo_height(), top.winfo_height())
+                    rows = max(6, min(40, int(max(0, avail_h - fixed_sum - 12) / 18)))
+                    iterations = 0
+                    for _ in range(5):
+                        iterations += 1
+                        text.configure(height=rows)
+                        top.update_idletasks()
+                        footer = widgets.get("footer")
+                        overflow = (footer.winfo_rooty() + footer.winfo_height()) - (top.winfo_rooty() + top.winfo_height() - 4)
+                        if overflow <= 0 or rows <= 6:
+                            break
+                        rows = max(6, rows - ((int(overflow) + 17) // 18))
+                    text.configure(height=rows)
+                    print("TERM LOOP footer_bottom=%s top_bottom=%s rows=%s iterations=%s fixed_sum=%s" % (footer.winfo_rooty() + footer.winfo_height(), top.winfo_rooty() + top.winfo_height(), rows, iterations, fixed_sum), flush=True)
+                except Exception:
+                    pass
+            self._term_resize_job = self.root.after(100, _apply_resize)
+        try:
+            getattr(self._term_view, "widget", lambda: None)().bind("<Configure>", _resize_terminal, add="+")
+            self.root.after(250, _resize_terminal)
+        except Exception:
+            pass
+        try:
+            from terminal_commands import COMMANDS
+            self._term_view.set_completions(list(COMMANDS))
+        except Exception:
+            pass
+        self._trace_clock_job = None
+        def tick():
+            if getattr(self, "_term_view", None) is None: return
+            try:
+                self._term_view.set_topbar(clock_text=time.strftime("%H:%M:%S"), signal=1)
+                status_var = getattr(self, "trace_tunnel_status", "未启动")
+                url_var = getattr(self, "trace_tunnel_url", "未分配")
+                pid_var = getattr(self, "trace_tunnel_pid", "PID -")
+                status = status_var.get() if hasattr(status_var, "get") else str(status_var)
+                url = url_var.get() if hasattr(url_var, "get") else str(url_var)
+                pid = pid_var.get() if hasattr(pid_var, "get") else str(pid_var)
+                self._term_view.set_chips([("LINK " + status, "OK" if "在线" in status or "运行" in status else "SYS"), ("TUN " + url, "PATH"), ("PROC " + pid, "WARN")])
+                self._term_view.set_telemetry(log_count=getattr(self, "_log_lines", 0))
+                self._trace_clock_job = self.root.after(1000, tick)
+            except Exception:
+                self._trace_clock_job = None
+        tick()
+
+    def _shutdown_app(self):
+        try:
+            if getattr(self, "_term_view", None) is not None and hasattr(self._term_view, "stop"):
+                self._term_view.stop()
+        except Exception:
+            pass
+        for name in ("_term_resize_job", "_trace_clock_job"):
+            try:
+                job = getattr(self, name, None)
+                if job is not None:
+                    self.root.after_cancel(job)
+                    setattr(self, name, None)
+            except Exception:
+                pass
+        self.root.destroy()
+
+    def _terminal_live_submit(self, raw):
+        self.trace_cmd.set(raw)
+        self.run_trace_command()
+
+    def _trace_append(self, level, text, ts=None):
+        view = getattr(self, "_term_view", None)
+        if view is not None:
+            mapped = {"user":"REQ", "assistant":"OK", "err":"ERR", "error":"ERR", "server":"PATH", "tool":"WARN", "stats":"OK"}.get(str(level).lower(), "SYS")
+            try:
+                raw = str(text).rstrip("\n")
+                import re as _re
+                if _re.match(r"^\d{2}:\d{2}:\d{2}\.\d{3}\s+[A-Za-z]+\s+·\s+", raw):
+                    return view.append("", raw, ts)
+                return view.append(mapped, raw, ts)
+            except Exception: pass
+        return self._trace_append_fallback(text, level)
+
     def _tterm(self, text, tag="system"):
-        """写入终端日志：时间戳压暗、级别做彩色小标签，正文按 tag 着色。"""
+        return self._trace_append(tag, text)
+
+    def _trace_append_fallback(self, text, tag="system"):
+        """写入旧终端 Text fallback。"""
         try:
             import re as _re
             self.trace_text.config(state=tk.NORMAL)
@@ -5712,6 +6642,10 @@ class HuimengAIClient:
                 pass
 
     def clear_trace(self):
+        if getattr(self, "_term_view", None) is not None:
+            try: self._term_view.clear(); self._log_lines = 0
+            except Exception: pass
+            return
         try:
             self.trace_text.config(state=tk.NORMAL)
             self.trace_text.delete("1.0", tk.END)
@@ -5720,6 +6654,10 @@ class HuimengAIClient:
             pass
 
     def copy_trace(self):
+        if getattr(self, "_term_view", None) is not None:
+            try: self._term_view.copy_all()
+            except Exception: pass
+            return
         try:
             text = self.trace_text.get("1.0", tk.END).strip()
             self.root.clipboard_clear()
@@ -5755,9 +6693,9 @@ class HuimengAIClient:
         ttk.Label(bar2, text=T("关键词", "Keyword"), style="BgMuted.TLabel").pack(side="left", padx=(10, 4))
         self.mon_kw_var = tk.StringVar(value="")
         ttk.Entry(bar2, textvariable=self.mon_kw_var, width=18).pack(side="left")
-        ttk.Button(bar2, text=T("清理历史…", "Clean history..."), style="Ghost.TButton",
+        ttk.Button(bar2, text=T("清理历史…", "Clean up history..."), style="Ghost.TButton",
                    command=self.open_cleanup_dialog).pack(side="right")
-        send_btn = ttk.Button(bar2, text=T("给客户端发消息（暂停）", "Message a client (paused)"), style="Ghost.TButton")
+        send_btn = ttk.Button(bar2, text=T("给客户端发消息（暂停）", "Send message to clients (paused)"), style="Ghost.TButton")
         send_btn.state(["disabled"])
         send_btn.pack(side="right", padx=(0, 8))
 
@@ -5777,7 +6715,7 @@ class HuimengAIClient:
         right.pack(side="left", fill="both", expand=True, padx=(12, 0))
         ttk.Label(right, text=T("对话记录（点一条看完整内容）", "Conversations (click a row for details)"), style="SideCaption.TLabel").pack(anchor="w", pady=(0, 4))
         cols = ("time", "ip", "model", "ms", "q")
-        heads = (T("时间", "Time"), T("来源", "Source"), T("模型", "Model"), T("耗时", "Latency"), T("用户说了什么", "User said"))
+        heads = (T("时间", "Time"), T("来源", "Source"), T("模型", "Model"), T("耗时", "Duration"), T("用户说了什么", "User message"))
         widths = (70, 140, 100, 70, 420)
         self.mon_tree = ttk.Treeview(right, columns=cols, show="headings", height=11)
         for c, h, w in zip(cols, heads, widths):
@@ -5790,7 +6728,7 @@ class HuimengAIClient:
                                                     bg=THEME["input_bg"], fg=THEME["text"],
                                                     font=(UI_FONT, 9), relief="flat", padx=8, pady=6)
         self.mon_detail.pack(fill="both", expand=False, pady=(6, 0))
-        self.mon_detail.insert("1.0", T("选中上面一条记录，这里显示完整输入（含系统提示词）和回复。", "Select a row above to see the full input (with system prompt) and the reply."))
+        self.mon_detail.insert("1.0", T("选中上面一条记录，这里显示完整输入（含系统提示词）和回复。", "Select a record above to see the full input (including the system prompt) and reply here."))
         self.mon_detail.config(state="disabled")
         self._mon_records = []
         self.root.after(2200, self.refresh_monitor)
@@ -5888,7 +6826,7 @@ class HuimengAIClient:
                     txt.append("   “%s”" % c["last_prompt"][:40])
                 txt.append("────────────────")
             if not txt:
-                txt = [T("还没有客户端连接。", "No clients connected yet."), "", T("把公网地址和密钥发给朋友，", "Send the public address and key to a friend;"), T("他连上来之后这里会出现。", "their connection will show up here.")]
+                txt = ["还没有客户端连接。", "", "把公网地址和密钥发给朋友，", "他连上来之后这里会出现。"]
             self.mon_clients.config(state="normal")
             self.mon_clients.delete("1.0", "end")
             self.mon_clients.insert("1.0", chr(10).join(txt))
@@ -5926,7 +6864,7 @@ class HuimengAIClient:
                 kids = self.mon_tree.get_children()
                 if kids:
                     self.mon_tree.selection_set(kids[keep])
-            self.mon_url_var.set("公网地址：%s" % (HOST.get("url") or "建立中…"))
+            self.mon_url_var.set((T("公网地址：%s", "Public address: %s")) % (HOST.get("url") or T("建立中…", "allocating...")))
         except Exception as e:
             try:
                 self.mon_status_var.set("读取监控失败：%s" % e)
@@ -6088,120 +7026,6 @@ class HuimengAIClient:
         self.queue_message("system", "🔄 正在重建公网隧道…")
         self.start_host_tunnel()
 
-    def show_share_dialog(self):
-        """发给朋友的连接信息：公网地址 + 连接密钥，可查看 / 复制 / 自定义 / 重新生成"""
-        try:
-            import secrets as _secrets
-            import gateway_core as _gw
-        except Exception:
-            _gw = None
-            import secrets as _secrets
-
-        win = tk.Toplevel(self.root)
-        win.title(T("发给朋友的连接信息", "Connection info for a friend"))
-        try:
-            win.configure(bg=THEME["bg"])
-        except Exception:
-            pass
-        win.transient(self.root)
-        try:
-            win.geometry("760x400")
-            win.minsize(700, 380)
-        except Exception:
-            pass
-        body = ttk.Frame(win, padding=18)
-        body.pack(fill="both", expand=True)
-
-        ttk.Label(body, wraplength=700, justify="left",
-                  text=T("把下面这段发给朋友，他装 Hymnix Client 后粘贴即可连上。",
-                         "Send the block below to a friend; paste it into Hymnix Client to connect."),
-                  style="BgMuted.TLabel").pack(anchor="w", fill="x")
-
-        url_var = tk.StringVar(value=(HOST.get("url") or T("（隧道未启动，先点「启动隧道」）", "(tunnel not started yet)")))
-        key_var = tk.StringVar(value=(HOST.get("api_key") or self.config.get("api_key") or ""))
-
-        grid = ttk.Frame(body)
-        grid.pack(fill="x", pady=(12, 0))
-        ttk.Label(grid, text=T("服务器地址", "Server address")).grid(row=0, column=0, sticky="w", pady=4)
-        e_url = ttk.Entry(grid, textvariable=url_var, width=58, state="readonly")
-        e_url.grid(row=0, column=1, sticky="we", padx=(10, 0), pady=4)
-        ttk.Label(grid, text=T("连接密钥", "Connection key")).grid(row=1, column=0, sticky="w", pady=4)
-        e_key = ttk.Entry(grid, textvariable=key_var, width=58, show="*")
-        e_key.grid(row=1, column=1, sticky="we", padx=(10, 0), pady=4)
-        show_var = tk.BooleanVar(value=False)
-
-        def _toggle_show():
-            show_var.set(not show_var.get())
-            e_key.configure(show="" if show_var.get() else "*")
-            btn_show.configure(text=T("隐藏", "Hide") if show_var.get() else T("显示", "Show"))
-
-        btn_show = ttk.Button(grid, text=T("显示", "Show"), style="Ghost.TButton", command=_toggle_show)
-        btn_show.grid(row=1, column=2, padx=(8, 0), pady=4)
-        grid.columnconfigure(1, weight=1)
-
-        def _save_key(new_key):
-            new_key = (new_key or "").strip()
-            if not new_key:
-                messagebox.showwarning(T("无效的密钥", "Invalid key"), T("密钥不能为空。", "The key cannot be empty."), parent=win)
-                return
-            try:
-                if _gw is not None:
-                    _gw.CFG["api_key"] = new_key
-                    _gw.API_KEY = new_key
-                    try:
-                        import json as _json
-                        with open(_gw.CONFIG_PATH, "w", encoding="utf-8") as _f:
-                            _json.dump(_gw.CFG, _f, ensure_ascii=False, indent=2)
-                    except Exception:
-                        pass
-                self.config["api_key"] = new_key
-                HOST["api_key"] = new_key
-                try:
-                    self.config["admin_key"] = self.config.get("admin_key") or (HOST.get("admin_key") or "")
-                except Exception:
-                    pass
-                self.save_config()
-            except Exception as _e:
-                messagebox.showerror(T("保存失败", "Save failed"), str(_e), parent=win)
-                return
-            key_var.set(new_key)
-            self._tterm("  KEY    connection key updated (share the new key)\n", "system")
-            self.queue_message("system", T("🔑 连接密钥已更新，记得把新信息重新发给朋友。",
-                                           "🔑 Connection key updated. Send the new info to your friend."))
-
-        def _copy():
-            text = ("Hymnix 服务器连接信息\n" if LANG.get("cur") == "zh" else "Hymnix server connection info\n")
-            text += T("服务器地址：%s\n连接密钥：%s\n", "Server: %s\nKey: %s\n") % (url_var.get(), key_var.get())
-            self.root.clipboard_clear()
-            self.root.clipboard_append(text)
-            self._tterm("  已在剪贴板：地址 + 密钥\n", "system")
-            self.queue_message("system", T("📋 连接信息已复制（地址 + 密钥），直接发给朋友即可",
-                                           "📋 Connection info copied (address + key)"))
-
-        def _regen():
-            if not messagebox.askyesno(T("重新生成密钥", "Regenerate key"),
-                                       T("旧密钥会立刻失效，已经连上的朋友需要换新的。继续？",
-                                         "The old key stops working immediately. Continue?"), parent=win):
-                return
-            _save_key("Hymnix" + _secrets.token_urlsafe(24))
-
-        bar = ttk.Frame(body)
-        bar.pack(fill="x", pady=(16, 0))
-        ttk.Button(bar, text=T("复制连接信息", "Copy connection info"), style="Accent.TButton",
-                   command=_copy).pack(side="left")
-        ttk.Button(bar, text=T("保存这个密钥", "Save this key"), style="Ghost.TButton",
-                   command=lambda: _save_key(key_var.get())).pack(side="left", padx=8)
-        ttk.Button(bar, text=T("重新生成", "Regenerate"), style="Ghost.TButton",
-                   command=_regen).pack(side="left")
-        ttk.Button(bar, text=T("关闭", "Close"), style="Ghost.TButton",
-                   command=win.destroy).pack(side="right")
-
-        ttk.Label(body, wraplength=700, justify="left",
-                  text=T("朋友端：Hymnix Client → 设置 → 粘贴连接信息 → 保存。",
-                         "On the friend's side: Hymnix Client -> Settings -> Paste connection info -> Save."),
-                  style="BgMuted.TLabel").pack(anchor="w", fill="x", pady=(14, 0))
-        win.after(80, lambda: win.lift())
-
     def copy_host_url(self):
         url = HOST.get("url") or ""
         if not url:
@@ -6358,7 +7182,7 @@ class HuimengAIClient:
                                   font=("Segoe UI Semibold", 17), anchor="center")
         tk.Label(top, text="Hymnix", bg="#FFFFFF", fg="#111827",
                  font=(SIDEBAR_FONT, 14, "bold")).pack(side="left", padx=(10, 0))
-        tk.Label(side, text="1.1.0", bg="#FFFFFF", fg="#98A2B3",
+        tk.Label(side, text=app_version(), bg="#FFFFFF", fg="#98A2B3",
                  font=(SIDEBAR_FONT, 9)).pack(anchor="w", padx=20, pady=(0, 18))
 
         groups = [
@@ -6369,51 +7193,90 @@ class HuimengAIClient:
             ]),
             (T("云端", "CLOUD"), [
                 (T("API 接口", "API"), ""),
+                ("Cloud hub", ""),
             ]),
             (T("扩展", "EXTENSIONS"), [
                 (T("插件", "Plugins"), ""),
+                (T("工具", "Tools"), ""),
+                (T("崩溃报告", "Crash Reports"), ""),
+                (T("历史记录", "History"), ""),
+                (T("会话", "Sessions"), ""),
+            ]),
+            (T("项目", "PROJECT"), [
+                (T("文件", "Files"), ""),
+                (T("差异", "Diff"), ""),
             ]),
             (None, [(T("赞助", "Support"), "")]),
+            (T("安全与用量", "SECURITY & USAGE"), [
+                (T("审批与安全", "Approvals & Safety"), ""),
+                (T("用量与成本", "Usage & Cost"), ""),
+            ]),
+            (T("工具集", "TOOLKIT"), [
+                (T("截图取字", "OCR"), ""),
+            ]),
+            (T("开发者", "DEVELOPER"), [
+                (T("Git 加速", "Git Acceleration"), ""),
+            ]),
         ]
         try:
             import ui_kit as _uk
         except Exception:
             _uk = None
+        nav_scroll = ScrollableFrame(side, width=SIDEBAR_W - 20)
+        nav_scroll.pack(fill="both", expand=True, padx=(4, 12))
+        nav_parent = nav_scroll.inner
+        self.nav_scroll = nav_scroll
         self._nav_rows = []
+        # 侧栏可视高度在启动过程中会变化多次（splash → 正式窗口）：
+        # 画布每次改尺寸后都重新对齐选中项，避免只按初始的小高度算滚动量。
+        try:
+            def _on_nav_resize(_e=None):
+                try:
+                    self.root.after(120, lambda: self._scroll_nav_into_view(
+                        int(getattr(self, "_nav_active", 0) or 0), 3,
+                        getattr(self, "_nav_scroll_seq", 0)))
+                except Exception:
+                    pass
+            nav_scroll.canvas.bind("<Configure>", _on_nav_resize, add="+")
+        except Exception:
+            pass
         idx = 0
         for group, entries in groups:
             if group:
-                tk.Frame(side, bg="#EEF1F6", height=1).pack(fill="x", padx=20, pady=(16, 0))
-                tk.Label(side, text=group, bg="#FFFFFF", fg="#475467",
-                         font=(SIDEBAR_FONT, GROUP_FONT_PT, "bold")).pack(anchor="w", padx=22, pady=(12, 8))
+                tk.Frame(nav_parent, bg="#EEF1F6", height=1).pack(fill="x", padx=16, pady=(12, 0))
+                tk.Label(nav_parent, text=group, bg="#FFFFFF", fg="#475467",
+                         font=(SIDEBAR_FONT, GROUP_FONT_PT, "bold")).pack(anchor="w", padx=18, pady=(10, 6))
             for name, glyph in entries:
                 if _uk is not None:
-                    nav = _uk.NavItem(side, text=name, active=(idx == 0),
+                    nav = _uk.NavItem(nav_parent, text=name, active=(idx == 0),
                                       on_click=lambda i=idx: self.select_nav(i),
-                                      width=SIDEBAR_W - 24, height=NAV_HEIGHT,
+                                      width=SIDEBAR_W - 36, height=NAV_HEIGHT,
                                       font=(SIDEBAR_FONT, NAV_FONT_PT))
-                    nav.pack(fill="x", padx=12, pady=4)
+                    nav.pack(fill="x", padx=8, pady=3)
                     self._nav_rows.append(nav)
                 else:
-                    row = tk.Frame(side, bg="#FFFFFF", cursor="hand2")
-                    row.pack(fill="x", padx=12, pady=3)
+                    row = tk.Frame(nav_parent, bg="#FFFFFF", cursor="hand2")
+                    row.pack(fill="x", padx=8, pady=2)
                     bar = tk.Frame(row, bg="#FFFFFF", width=3)
                     bar.pack(side="left", fill="y")
                     lab = tk.Label(row, text=name, anchor="w",
                                    bg="#FFFFFF", fg="#475467", font=(SIDEBAR_FONT, NAV_FONT_PT), cursor="hand2")
-                    lab.pack(side="left", fill="x", expand=True, ipady=10)
+                    lab.pack(side="left", fill="x", expand=True, ipady=8)
                     self._nav_rows.append((row, bar, lab))
                     for w in (row, lab):
                         w.bind("<Button-1>", lambda e, i=idx: self.select_nav(i))
                 idx += 1
         foot = tk.Frame(side, bg="#FFFFFF")
-        foot.pack(side="bottom", fill="x", pady=(14, 20), padx=20)
+        foot.pack(side="bottom", fill="x", pady=(10, 14), padx=20)
         self.side_status = tk.Label(foot, text="", anchor="w", justify="left", bg="#FFFFFF",
                                     fg="#667085", font=(SMALL_CJK, 10), pady=4)
         self.side_status.pack(fill="x")
 
-        for i in range(6):
-            self.root.bind("<Control-Key-%d>" % (i + 1), lambda e, x=i: self.select_nav(x))
+        # Ctrl+1..9 对应前 9 页；第 10 页用 Ctrl+0；第 11 页（差异，索引 10）不设快捷键。
+        # 注意：Tk 没有 "Key-10" 这种 keysym，越界 register 会抛 TclError 直接让启动失败。
+        for i in range(10):
+            keysym = "0" if i == 9 else str(i + 1)
+            self.root.bind("<Control-Key-%s>" % keysym, lambda e, x=i: self.select_nav(x))
         self.root.bind("<Control-Return>", lambda e: self.send_message())
         self.select_nav(0)
 
@@ -6429,8 +7292,45 @@ class HuimengAIClient:
         except Exception:
             pass
 
+    def _scroll_nav_into_view(self, idx, attempt=0, seq=None):
+        """让侧栏选中项滚动到可视区；布局未就绪时自动重试（最多 12 次 × 100ms）。
+
+        seq 是“最后一次 select_nav”的编号：任何更早的滚动请求在轮询时会自行放弃，
+        避免启动阶段排队的旧请求（例如回到首页）把用户刚切到的页面又滚走。
+        """
+        try:
+            if seq is not None and seq != getattr(self, "_nav_scroll_seq", 0):
+                return
+            if idx < 0 or idx >= len(self._nav_rows):
+                return
+            nav = self._nav_rows[idx]
+            widget = nav if hasattr(nav, "winfo_y") else nav[0]
+            canvas = self.nav_scroll.canvas
+            inner = self.nav_scroll.inner
+            canvas.update_idletasks()
+            bbox = canvas.bbox("all")
+            view_h = canvas.winfo_height()
+            total = (bbox[3] - bbox[1]) if bbox else 0
+            # 布局还没完成 / 无需滚动时先重试，避免读到错误的坐标
+            if not bbox or view_h <= 1 or total <= view_h:
+                if attempt < 10:
+                    self.root.after(100, lambda i=idx, a=attempt + 1, s=seq: self._scroll_nav_into_view(i, a, s))
+                return
+            y = float(widget.winfo_y())
+            target = y - view_h / 2.0
+            target = max(0.0, min(float(total), float(target)))
+            canvas.yview_moveto(max(0.0, min(1.0, target / float(total))))
+            self.root.update_idletasks()
+            # 布局可能在首次滚动后又变化（窗口从 splash 换成正式尺寸），补两轮回算
+            if attempt < 3:
+                self.root.after(160, lambda i=idx, a=attempt + 1, s=seq: self._scroll_nav_into_view(i, a, s))
+        except Exception:
+            pass
+
     def select_nav(self, idx):
         try:
+            if getattr(self, "_hxcrash", None):
+                self._hxcrash.mark_page(str(idx))
             self._ensure_page(idx)
             self.notebook.select(idx)
             self._nav_active = idx
@@ -6451,9 +7351,9 @@ class HuimengAIClient:
                     bar.configure(bg="#2563EB" if active else bg)
             self._ui_click("tab")
             try:
-                if LANG.get("cur") == "en":
-                    page = self.notebook.nametowidget(self.notebook.select())
-                    apply_zh2en(page, {})
+                self._nav_scroll_seq = getattr(self, "_nav_scroll_seq", 0) + 1
+                _seq = self._nav_scroll_seq
+                self.root.after(80, lambda i=idx, s=_seq: self._scroll_nav_into_view(i, 0, s))
             except Exception:
                 pass
         except Exception:
@@ -6592,18 +7492,18 @@ class HuimengAIClient:
     # ==================== 监控筛选 / 历史清理 ====================
     def _mon_match(self, rec):
         try:
-            scope = _mon_key(self.mon_time_var.get())
-            if scope == "今天":
+            scope = self.mon_time_var.get()
+            if scope in ("今天", "Today"):
                 if not str(rec.get("t", "")).startswith(datetime.now().strftime("%Y-%m-%d")):
                     return False
-            elif scope == "最近1小时":
+            elif scope in ("最近1小时", "Last hour"):
                 try:
                     if (datetime.now() - datetime.fromisoformat(rec.get("t"))).total_seconds() > 3600:
                         return False
                 except Exception:
                     return False
-            ip = _mon_key(self.mon_ip_var.get())
-            if ip and ip != "全部IP" and str(rec.get("ip", "")) != ip:
+            ip = self.mon_ip_var.get()
+            if ip and ip not in ("全部IP", "All IPs") and str(rec.get("ip", "")) != ip:
                 return False
             kw = self.mon_kw_var.get().strip().lower()
             if kw:
@@ -7011,7 +7911,119 @@ class HuimengAIClient:
                   style="BgMuted.TLabel").pack(anchor="w", pady=(22, 0))
 
     # ==================== 插件 ====================
+    def build_crash_tab(self, parent):
+        try:
+            from pages_crash_live import build_crash_page
+            build_crash_page(self, parent)
+        except Exception:
+            ttk.Label(parent, text=T("崩溃报告暂不可用", "Crash reports unavailable")).pack(padx=20, pady=20)
+
+    def build_history_tab(self, parent):
+        try:
+            from pages_history_live import build_history_page
+            build_history_page(self, parent)
+        except Exception:
+            ttk.Label(parent, text=T("历史记录暂不可用", "History unavailable")).pack(padx=20, pady=20)
+
+    def build_files_tab(self, parent):
+        try:
+            from pages_files_live import build_files_page
+            build_files_page(self, parent)
+        except Exception:
+            ttk.Label(parent, text=T("文件暂不可用", "Files unavailable")).pack(padx=20, pady=20)
+
+    def build_diff_tab(self, parent):
+        try:
+            from pages_diff_live import build_diff_page
+            build_diff_page(self, parent)
+        except Exception:
+            ttk.Label(parent, text=T("差异暂不可用", "Diff unavailable")).pack(padx=20, pady=20)
+
+    def build_approvals_tab(self, parent):
+        try:
+            from pages_approvals_live import build_approvals_page
+            build_approvals_page(self, parent)
+        except Exception:
+            ttk.Label(parent, text=T("模块未就绪", "Module not ready")).pack(padx=20, pady=20)
+
+    def build_sessions_tab(self, parent):
+        try:
+            from pages_sessions_live import build_sessions_page
+            build_sessions_page(self, parent)
+        except Exception:
+            ttk.Label(parent, text=T("多会话模块未就绪", "Sessions module not ready")).pack(padx=20, pady=20)
+
+    def build_git_tab(self, parent):
+        try:
+            from pages_git_live import build_git_page
+            build_git_page(self, parent)
+        except Exception:
+            ttk.Label(parent, text=T("Git 加速模块未就绪", "Git acceleration module not ready")).pack(padx=20, pady=20)
+
+    def build_cloudhub_tab(self, parent):
+        try:
+            from pages_cloudhub_live import build_cloudhub_page
+            build_cloudhub_page(self, parent)
+        except Exception:
+            ttk.Label(parent, text="Cloud hub 模块未就绪 / Cloud hub module not ready").pack(padx=20, pady=20)
+
+    def _poll_ocr_result(self, parent):
+        """Backfill OCR result Text into chat input without changing OCR page code."""
+        try:
+            texts = []
+            def walk(widget):
+                if isinstance(widget, tk.Text):
+                    value = widget.get("1.0", "end-1c").strip()
+                    if value:
+                        texts.append(value)
+                for child in widget.winfo_children():
+                    walk(child)
+            walk(parent)
+            value = texts[-1] if texts else ""
+            previous = getattr(self, "_ocr_last_text", "")
+            if value and value != previous:
+                self._ocr_last_text = value
+                if not value.startswith(("错误：", "识别失败：", "Error:", "Recognition failed:")):
+                    self.input_var.set(value)
+                    self.select_nav(0)
+                    return
+        except Exception:
+            pass
+        try:
+            self.root.after(250, lambda: self._poll_ocr_result(parent))
+        except Exception:
+            pass
+
+    def build_ocr_tab(self, parent):
+        try:
+            from pages_ocr_live import build_ocr_page
+            build_ocr_page(self, parent)
+            self._ocr_last_text = ""
+            self.root.after(250, lambda: self._poll_ocr_result(parent))
+        except Exception:
+            ttk.Label(parent, text=T("截图取字模块未就绪", "OCR module unavailable")).pack(padx=20, pady=20)
+
+    def build_usage_tab(self, parent):
+        try:
+            from pages_usage_live import build_usage_page
+            build_usage_page(self, parent)
+        except Exception:
+            ttk.Label(parent, text=T("模块未就绪", "Module not ready")).pack(padx=20, pady=20)
+
+    def build_tools_tab(self, parent):
+        try:
+            from pages_tools_live import build_tools_page
+            build_tools_page(self, parent)
+        except Exception:
+            ttk.Label(parent, text=T("工具内核未就绪", "Tools unavailable")).pack(padx=20, pady=20)
+
     def build_plugins_tab(self, parent):
+        try:
+            from pages_plugins_live import build_plugins_page as _live
+            _live(self, parent)
+            return
+        except Exception:
+            pass
         try:
             from pages_modern import build_plugins_page
             build_plugins_page(self, parent)
@@ -7086,7 +8098,7 @@ class HuimengAIClient:
     # ==================== 本次更新 ====================
     def show_update_notes(self):
         dlg = tk.Toplevel(self.root)
-        dlg.title("本次更新 · Hymnix 1.1.0")
+        dlg.title("本次更新 · Hymnix %s" % app_version())
         dlg.geometry("760x620")
         dlg.transient(self.root)
         Theme.apply(dlg)
@@ -7094,34 +8106,10 @@ class HuimengAIClient:
                                         bg=THEME["input_bg"], fg=THEME["text"],
                                         relief="flat", padx=16, pady=14)
         txt.pack(fill="both", expand=True, padx=12, pady=12)
-        txt.insert("1.0", """Hymnix 1.1.0 · 本次更新
-================================================
-
-【模型升级】
-· 主力模型从 qwen2.5:7b 换成 qwen3:8b：中文表达更稳、工具调用更准、抗长上下文能力更好。
-· 所有带 tools 的请求自动路由到 qwen3:8b，并关闭思考模式，响应更快。
-· 普通聊天同样走 qwen3:8b，不再出现“嘴上说 7B”的错乱。
-
-【以前的痛点 → 现在怎么解决】
-1. 工具调用调不动 → 网关把 OpenAI 兼容请求转成 Ollama 原生格式，tool_calls 正常返回；
-   客户端内置工具执行循环（时间/计算/读文件/列目录/系统信息），最多 4 轮。
-2. 模型不知道现在几点 → 每条请求自动注入北京时间（日期 + 星期）。
-3. 看不到朋友那边的状态 → 终端实时打印 SERVER 轨迹（含思考、工具、回复、耗时、能耗）。
-4. 历史记录断了/看不清 → 启动时全量加载历史；服务端监控支持按时间、IP、关键词筛选。
-5. 不知道一轮对话花了多少电和算力 → 每条记录附带 GPU 利用率、显存、功耗、耗电 Wh、电费。
-6. 模型瞎扯日期/身份 → 系统提示词修正，时间显式注入。
-
-【新增】
-· 服务端可向指定客户端推送消息（服务端 → 客户端），显示在终端。
-· 模型管理界面重做：搜索、分类、已安装/可下载、进度、取消、删除。
-· API 模型接口板块（设计稿）：DeepSeek / OpenAI / Gemini 接入界面。
-· 插件板块：工具调用、服务端消息、联网搜索（占位）、长期记忆（占位）。
-· 报错统一红色，历史记录灰色，其他设备消息橙色。
-
-【界面】
-· 全软件品牌统一为 Hymnix。
-· 问题反馈：GitHub Issues
-""")
+        _entry = CHANGELOG[0]
+        _lines = ["Hymnix %s · 本次更新" % _entry["version"], "=" * 48, "", _entry["title"], ""]
+        _lines += ["· " + _it for _it in _entry["items"]]
+        txt.insert("1.0", "\n".join(_lines))
         txt.config(state="disabled")
         ttk.Button(dlg, text="关闭", command=dlg.destroy).pack(pady=(0, 12))
     def open_send_dialog(self):
@@ -7400,13 +8388,23 @@ def splash_close():
 
 def main():
     try:
+        from hxcore import timing as _hxt_main
+        _hxt_main.install()
+        _hxt_main.mark("import")
+    except Exception:
+        _hxt_main = None
+    try:
         import pyi_splash
         pyi_splash.update_text("正在解压运行环境…")
     except Exception:
         pass
     selftest = "--selftest" in sys.argv
     _enable_dpi_awareness()
+    if _hxt_main:
+        _hxt_main.mark("dpi")
     root = tk.Tk()
+    if _hxt_main:
+        _hxt_main.mark("tk_created")
     try:
         root.tk.call("tk", "scaling", _DPI / 72.0 * UI_SCALE_COMPENSATION)
     except Exception:
@@ -7414,6 +8412,8 @@ def main():
     root.withdraw()
     try:
         _build_splash(root)
+        if _hxt_main:
+            _hxt_main.mark("splash")
         splash_update(8, "正在加载界面…")
     except Exception:
         pass
@@ -7422,7 +8422,96 @@ def main():
         pyi_splash.close()
     except Exception:
         pass
+    _shot_size = None
+    if "--shot-size" in sys.argv:
+        try:
+            _shot_size = sys.argv[sys.argv.index("--shot-size") + 1]
+            if not __import__("re").fullmatch(r"\d+x\d+", _shot_size):
+                _shot_size = None
+        except Exception:
+            _shot_size = None
     app = HuimengAIClient(root)
+    root.protocol("WM_DELETE_WINDOW", app._shutdown_app)
+    if "--shot-demo" in sys.argv:
+        try:
+            app.conversation_history = [{"role":"user","content":"请给我一个 Python 示例。"},{"role":"assistant","content":"## 示例说明\n- 使用 `pathlib`\n- 可直接运行\n\n```python\nfrom pathlib import Path\nprint(Path.cwd())\n```\n\n参考 https://python.org"},{"role":"user","content":"再解释长文本换行。"},{"role":"assistant","content":"这是一段较长的演示文本，用于验证 AI 气泡的左对齐、最大宽度以及多行换行效果。 " * 5}]
+            if str((globals().get("LANG") or {}).get("cur") or "zh") != "zh":
+                app.conversation_history = [
+                    {"role": "user", "content": "Give me a short Python example."},
+                    {"role": "assistant", "content": "## Working with paths\n- Uses `pathlib`\n- Runs as-is\n\n```python\nfrom pathlib import Path\nprint(Path.cwd())\n```\n\nDocs: https://python.org"},
+                    {"role": "user", "content": "How does long text wrap in a bubble?"},
+                    {"role": "assistant", "content": "This is a longer demo paragraph used to check left alignment, the maximum bubble width and multi-line wrapping inside the assistant card. " * 3},
+                ]
+            app._session_history_snapshots[app._chat_session_id] = [dict(m) for m in app.conversation_history]
+            app._hide_chat_empty_state()
+            app.root.after_idle(lambda: [app.display_message(m.get("role"), m.get("content")) for m in app.conversation_history])
+            app.root.after(350, lambda: app.chat_text.yview_moveto(0.0))
+        except Exception:
+            pass
+    if _shot_size:
+        root.geometry(_shot_size)
+        root.update_idletasks()
+    if _hxt_main:
+        _hxt_main.mark("app_init")
+        root.after_idle(lambda: _hxt_main.ready())
+    shot_idx = None
+    if "--shot-tab" in sys.argv:
+        try:
+            shot_idx = int(sys.argv[sys.argv.index("--shot-tab") + 1])
+        except Exception:
+            shot_idx = None
+    if "--selftest" in sys.argv:
+        try:
+            for _idx in range(17):
+                app.select_nav(_idx)
+                root.update()
+            root.destroy()
+            print("SELFTEST OK")
+            return
+        except Exception as _exc:
+            try:
+                root.destroy()
+            except Exception:
+                pass
+            print("SELFTEST FAIL: %s" % _exc, flush=True)
+            raise SystemExit(1)
+    if shot_idx is not None:
+        try:
+            if 0 <= shot_idx <= 16:
+                app.select_nav(shot_idx)
+            root.update()
+            if shot_idx == 1 and getattr(app, "_term_view", None) is not None:
+                _root = app._term_view.widget().winfo_toplevel()
+                _root.update_idletasks()
+                _root.update()
+                _parts = []
+                for _name, _widget in getattr(app, "_term_probe_widgets", {}).items():
+                    if _widget is not None and _widget.winfo_exists():
+                        _parts.append("%s mapped=%s rooty=%s rootx=%s w=%s" % (_name, _widget.winfo_ismapped(), _widget.winfo_rooty(), _widget.winfo_rootx(), _widget.winfo_width()))
+                print("TERM PROBE %s" % " ; ".join(_parts), flush=True)
+                _footer = getattr(app._term_view, "_widgets", {}).get("footer")
+                _telemetry = getattr(app._term_view, "_widgets", {}).get("telemetry")
+                _command = getattr(app._term_view, "_widgets", {}).get("command")
+                _fh = _footer.winfo_height() if _footer is not None else 0
+                _root_bottom = _root.winfo_rooty() + _root.winfo_height()
+                _footer_ok = bool(_footer is not None and _footer.winfo_rooty() + _fh <= _root_bottom - 8)
+                _tel_ok = bool(_telemetry is not None and _telemetry.winfo_ismapped() and _root.winfo_rooty() <= _telemetry.winfo_rooty() < _root_bottom)
+                _cmd_ok = bool(_command is not None and _command.winfo_ismapped() and _root.winfo_rooty() <= _command.winfo_rooty() < _root_bottom)
+                _rows = int(app._term_view._text.cget("height"))
+                _width_ok = all(w is not None and w.winfo_rootx() + w.winfo_width() <= _root.winfo_rootx() + _root.winfo_width() for w in (app._term_view._copy_button, app._term_view._clear_button))
+                print("TERM ASSERT footer_ok=%s telemetry_ok=%s command_ok=%s visible_rows=%s rows_ok=%s buttons_within_root=%s" % (_footer_ok, _tel_ok, _cmd_ok, _rows, _rows >= 6, _width_ok), flush=True)
+                print("TERM SIZE root=%sx%s visible=%sx%s" % (_root.winfo_width(), _root.winfo_height(), _root.winfo_screenwidth(), _root.winfo_screenheight()), flush=True)
+            shot_hold = 900
+            if "--shot-hold" in sys.argv:
+                try:
+                    shot_hold = max(0, int(sys.argv[sys.argv.index("--shot-hold") + 1]))
+                except Exception:
+                    shot_hold = 900
+            print("SHOT READY %d" % shot_idx, flush=True)
+            if shot_hold > 0:
+                root.after(shot_hold, app._shutdown_app)
+        except Exception:
+            pass
     root.mainloop()
 
 

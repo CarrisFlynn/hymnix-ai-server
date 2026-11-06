@@ -1,0 +1,11 @@
+{
+  "id": "hello-world",
+  "name": "Hello World",
+  "version": "1.0.0",
+  "apiVersion": "1",
+  "entry": "main.py",
+  "permissions": [
+    "ui.toast"
+  ],
+  "description": "A minimal greeting plugin."
+}

@@ -6,6 +6,9 @@ trace_debug.log
 dist/
 build/
 *.spec
+# build specs are part of the source tree
+!server/hymnix-server.spec
+!client/hymnix-client.spec
 __pycache__/
 *.pyc
 .env
