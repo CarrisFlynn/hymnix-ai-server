@@ -1,4 +1,6 @@
-﻿# Hymnix AI
+# Hymnix AI
+
+**English** | [简体中文](README.zh-CN.md)
 
 **A local-first AI gateway and Windows desktop console for running, sharing, and operating OpenAI-compatible local models.**
 
@@ -6,7 +8,7 @@ Hymnix connects Ollama-compatible models to a practical desktop workflow: chat, 
 
 ![License](https://img.shields.io/badge/license-AGPL--3.0-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey)
-![Release](https://img.shields.io/badge/release-1.2.0-blueviolet)
+![Release](https://img.shields.io/badge/release-1.2.1-blueviolet)
 ![Python](https://img.shields.io/badge/python-3.11%2B-3776AB)
 
 ## Screenshots
@@ -23,6 +25,14 @@ Hymnix connects Ollama-compatible models to a practical desktop workflow: chat, 
 ![Plugins](docs/images/en/06-plugins.png)
 
 All 17 pages are captured in [docs/images/en](docs/images/en) (chat, terminal, monitor, cloud API, cloud hub, plugins, tools, crash report, history, sessions, files, diff, support, approvals, usage, OCR, git).
+
+## What's new in 1.2.1
+
+- Chinese text no longer turns into mojibake: every streamed reply, tool trace and log line is decoded as UTF-8.
+- The sidebar can no longer open the wrong page: navigation resolves pages by id instead of by position.
+- The terminal keeps its compact 1.2.0 density on high-DPI displays, and the window / taskbar icon is restored.
+- History is read in full, searchable and exportable; terminal traces survive a restart.
+- See [CHANGELOG.md](CHANGELOG.md) / [CHANGELOG.zh-CN.md](CHANGELOG.zh-CN.md).
 
 ## What's new in 1.2.0
 

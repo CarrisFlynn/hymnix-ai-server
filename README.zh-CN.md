@@ -1,4 +1,6 @@
-﻿# Hymnix AI
+# Hymnix AI
+
+[English](README.md) | **简体中文**
 
 **面向本地模型的 AI 网关与 Windows 桌面控制台：兼容 OpenAI 接口，并把对话、运维、工具和安全审批集中在本机。**
 
@@ -20,6 +22,14 @@ Hymnix 将 Ollama 兼容模型接入一套完整的桌面工作流：对话、�
 ![API](docs/images/en/04-api.png)
 ![Cloud Hub](docs/images/en/05-cloudhub.png)
 ![插件](docs/images/en/06-plugins.png)
+
+## 1.2.1 更新
+
+- 中文不再乱码：流式回复、工具轨迹、日志一律按 UTF-8 解码。
+- 侧栏不会再打开错的页面：页面按 id 解析，不再依赖顺序。
+- 终端在高 DPI 屏幕下保持 1.2.0 的紧凑密度，窗口与任务栏图标已恢复。
+- 聊天记录全量读取、可搜索、可导出；终端轨迹重启后仍在。
+- 明细见 [CHANGELOG.zh-CN.md](CHANGELOG.zh-CN.md) / [CHANGELOG.md](CHANGELOG.md)。
 
 ## 功能
 
