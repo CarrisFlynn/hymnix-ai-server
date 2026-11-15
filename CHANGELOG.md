@@ -5,6 +5,31 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/).
 
+## [1.2.1] - 2026-11-15
+
+### Fixed
+
+- **Client replies displayed as mojibake**: responses without a `charset` (notably `text/event-stream`) were decoded as ISO-8859-1. The client now forces UTF-8 for JSON and streamed replies, and every server-side `subprocess` call decodes output as UTF-8 with `errors="replace"`.
+- **Sidebar opening the wrong page**: the navigation list was missing the Models entry, shifting every page after it by one. Navigation is now keyed by page id instead of position, so a label can never open another page.
+- **Missing window and taskbar icon**: icon lookup now falls back to `assets/icon.ico` for both source runs and packaged builds.
+- **Oversized terminal typography**: removed a duplicated font scaling factor that multiplied every size a second time on high-DPI displays, and restored the compact 1.2.0 console metrics and toolbar layout.
+- **Truncated chat history**: history now streams the whole file, keeps chronological order, and supports search plus JSON/Markdown export.
+- **Lost tool and reply trails**: terminal traces are persisted and de-duplicated across restarts.
+- **Updater race on channel switch**: a download started for one channel can no longer be applied after the channel changes; every package is verified before install.
+- **Split data directory**: server data now resolves through a single data root instead of drifting between the bundle and the user profile.
+
+### Added
+
+- Terminal themes (neon / matrix / amber) with ANSI SGR rendering and per-level log filtering.
+- ARM64-aware build matrix with per-architecture guards and automatic `cloudflared` acquisition.
+- Approval-gated tool execution with grant validation, trusted plugin installation and plugin provenance.
+- Request metrics, batch rollback and resilient downloads in the usage and update views.
+- Full five-language coverage across the nine redesigned pages.
+
+### Changed
+
+- Packaging artefacts are versioned and architecture-tagged: `hymnix-client-1.2.1-x64.exe`, `hymnix-server-1.2.1-x64.exe`.
+
 ## [1.2.0] - 2026-11-06
 
 ### Added

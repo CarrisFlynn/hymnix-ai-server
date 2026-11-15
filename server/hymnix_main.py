@@ -24,12 +24,14 @@ try:
 except Exception:
     _hxt = None
 
-DEFAULT_MODEL = "llama3.2:3b"
+DEFAULT_MODEL = ""
 API_BASE = "http://127.0.0.1:11434"
 API_HEADERS = {}
 REMOTE_MODE = False
 ADMIN_KEY = ""
 GATEWAY_HEALTH_URL = ""
+_CF_MIN_BYTES = 8 * 1024 * 1024
+_CF_MAX_BYTES = 200 * 1024 * 1024
 
 
 def _compress_config():
@@ -140,6 +142,16 @@ def apply_remote_settings(cfg):
 _APP_DIR = (os.path.dirname(os.path.abspath(sys.executable))
             if getattr(sys, "frozen", False) else os.path.dirname(os.path.abspath(__file__)))
 _BUNDLE_DIR = getattr(sys, "_MEIPASS", _APP_DIR)
+# Window icon lookup: bundled root first, then per-runtime assets/icon.ico.
+_ICON_CANDIDATES = tuple(dict.fromkeys((
+    os.path.join(_BUNDLE_DIR, "assets", "icon.ico"),
+    os.path.join(_BUNDLE_DIR, "icon.ico"),
+    os.path.join(_APP_DIR, "assets", "icon.ico"),
+    os.path.join(_APP_DIR, "icon.ico"),
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "icon.ico"),
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "icon.ico"),
+    "icon.ico",
+)))
 
 # ==================== 发行版标识 ====================
 APP_NAME = "Hymnix"
@@ -148,14 +160,15 @@ APP_BUILD_DATE = "2026-11-06"
 
 
 def app_version():
-    """当前程序版本：优先读同目录 VERSION 文件（自动更新会改写它）。"""
-    try:
-        with open(os.path.join(_APP_DIR, "VERSION"), "r", encoding="utf-8") as fh:
-            v = fh.read().strip()
-        if v:
-            return v
-    except Exception:
-        pass
+    """当前程序版本：优先读可写目录 VERSION（自动更新会改写），再读打包资源目录。"""
+    for base in dict.fromkeys((_APP_DIR, _BUNDLE_DIR)):
+        try:
+            with open(os.path.join(base, "VERSION"), "r", encoding="utf-8") as fh:
+                v = fh.read().strip()
+            if v:
+                return v
+        except Exception:
+            continue
     return APP_VERSION
 
 
@@ -181,7 +194,9 @@ def _resolve_data_dir():
         return _APP_DIR
 
 
-_DATA_DIR = _APP_DIR  # personal build: keep data next to exe
+_DATA_DIR = _resolve_data_dir()
+# Keep legacy module-level paths and hxcore.paths.data_dir() on one source of truth.
+os.environ.setdefault("HYMNIX_DATA_DIR", _DATA_DIR)
 CONFIG_FILE = os.path.join(_DATA_DIR, "huimeng_config.json")
 
 # 内置网关（单 exe：客户端 + 网关 + 隧道 + 监控 一体）
@@ -1093,6 +1108,14 @@ NAV_HEIGHT = 46
 GROUP_FONT_PT = 10
 SIDEBAR_FONT = "Microsoft YaHei UI"
 
+# Notebook page registration order. Navigation resolves by these keys, never by
+# sidebar row position (the sidebar is a subset and may gain/lose rows).
+PAGE_KEYS = (
+    "chat", "trace", "mon", "api", "cloud", "plugins", "models", "tools",
+    "crash", "history", "sessions", "files", "diff", "support", "approvals",
+    "usage", "ocr", "git",
+)
+
 
 class ScrollableFrame(ttk.Frame):
     """无边框滚动容器：滚轮缓动 + 右侧细滑块，内容不足时自动隐藏滑块。"""
@@ -1744,7 +1767,7 @@ class HardwareProbe:
     @staticmethod
     def _run(cmd, timeout=8):
         try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
+            r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
                                creationflags=subprocess.CREATE_NO_WINDOW)
             if r.returncode == 0:
                 return r.stdout or ""
@@ -1947,7 +1970,7 @@ class OllamaManager:
         if REMOTE_MODE:
             return True
         try:
-            result = subprocess.run(["ollama", "--version"], capture_output=True, text=True, timeout=5,
+            result = subprocess.run(["ollama", "--version"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5,
                                     creationflags=subprocess.CREATE_NO_WINDOW)
             return result.returncode == 0
         except:
@@ -1979,7 +2002,7 @@ class OllamaManager:
                     f.write(chunk)
             if progress_callback:
                 progress_callback("安装中...")
-            result = subprocess.run([installer_path, "/S"], capture_output=True, text=True, timeout=300,
+            result = subprocess.run([installer_path, "/S"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300,
                                     creationflags=subprocess.CREATE_NO_WINDOW)
             try:
                 os.remove(installer_path)
@@ -2006,7 +2029,7 @@ class OllamaManager:
             if extra_env:
                 for k, v in extra_env.items():
                     env[str(k)] = str(v)
-            process = subprocess.Popen(["ollama", "serve"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            process = subprocess.Popen(["ollama", "serve"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
                                        env=env,
                                        creationflags=subprocess.CREATE_NO_WINDOW)
             for i in range(30):
@@ -2031,75 +2054,188 @@ class OllamaManager:
         return []
 
     @staticmethod
-    def pull_model(model_name, progress_window=None, status_label=None, progress_bar=None, detail_label=None):
-        try:
-            cmd = ["ollama", "pull", model_name]
-            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                                       encoding='utf-8', errors='ignore', creationflags=subprocess.CREATE_NO_WINDOW)
-            output_lines = []
-            overall_progress = 0
-            current_layer = ""
-            total_layers = 0
-            completed_layers = 0
-            while True:
-                line = process.stdout.readline()
-                if not line and process.poll() is not None:
-                    break
-                if line:
-                    cleaned_line = line.strip()
-                    if cleaned_line:
-                        output_lines.append(cleaned_line)
-                        if progress_window and status_label and progress_bar and detail_label:
-                            progress_data = OllamaManager._parse_progress(cleaned_line)
-                            if progress_data:
-                                progress_type, current, total, speed = progress_data
-                                if progress_type == "manifest":
-                                    status_label.config(text="正在拉取模型清单...")
-                                    detail_label.config(text=f"{cleaned_line}")
-                                elif progress_type == "layer":
-                                    current_layer = current
-                                    if total_layers == 0:
-                                        total_layers = total
-                                    completed_layers = current
-                                    if total_layers > 0:
-                                        layer_percent = int((completed_layers / total_layers) * 100)
-                                        overall_progress = min(layer_percent, 99)
-                                    else:
-                                        overall_progress = 50
-                                    status_label.config(text=f"正在下载模型层 ({completed_layers}/{total_layers})...")
-                                    detail_label.config(text=f"当前层: {current_layer} | 速度: {speed}")
-                                    progress_bar['value'] = overall_progress
-                                    progress_window.update_idletasks()
-                                elif progress_type == "digest":
-                                    status_label.config(text="正在验证模型摘要...")
-                                    detail_label.config(text=f"{cleaned_line}")
-                                    progress_bar['value'] = 99
-                                    progress_window.update_idletasks()
-                                elif progress_type == "verifying":
-                                    status_label.config(text="正在验证模型...")
-                                    detail_label.config(text=f"{cleaned_line}")
-                                    progress_bar['value'] = 99
-                                    progress_window.update_idletasks()
-                            elif "pulling manifest" in cleaned_line.lower():
-                                status_label.config(text="正在拉取模型清单...")
-                                detail_label.config(text=f"{cleaned_line}")
-                            elif "verifying sha256 digest" in cleaned_line.lower():
-                                status_label.config(text="正在验证SHA256摘要...")
-                                detail_label.config(text=f"{cleaned_line}")
-                                progress_bar['value'] = 99
-                                progress_window.update_idletasks()
-                            elif "success" in cleaned_line.lower() or "pull complete" in cleaned_line.lower():
-                                status_label.config(text="下载完成！")
-                                detail_label.config(text="模型下载成功，正在完成设置...")
-                                progress_bar['value'] = 100
-                                progress_window.update_idletasks()
-            process.wait()
-            if process.returncode == 0:
-                return True, f"模型 '{model_name}' 下载完成"
+    def pull_model(model_name, progress_window=None, status_label=None, progress_bar=None,
+                   detail_label=None, on_progress=None, cancel_event=None, on_proc=None):
+        """Run 'ollama pull' and stream normalized progress.
+
+        Returns (ok, message). Progress is delivered as a dict through
+        on_progress when given, otherwise the legacy Tk widgets are updated.
+        Cancellation is cooperative: cancel_event terminates the child process
+        and yields (False, "已取消下载") instead of a failure.
+        """
+        import re as _re
+        ansi_re = _re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+        pct_re = _re.compile(r"(\d{1,3}(?:\.\d+)?)%")
+        speed_re = _re.compile(r"(\d+(?:\.\d+)?)\s*(B|KB|MB|GB|TB)\s*/\s*s", _re.IGNORECASE)
+        size_re = _re.compile(r"(\d+(?:\.\d+)?)\s*(B|KB|MB|GB|TB)", _re.IGNORECASE)
+        layer_re = _re.compile(r"pulling\s+([0-9a-f]{6,})", _re.IGNORECASE)
+        units = {"B": 1.0, "KB": 1024.0, "MB": 1024.0 ** 2, "GB": 1024.0 ** 3, "TB": 1024.0 ** 4}
+        cancel_event = cancel_event if cancel_event is not None else threading.Event()
+        layers = {}
+        state = {"percent": 0.0, "status": "", "detail": "", "speed": ""}
+
+        def publish(status, detail="", percent=None, speed=""):
+            if percent is not None:
+                state["percent"] = max(0.0, min(100.0, float(percent)))
+            payload = {"status": status, "percent": state["percent"],
+                       "detail": detail or "", "speed": speed or "", "eta": ""}
+            state["status"], state["detail"], state["speed"] = status, detail or "", speed or ""
+            if on_progress:
+                try:
+                    on_progress(payload)
+                except Exception:
+                    pass
+                return
+
+            def apply():
+                try:
+                    if status_label is not None:
+                        status_label.config(text=payload["status"])
+                    if progress_bar is not None:
+                        progress_bar["value"] = payload["percent"]
+                    if detail_label is not None:
+                        text = payload["detail"]
+                        if payload["speed"]:
+                            text = (text + "  " + payload["speed"]).strip()
+                        detail_label.config(text=text[:200])
+                except Exception:
+                    pass
+            if progress_window is not None:
+                try:
+                    progress_window.after(0, apply)
+                except Exception:
+                    apply()
             else:
-                return False, f"下载失败\n输出: {' '.join(output_lines[-3:])}"
-        except Exception as e:
-            return False, f"下载异常: {str(e)}"
+                apply()
+
+        def update_progress(line):
+            clean = ansi_re.sub("", line).replace("\r", " ").strip()
+            if not clean:
+                return
+            low = clean.lower()
+            if low.startswith("pulling manifest"):
+                publish("正在获取模型清单…", clean[:160])
+                return
+            if "verifying" in low or "writing manifest" in low:
+                publish("正在校验模型文件…", clean[:160], percent=max(state["percent"], 99.0))
+                return
+            if low.startswith("success") or low.startswith("下载完成"):
+                publish("下载完成", clean[:160], percent=100)
+                return
+            match = pct_re.search(clean)
+            if not match:
+                return
+            try:
+                percent = float(match.group(1))
+            except Exception:
+                percent = 0.0
+            frac = percent / 100.0
+            layer = layer_re.match(clean)
+            key = layer.group(1) if layer else "default"
+            body = speed_re.sub(" ", clean)
+            sizes = size_re.findall(body)
+            if len(sizes) >= 2:
+                try:
+                    current_bytes = float(sizes[-2][0]) * units.get(sizes[-2][1].upper(), 1.0)
+                    total_bytes = float(sizes[-1][0]) * units.get(sizes[-1][1].upper(), 1.0)
+                    if total_bytes > 0:
+                        frac = current_bytes / total_bytes
+                except Exception:
+                    pass
+            layers[key] = max(0.0, min(1.0, frac))
+            overall = 100.0 * sum(layers.values()) / max(1, len(layers))
+            speed_match = speed_re.search(clean)
+            speed = ""
+            if speed_match:
+                speed = "%s %s/s" % (speed_match.group(1), speed_match.group(2).upper())
+            publish("正在下载 %s · %.0f%%" % (model_name, overall), clean[:160],
+                    percent=overall, speed=speed)
+
+        try:
+            process = subprocess.Popen(
+                ["ollama", "pull", model_name],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                encoding="utf-8", errors="ignore", bufsize=1,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        except FileNotFoundError:
+            return False, "未找到 ollama 命令，请先安装 Ollama 并确认已加入 PATH"
+        except Exception as exc:
+            return False, "下载无法启动: %s" % exc
+        if on_proc:
+            try:
+                on_proc(process)
+            except Exception:
+                pass
+
+        lines = Queue()
+
+        def reader():
+            try:
+                for raw in process.stdout:
+                    lines.put(raw)
+            except Exception:
+                pass
+            finally:
+                lines.put(None)
+
+        threading.Thread(target=reader, daemon=True).start()
+        cancelled = False
+        tail = []
+        try:
+            while True:
+                if cancel_event.is_set():
+                    cancelled = True
+                    break
+                try:
+                    raw = lines.get(timeout=0.2)
+                except Empty:
+                    continue
+                if raw is None:
+                    break
+                text_line = str(raw).strip()
+                if not text_line:
+                    continue
+                tail.append(text_line[-200:])
+                tail = tail[-3:]
+                try:
+                    update_progress(text_line)
+                except Exception:
+                    pass
+        finally:
+            if cancelled and process.poll() is None:
+                try:
+                    process.terminate()
+                except Exception:
+                    pass
+                try:
+                    process.wait(timeout=5)
+                except Exception:
+                    try:
+                        process.kill()
+                    except Exception:
+                        pass
+            if on_proc:
+                try:
+                    on_proc(None)
+                except Exception:
+                    pass
+
+        code = process.poll()
+        if cancelled or cancel_event.is_set():
+            publish("已取消下载", state["detail"], percent=state["percent"])
+            return False, "已取消下载"
+        if code is None:
+            try:
+                code = process.wait(timeout=5)
+            except Exception:
+                code = -1
+        if code == 0:
+            publish("下载完成", "模型已安装", percent=100)
+            return True, "模型 '%s' 下载完成" % model_name
+        detail = ("；".join(tail))[:300]
+        publish("下载失败", detail or "下载失败", percent=state["percent"])
+        return False, "下载失败（退出码 %s）%s" % (code, ("：" + detail) if detail else "")
+
 
     @staticmethod
     def _parse_progress(line):
@@ -2289,10 +2425,15 @@ class HuimengAIClient:
         except Exception:
             pass
         try:
-            _ico = os.path.join(_BUNDLE_DIR, "icon.ico")
-            if os.path.exists(_ico):
-                self.root.iconbitmap(default=_ico)
-                self.root.iconbitmap(_ico)
+            for _ico in _ICON_CANDIDATES:
+                if not os.path.exists(_ico):
+                    continue
+                try:
+                    self.root.iconbitmap(default=_ico)
+                    self.root.iconbitmap(_ico)
+                    break
+                except Exception:
+                    continue
             _png = os.path.join(_BUNDLE_DIR, "icon.png")
             if os.path.exists(_png):
                 self._app_icon = tk.PhotoImage(file=_png)
@@ -2335,13 +2476,18 @@ class HuimengAIClient:
         except Exception:
             pass
         apply_remote_settings(self.config)
-        self.current_model = self.config.get("last_model", DEFAULT_MODEL)
+        self.current_model = self.config.get("last_model") or ""
         self.conversation_history = []
         self._chat_session_id = datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + os.urandom(2).hex()
         self._session_history_snapshots = {}
         self.is_processing = False
         self.message_queue = Queue()
         self.ollama_manager = OllamaManager()
+        self.model_library = MODEL_LIBRARY
+        self._download_thread = None
+        self._download_cancel = None
+        self._download_proc = None
+        self._download_model_name = ""
         self.hw = None
         self._device_map = {}
         self.attachments = []
@@ -2401,7 +2547,8 @@ class HuimengAIClient:
         self.root.after(2500, self.refresh_host_bar)
         self.root.after(300, self._update_source_status)
         self.root.after(700, self.ensure_welcome)
-        self.root.after(250, self._splash_tick)
+        if _splash_enabled():
+            self.root.after(250, self._splash_tick)
         self.root.after(0, self._decorate_buttons)
         if self.config.get("maximize", False):
             try:
@@ -2436,14 +2583,11 @@ class HuimengAIClient:
                 self.send_message()
             self.root.after(6000, _auto_send)
         if "--api" in sys.argv:
-            self.root.after(1500, lambda: self.select_nav(3))
+            self.root.after(1500, lambda: self.select_nav("api"))
         if "--plug" in sys.argv:
-            self.root.after(1500, lambda: self.select_nav(4))
+            self.root.after(1500, lambda: self.select_nav("plugins"))
         if "--mon" in sys.argv:
-            try:
-                self.notebook.select(self.mon_tab)
-            except Exception:
-                pass
+            self.root.after(1500, lambda: self.select_nav("mon"))
         import atexit
         def _cleanup():
             try:
@@ -2459,13 +2603,12 @@ class HuimengAIClient:
         atexit.register(_cleanup)
 
     def setup_icon(self):
-        icon_paths = ["icon.ico", os.path.join(os.path.dirname(__file__), "icon.ico")]
-        for icon_path in icon_paths:
+        for icon_path in _ICON_CANDIDATES:
             if os.path.exists(icon_path):
                 try:
                     self.root.iconbitmap(icon_path)
                     break
-                except:
+                except Exception:
                     continue
 
     def create_menu(self):
@@ -2531,7 +2674,7 @@ class HuimengAIClient:
 
     def load_config(self):
         default_config = {
-            "last_model": DEFAULT_MODEL, "history_files": [], "auto_start_service": True,
+            "last_model": "", "history_files": [], "auto_start_service": True,
             "auto_download_model": True, "font_size": 12, "user_name": "您", "ai_name": "AI助手",
             "api_timeout": 60, "enable_sound": True, "auto_scroll": True, "max_history": 100,
             "compute_device": "auto",
@@ -2602,6 +2745,7 @@ class HuimengAIClient:
         self.mon_tab = tab_mon
         tab_api = ttk.Frame(self.notebook, style="Bg.TFrame")
         tab_plug = ttk.Frame(self.notebook, style="Bg.TFrame")
+        tab_models = ttk.Frame(self.notebook, style="Bg.TFrame")
         tab_support = ttk.Frame(self.notebook, style="Bg.TFrame")
         tab_tools = ttk.Frame(self.notebook, style="Bg.TFrame")
         tab_crash = ttk.Frame(self.notebook, style="Bg.TFrame")
@@ -2617,6 +2761,7 @@ class HuimengAIClient:
         self.notebook.add(tab_api, text="   API 接口   ")
         self.notebook.add(tab_cloud, text="   Cloud hub   ")
         self.notebook.add(tab_plug, text="   插件   ")
+        self.notebook.add(tab_models, text="   模型   ")
         self.notebook.add(tab_tools, text="   " + T("工具", "Tools") + "   ")
         self.notebook.add(tab_crash, text="   " + T("崩溃报告", "Crash Reports") + "   ")
         self.notebook.add(tab_history, text="   " + T("历史记录", "History") + "   ")
@@ -2628,23 +2773,26 @@ class HuimengAIClient:
         self.notebook.add(tab_usage, text="   " + T("用量与成本", "Usage & Cost") + "   ")
         self.notebook.add(tab_ocr, text="   " + T("截图取字", "OCR") + "   ")
         self.notebook.add(tab_git, text="   " + T("Git 加速", "Git Acceleration") + "   ")
-        # 懒构建：页面首次进入时再建，缩短启动时间
+        # 懒构建：页面首次进入时再建，缩短启动时间。
+        # 键是稳定 page key，与侧栏行号解耦；models 必须指向 6 号页。
+        self._page_index = {key: i for i, key in enumerate(PAGE_KEYS)}
         self._lazy_pages = {
-            2: (tab_mon, self.build_monitor_tab),
-            3: (tab_api, self.build_api_tab),
-            4: (tab_cloud, self.build_cloudhub_tab),
-            5: (tab_plug, self.build_plugins_tab),
-            6: (tab_tools, self.build_tools_tab),
-            7: (tab_crash, self.build_crash_tab),
-            8: (tab_history, self.build_history_tab),
-            9: (tab_sessions, self.build_sessions_tab),
-            10: (tab_files, self.build_files_tab),
-            11: (tab_diff, self.build_diff_tab),
-            12: (tab_support, self.build_support_tab),
-            13: (tab_approvals, self.build_approvals_tab),
-            14: (tab_usage, self.build_usage_tab),
-            15: (tab_ocr, self.build_ocr_tab),
-            16: (tab_git, self.build_git_tab),
+            "mon": (tab_mon, self.build_monitor_tab),
+            "api": (tab_api, self.build_api_tab),
+            "cloud": (tab_cloud, self.build_cloudhub_tab),
+            "plugins": (tab_plug, self.build_plugins_tab),
+            "models": (tab_models, self.build_models_tab),
+            "tools": (tab_tools, self.build_tools_tab),
+            "crash": (tab_crash, self.build_crash_tab),
+            "history": (tab_history, self.build_history_tab),
+            "sessions": (tab_sessions, self.build_sessions_tab),
+            "files": (tab_files, self.build_files_tab),
+            "diff": (tab_diff, self.build_diff_tab),
+            "support": (tab_support, self.build_support_tab),
+            "approvals": (tab_approvals, self.build_approvals_tab),
+            "usage": (tab_usage, self.build_usage_tab),
+            "ocr": (tab_ocr, self.build_ocr_tab),
+            "git": (tab_git, self.build_git_tab),
         }
         self._build_sidebar(shell)
 
@@ -3245,13 +3393,11 @@ class HuimengAIClient:
                 break
         self.device_var.set(shown)
         if gpus:
-            gpu_txt = T("、", ", ").join("%s %.1fG" % (g["name"], g["vram_gb"]) for g in gpus)
+            gpu_txt = "、".join("%s %.1fG" % (g["name"], g["vram_gb"]) for g in gpus)
         else:
-            gpu_txt = T("未检测到独立显卡，只能用 CPU", "No discrete GPU detected, CPU only")
-        self.hw_summary_var.set(T(
-            "CPU: %s（%d 核 / %d 线程 @ %d MHz）   |   显卡 %d 张：%s   |   内存 %.1f GB",
-            "CPU: %s (%d cores / %d threads @ %d MHz)   |   GPU %d: %s   |   RAM %.1f GB") % (
-            cpu.get("name", T("未知", "Unknown")), cpu.get("cores", 0), cpu.get("threads", 0), cpu.get("mhz", 0),
+            gpu_txt = "未检测到独立显卡，只能用 CPU"
+        self.hw_summary_var.set("CPU: %s（%d 核 / %d 线程 @ %d MHz）   |   显卡 %d 张：%s   |   内存 %.1f GB" % (
+            cpu.get("name", "未知"), cpu.get("cores", 0), cpu.get("threads", 0), cpu.get("mhz", 0),
             len(gpus), gpu_txt, data.get("ram_gb", 0)))
         self.queue_message("system", T("🖥️ 硬件: %s，检测到 %d 张显卡" % (cpu.get("name", "未知"), len(gpus)),
                 "🖥️ Hardware: %s, %d GPU(s) detected" % (cpu.get("name", "Unknown"), len(gpus))))
@@ -3468,52 +3614,202 @@ class HuimengAIClient:
         threading.Thread(target=install_task, daemon=True).start()
 
     def prompt_download_default_model(self):
-        if messagebox.askyesno("下载模型", f"是否要下载默认模型 '{DEFAULT_MODEL}'？\n\n首次下载需要较长时间。",
+        if messagebox.askyesno("下载模型", "本机尚无可用模型。现在选择并下载一个模型吗？\n\n可在模型列表中按需选择。",
                                parent=self.root):
-            self.download_model(DEFAULT_MODEL)
+            self.download_model_dialog()
         else:
-            self.queue_message("system", "⚠️ 跳过默认模型下载")
+            self.queue_message("system", "⚠️ 已跳过模型下载，请稍后从模型菜单选择或下载")
             self.refresh_models()
             self.update_status("🟢 就绪")
 
-    def download_model(self, model_name):
-        if REMOTE_MODE:
-            messagebox.showinfo("远程模式", "远程模式下不下载模型：\n模型装在服务器上，需要哪个请让服务器主人拉取。", parent=self.root)
-            return
-        progress_window = tk.Toplevel(self.root)
-        progress_window.title(f"下载模型 - {model_name}")
-        progress_window.geometry("500x200")
-        progress_window.transient(self.root)
-        progress_window.grab_set()
-        Theme.apply(progress_window)
-        progress_window.resizable(False, False)
-        ttk.Label(progress_window, text=f"正在下载模型: {model_name}", font=(UI_FONT, 12, "bold")).pack(pady=(20, 10))
-        status_label = ttk.Label(progress_window, text="初始化下载任务...", font=(UI_FONT, 10))
-        status_label.pack(pady=(0, 5))
-        progress_bar = ttk.Progressbar(progress_window, length=400, mode='determinate')
-        progress_bar.pack(pady=(0, 10))
-        detail_label = ttk.Label(progress_window, text="准备开始...", wraplength=450, foreground="gray")
-        detail_label.pack(pady=(0, 20))
-        cancel_button = ttk.Button(progress_window, text="取消", command=progress_window.destroy)
-        cancel_button.pack(pady=(0, 10))
-        progress_window.update()
+    def download_model(self, model_name, on_progress=None, on_done=None):
+        """Download one model through Ollama.
 
-        def download_task():
-            success, msg = self.ollama_manager.pull_model(model_name, progress_window, status_label, progress_bar, detail_label)
-            progress_window.after(0, progress_window.destroy)
-            if success:
-                self.queue_message("system", "✅ " + msg)
-                self.refresh_models()
-                self.update_status("🟢 就绪")
-                self.root.after(0, lambda: messagebox.showinfo(
-                    "下载完成", "模型 '%s' 下载完成！" % model_name, parent=self.root))
+        With callbacks the flow is headless: progress dicts go to on_progress and
+        completion to on_done(ok, message). Without callbacks the classic progress
+        window is shown. Cancellation is available through cancel_model_download().
+        """
+        active = getattr(self, "_download_thread", None)
+        if active is not None and active.is_alive():
+            if on_done:
+                self._ui_call(on_done, False, "已有下载在进行中，请稍候")
             else:
-                self.queue_message("system", "❌ " + msg)
-                self.update_status("🔴 下载失败")
-                self.root.after(0, lambda: messagebox.showerror(
-                    "下载失败", "下载模型时出错：\n%s" % msg, parent=self.root))
+                messagebox.showinfo("提示", "已有下载在进行中，请稍候。", parent=self.root)
+            return False
+        if REMOTE_MODE:
+            message = "远程模式下不下载模型：模型装在服务器上，请让服务器主人拉取。"
+            if on_done:
+                self._ui_call(on_done, False, message)
+            else:
+                messagebox.showinfo("远程模式", message, parent=self.root)
+            return False
 
-        threading.Thread(target=download_task, daemon=True).start()
+        cancel_event = threading.Event()
+        self._download_cancel = cancel_event
+        self._download_model_name = model_name
+        self._download_proc = None
+
+        progress_window = None
+        bar = None
+        status_var = None
+        detail_var = None
+        if on_progress is None and on_done is None:
+            progress_window = tk.Toplevel(self.root)
+            progress_window.title("下载模型 - %s" % model_name)
+            progress_window.geometry("520x220")
+            progress_window.transient(self.root)
+            progress_window.grab_set()
+            Theme.apply(progress_window)
+            progress_window.resizable(False, False)
+            ttk.Label(progress_window, text="正在下载模型: %s" % model_name,
+                      font=(UI_FONT, 12, "bold")).pack(pady=(20, 8))
+            status_var = tk.StringVar(value="初始化下载任务...")
+            ttk.Label(progress_window, textvariable=status_var,
+                      style="BgMuted.TLabel").pack(pady=(0, 6))
+            bar = ttk.Progressbar(progress_window, length=440, mode="determinate", maximum=100)
+            bar.pack(pady=(0, 8))
+            detail_var = tk.StringVar(value="准备开始...")
+            ttk.Label(progress_window, textvariable=detail_var, style="BgMuted.TLabel",
+                      wraplength=460).pack(pady=(0, 12))
+            ttk.Button(progress_window, text="取消下载", style="Ghost.TButton",
+                       command=self.cancel_model_download).pack(pady=(0, 10))
+            progress_window.protocol("WM_DELETE_WINDOW", self.cancel_model_download)
+            progress_window.update_idletasks()
+
+        def ui_progress(info):
+            info = info if isinstance(info, dict) else {}
+            if on_progress:
+                self._ui_call(on_progress, info)
+                return
+            if progress_window is None:
+                return
+
+            def apply():
+                try:
+                    if not progress_window.winfo_exists():
+                        return
+                    if status_var is not None:
+                        status_var.set(str(info.get("status") or ""))
+                    if bar is not None:
+                        try:
+                            bar["value"] = float(info.get("percent") or 0)
+                        except Exception:
+                            pass
+                    if detail_var is not None:
+                        text = str(info.get("detail") or "")
+                        speed = str(info.get("speed") or "")
+                        if speed:
+                            text = (text + "  " + speed).strip()
+                        detail_var.set(text[:200])
+                except Exception:
+                    pass
+            try:
+                progress_window.after(0, apply)
+            except Exception:
+                apply()
+
+        def worker():
+            ok, message = False, "下载未开始"
+            try:
+                ok, message = self.ollama_manager.pull_model(
+                    model_name, on_progress=ui_progress,
+                    cancel_event=cancel_event, on_proc=self._set_download_proc)
+            except Exception as exc:
+                ok, message = False, "下载异常: %s" % exc
+            finally:
+                self._set_download_proc(None)
+                self._download_cancel = None
+                self._download_thread = None
+
+            def finish():
+                if progress_window is not None:
+                    try:
+                        if progress_window.winfo_exists():
+                            progress_window.grab_release()
+                            progress_window.destroy()
+                    except Exception:
+                        pass
+                cancelled = ("取消" in str(message)) or ("cancel" in str(message).lower())
+                if ok:
+                    try:
+                        self.refresh_models()
+                    except Exception:
+                        pass
+                    try:
+                        self.queue_message("system", "✅ " + str(message))
+                    except Exception:
+                        pass
+                    try:
+                        self.update_status("🟢 就绪")
+                    except Exception:
+                        pass
+                elif cancelled:
+                    try:
+                        self.queue_message("system", "⏹️ " + str(message))
+                    except Exception:
+                        pass
+                    try:
+                        self.update_status("🟡 已取消下载")
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        self.queue_message("system", "❌ " + str(message))
+                    except Exception:
+                        pass
+                    try:
+                        self.update_status("🔴 下载失败")
+                    except Exception:
+                        pass
+                if on_done:
+                    self._ui_call(on_done, ok, message)
+                    return
+                if ok:
+                    messagebox.showinfo("下载完成", "模型 '%s' 下载完成！" % model_name,
+                                        parent=self.root)
+                elif not cancelled:
+                    messagebox.showerror("下载失败", "下载模型时出错：\n%s" % message,
+                                         parent=self.root)
+
+            self._ui_call(finish)
+
+        self._download_thread = threading.Thread(target=worker, daemon=True)
+        self._download_thread.start()
+        return True
+
+    def _ui_call(self, callback, *args):
+        """Marshal a callback onto the Tk main thread, tolerating shutdown."""
+        try:
+            self.root.after(0, lambda: callback(*args))
+        except Exception:
+            try:
+                callback(*args)
+            except Exception:
+                pass
+
+    def _set_download_proc(self, process):
+        self._download_proc = process
+
+    def cancel_model_download(self):
+        """Request cancellation of the active model download. Returns True if a
+        running download was signalled, False when nothing is downloading."""
+        event = getattr(self, "_download_cancel", None)
+        process = getattr(self, "_download_proc", None)
+        running = False
+        if event is not None:
+            event.set()
+            running = True
+        if process is not None and process.poll() is None:
+            try:
+                process.terminate()
+            except Exception:
+                pass
+            running = True
+        thread = getattr(self, "_download_thread", None)
+        if thread is not None and thread.is_alive():
+            running = True
+        return running
+
 
     def default_models_dir(self):
         return os.path.join(os.path.expanduser("~"), ".ollama", "models")
@@ -3561,11 +3857,11 @@ class HuimengAIClient:
         ttk.Button(bar_row, text="刷新", style="Ghost.TButton",
                    command=lambda: refill()).pack(side=tk.RIGHT)
 
-        cols = ("name", "state", "size", "vram", "desc")
+        cols = ("name", "state", "size", "source", "vram", "desc")
         tree = ttk.Treeview(dlg, columns=cols, show="headings", height=11)
-        for c, t, w, a in (("name", "模型", 220, tk.W), ("state", "状态", 80, tk.CENTER),
-                           ("size", "体积", 80, tk.E), ("vram", "建议显存", 80, tk.E),
-                           ("desc", "说明", 320, tk.W)):
+        for c, t, w, a in (("name", "模型", 200, tk.W), ("state", "状态", 70, tk.CENTER),
+                           ("size", "体积", 70, tk.E), ("source", "来源", 110, tk.W),
+                           ("vram", "建议显存", 70, tk.E), ("desc", "说明", 280, tk.W)):
             tree.heading(c, text=t)
             tree.column(c, width=w, anchor=a)
         tree.pack(fill=tk.BOTH, expand=True, padx=18, pady=(4, 8))
@@ -3603,19 +3899,21 @@ class HuimengAIClient:
             tree.delete(*tree.get_children())
             kw = search_var.get().strip().lower()
             cat = cat_var.get()
+            source_local = "本机"
+            source_remote = "Ollama 官方源"
 
             rows = []
             for mid in sorted(installed):
                 info = MODEL_LIBRARY.get(mid, {})
-                rows.append((0, mid, "已安装", info.get("size", ""),
+                rows.append((0, mid, "已安装", info.get("size", ""), source_local,
                              "%.1fG" % info["vram"] if info.get("vram") else "",
                              info.get("desc", "本机已有模型")))
             for mid, info in MODEL_LIBRARY.items():
                 if mid in installed:
                     continue
-                rows.append((1, mid, "可下载", info.get("size", ""),
+                rows.append((1, mid, "可下载", info.get("size", ""), source_remote,
                              "%.1fG" % info.get("vram", 0), info.get("desc", "")))
-            for _, mid, st, size, vram, desc in rows:
+            for _, mid, st, size, source, vram, desc in rows:
                 if cat != "全部":
                     info = MODEL_LIBRARY.get(mid, {})
                     if info.get("category") != cat:
@@ -3626,7 +3924,8 @@ class HuimengAIClient:
                         continue
                 if kw and kw not in mid.lower() and kw not in desc.lower() and kw not in st:
                     continue
-                tree.insert("", tk.END, iid=mid, values=(mid, st, size, vram, desc))
+                tree.insert("", tk.END, iid=mid,
+                            values=(mid, st, size, source, vram, desc))
 
         def selected():
             sel = tree.selection()
@@ -3644,7 +3943,7 @@ class HuimengAIClient:
                 act_btn.config(text="下载")
                 del_btn.config(state=tk.DISABLED)
                 info = MODEL_LIBRARY.get(mid, {})
-                status_var.set("准备下载 %s · %s · %s" % (mid, info.get("size", "?"), info.get("desc", "")))
+                status_var.set("准备下载 %s · %s · 来源：Ollama 官方源 · %s" % (mid, info.get("size", "?"), info.get("desc", "")))
 
         def set_busy(busy):
             state["busy"] = busy
@@ -3659,54 +3958,54 @@ class HuimengAIClient:
             set_busy(True)
             prog["value"] = 0
             status_var.set("正在下载 %s …" % mid)
+            hint.set("来源：Ollama 官方源 · 可随时取消，失败后可重试")
 
-            def worker():
-                import re as _re
-                clean_re = _re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
-                pct_re = _re.compile(r"(\d+)%")
-                cmd = ["ollama", "pull", mid]
-                proc = None
+            def alive():
                 try:
-                    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                            text=True, encoding="utf-8", errors="ignore", bufsize=1,
-                                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-                    state["proc"] = proc
-                    for raw in proc.stdout:
-                        line = clean_re.sub("", raw).replace("\r", "").strip()
-                        if not line:
-                            continue
-                        m = pct_re.search(line)
-                        if m:
-                            pct = int(m.group(1))
-                            dlg.after(0, lambda p=pct, t=line[:110]: (prog.configure(value=p),
-                                                                      status_var.set("%d%%  %s" % (p, t))))
-                        elif "verifying" in line.lower() or "writing" in line.lower():
-                            dlg.after(0, lambda t=line[:110]: status_var.set(t))
-                    code = proc.wait()
-                    if code == 0:
-                        dlg.after(0, lambda: status_var.set("✅ %s 下载完成" % mid))
-                        dlg.after(0, lambda: (prog.configure(value=100),
-                                              self.refresh_models(),
-                                              refill()))
-                        self.queue_message("system", "✅ 模型已安装：%s" % mid)
-                    else:
-                        dlg.after(0, lambda: status_var.set("❌ 下载失败（退出码 %s）" % code))
-                except Exception as e:
-                    dlg.after(0, lambda e=e: status_var.set("❌ 下载出错：%s" % e))
-                finally:
-                    state["proc"] = None
-                    dlg.after(0, lambda: set_busy(False))
+                    return bool(dlg.winfo_exists())
+                except Exception:
+                    return False
 
-            threading.Thread(target=worker, daemon=True).start()
-
-        def do_cancel():
-            proc = state.get("proc")
-            if proc and proc.poll() is None:
+            def on_progress(info):
+                if not alive():
+                    return
+                info = info if isinstance(info, dict) else {}
                 try:
-                    proc.terminate()
+                    prog.configure(value=float(info.get("percent") or 0))
                 except Exception:
                     pass
-                status_var.set("已取消下载")
+                text = str(info.get("status") or "正在下载")
+                speed = str(info.get("speed") or "")
+                if speed:
+                    text = "%s  %s" % (text, speed)
+                status_var.set(text[:160])
+
+            def on_done(ok, message):
+                if not alive():
+                    return
+                set_busy(False)
+                message = str(message or "")
+                cancelled = ("取消" in message) or ("cancel" in message.lower())
+                if ok:
+                    prog.configure(value=100)
+                    status_var.set("✅ %s" % message)
+                    try:
+                        refill()
+                    except Exception:
+                        pass
+                elif cancelled:
+                    status_var.set("已取消下载，可重试")
+                else:
+                    status_var.set("❌ %s" % message)
+                    hint.set("下载失败：可重试；若反复失败请检查网络或磁盘空间")
+
+            self.download_model(mid, on_progress=on_progress, on_done=on_done)
+
+        def do_cancel():
+            if not state["busy"]:
+                return
+            status_var.set("正在取消下载…")
+            self.cancel_model_download()
 
         def do_delete():
             mid = selected()
@@ -3733,7 +4032,7 @@ class HuimengAIClient:
         only8g.trace_add("write", lambda *a: refill())
 
         refill()
-        hint.set("共 %d 个模型可选 · 已安装 %d 个" % (len(MODEL_LIBRARY), len(installed)))
+        hint.set("共 %d 个模型可选 · 已安装 %d 个 · 来源：Ollama 官方源" % (len(MODEL_LIBRARY), len(installed)))
 
     def refresh_models(self):
         def refresh_task():
@@ -3746,17 +4045,20 @@ class HuimengAIClient:
         if models:
             self.model_combo["values"] = models
             current = self.model_var.get()
-            if current not in models:
-                self.model_var.set(models[0])
-                self.current_model = models[0]
-                self.config["last_model"] = models[0]
-                self.save_config()
+            if current in models:
+                self.model_var.set(current)
+            else:
+                self.model_var.set("")
+                self.current_model = ""
+                self.config["last_model"] = ""
             self.update_model_info()
             self.queue_message("system", T("📋 找到 %d 个模型" % len(models), "📋 %d models found" % len(models)))
         else:
-            self.model_combo["values"] = ["无可用模型"]
-            self.model_var.set("无可用模型")
-            self.model_info_var.set("请下载模型")
+            self.current_model = ""
+            self.config["last_model"] = ""
+            self.model_combo["values"] = ["请先选择/下载模型"]
+            self.model_var.set("请先选择/下载模型")
+            self.model_info_var.set("请先选择或下载模型")
 
     TAG_NAMES = {"cn": "中文", "tools": "工具", "vision": "看图", "think": "思考",
                  "code": "代码", "embed": "向量"}
@@ -3779,7 +4081,7 @@ class HuimengAIClient:
     def refresh_model_caps(self, model=None):
         """问 /api/show 拿真实能力（tools / vision），不靠猜"""
         model = model or self.current_model
-        if not model or model == "无可用模型":
+        if not model or model in ("无可用模型", "请先选择/下载模型"):
             return
 
         def task():
@@ -3811,7 +4113,7 @@ class HuimengAIClient:
 
     def on_model_selected(self, event=None):
         selected = self.model_var.get()
-        if selected and selected != "无可用模型":
+        if selected and selected not in ("无可用模型", "请先选择/下载模型"):
             self.current_model = selected
             self.config["last_model"] = selected
             self.save_config()
@@ -3896,7 +4198,7 @@ class HuimengAIClient:
             if not self.ollama_manager.is_service_running():
                 self.queue_message("system", "❌ 模型服务未就绪")
                 return
-        if not use_cloud and self.current_model in ["无可用模型", "请先启动Ollama服务"]:
+        if not use_cloud and (not self.current_model or self.current_model in ["无可用模型", "请先启动Ollama服务", "请先选择/下载模型"]):
             self.queue_message("system", "⚠️ 请选择有效模型")
             return
         user_name = self.config.get("user_name", "您")
@@ -3942,7 +4244,7 @@ class HuimengAIClient:
 
     def open_api_tab(self):
         try:
-            self.select_nav(3)
+            self.select_nav("api")
         except Exception:
             pass
 
@@ -5526,7 +5828,7 @@ class HuimengAIClient:
             self.queue_message("system", f"🗑️ 正在删除模型 '{model_name}'...")
             try:
                 process = subprocess.Popen(["ollama", "rm", model_name], stdout=subprocess.PIPE,
-                                           stderr=subprocess.PIPE, text=True,
+                                           stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
                                            creationflags=subprocess.CREATE_NO_WINDOW)
                 output, _ = process.communicate()
                 if process.returncode == 0:
@@ -6400,7 +6702,7 @@ class HuimengAIClient:
         except Exception: n=10
         return "\n".join(list(getattr(self,"_tunnel_logs",[]))[-n:]) or "logs empty"
     def command_ps(self, args):
-        return subprocess.check_output("tasklist", shell=True, text=True, stderr=subprocess.STDOUT, creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))[:4000]
+        return subprocess.check_output("tasklist", shell=True, text=True, encoding="utf-8", errors="replace", stderr=subprocess.STDOUT, creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))[:4000]
     def command_hardware(self, args):
         return platform.platform() + " | " + platform.processor()
     def command_service(self, args):
@@ -6735,8 +7037,7 @@ class HuimengAIClient:
 
     def show_monitor_tab(self):
         try:
-            self._ensure_page(2)
-            self.notebook.select(self.mon_tab)
+            self.select_nav("mon")
         except Exception:
             pass
 
@@ -6930,15 +7231,67 @@ class HuimengAIClient:
             HOST["tunnel_state"] = "off"
             self.queue_message("system", T("🌐 公网隧道未分配（需要时点上方「启动隧道」按钮，避免频繁申请被限流）", "🌐 Public tunnel not allocated (click Start tunnel when needed)."))
 
+    def _download_cloudflared(self):
+        """Download a verified cloudflared binary for the current platform."""
+        part = None
+        try:
+            from hxcore import arch as _hxarch
+            dest_dir = os.path.join(_DATA_DIR, "bin")
+            os.makedirs(dest_dir, exist_ok=True)
+            name = _hxarch.cloudflared_binary_name()
+            dest = os.path.join(dest_dir, name)
+            if os.path.isfile(dest) and os.path.getsize(dest) >= _CF_MIN_BYTES:
+                return dest
+            asset = _hxarch.cloudflared_asset()
+            if not asset.get("ok"):
+                self.queue_message("system", "⚠️ 当前平台不支持自动下载 cloudflared：%s" % asset.get("error", "未知平台"))
+                return None
+            if asset.get("archive"):
+                self.queue_message("system", "⚠️ 当前平台下载包需手动解压 cloudflared：%s" % asset.get("url", ""))
+                return None
+            part = dest + ".part"
+            total = 0
+            with requests.get(asset["url"], stream=True, timeout=(10, 90)) as response:
+                response.raise_for_status()
+                with open(part, "wb") as fh:
+                    for chunk in response.iter_content(chunk_size=1024 * 1024):
+                        if not chunk:
+                            continue
+                        total += len(chunk)
+                        if total > _CF_MAX_BYTES:
+                            raise ValueError("下载文件超过 200 MiB 限制")
+                        fh.write(chunk)
+            if total < _CF_MIN_BYTES:
+                raise ValueError("下载文件过小，可能不是 cloudflared")
+            with open(part, "rb") as fh:
+                head = fh.read(4096)
+            if not _hxarch.looks_like_binary(head, asset.get("platform")):
+                raise ValueError("下载内容不是有效的 cloudflared 可执行文件")
+            os.replace(part, dest)
+            if os.name != "nt":
+                os.chmod(dest, 0o755)
+            self.queue_message("system", "✅ 已下载 cloudflared（%s/%s）" % (asset.get("platform", ""), asset.get("arch", "")))
+            return dest
+        except Exception as exc:
+            if part:
+                try:
+                    os.remove(part)
+                except OSError:
+                    pass
+            self.queue_message("system", "⚠️ cloudflared 下载失败：%s" % exc)
+            return None
+
     def start_host_tunnel(self):
         mode = str(self.config.get("tunnel_mode", "cloudflared") or "cloudflared").lower()
         if mode == "ngrok":
             return self._start_ngrok()
-        cf = os.path.join(_BUNDLE_DIR, "cloudflared.exe")
+        from hxcore import arch as _hxarch
+        name = _hxarch.cloudflared_binary_name()
+        cf = os.path.join(_BUNDLE_DIR, name)
         if not os.path.exists(cf):
-            cf = os.path.join(_DATA_DIR, "bin", "cloudflared.exe")
+            cf = os.path.join(_DATA_DIR, "bin", name)
         if not os.path.exists(cf):
-            cf = os.path.join(_APP_DIR, "cloudflared.exe")
+            cf = os.path.join(_APP_DIR, name)
         if not os.path.exists(cf):
             cf = self._download_cloudflared()
         if not cf:
@@ -7187,35 +7540,36 @@ class HuimengAIClient:
 
         groups = [
             (T("工作台", "WORKSPACE"), [
-                (T("对话", "Chat"), ""),
-                (T("终端", "Terminal"), ""),
-                (T("服务端监控", "Server Monitor"), ""),
+                (T("对话", "Chat"), "", "chat"),
+                (T("终端", "Terminal"), "", "trace"),
+                (T("服务端监控", "Server Monitor"), "", "mon"),
             ]),
             (T("云端", "CLOUD"), [
-                (T("API 接口", "API"), ""),
-                ("Cloud hub", ""),
+                (T("API 接口", "API"), "", "api"),
+                ("Cloud hub", "", "cloud"),
             ]),
             (T("扩展", "EXTENSIONS"), [
-                (T("插件", "Plugins"), ""),
-                (T("工具", "Tools"), ""),
-                (T("崩溃报告", "Crash Reports"), ""),
-                (T("历史记录", "History"), ""),
-                (T("会话", "Sessions"), ""),
+                (T("插件", "Plugins"), "", "plugins"),
+                (T("模型", "Models"), "", "models"),
+                (T("工具", "Tools"), "", "tools"),
+                (T("崩溃报告", "Crash Reports"), "", "crash"),
+                (T("历史记录", "History"), "", "history"),
+                (T("会话", "Sessions"), "", "sessions"),
             ]),
             (T("项目", "PROJECT"), [
-                (T("文件", "Files"), ""),
-                (T("差异", "Diff"), ""),
+                (T("文件", "Files"), "", "files"),
+                (T("差异", "Diff"), "", "diff"),
             ]),
-            (None, [(T("赞助", "Support"), "")]),
+            (None, [(T("赞助", "Support"), "", "support")]),
             (T("安全与用量", "SECURITY & USAGE"), [
-                (T("审批与安全", "Approvals & Safety"), ""),
-                (T("用量与成本", "Usage & Cost"), ""),
+                (T("审批与安全", "Approvals & Safety"), "", "approvals"),
+                (T("用量与成本", "Usage & Cost"), "", "usage"),
             ]),
             (T("工具集", "TOOLKIT"), [
-                (T("截图取字", "OCR"), ""),
+                (T("截图取字", "OCR"), "", "ocr"),
             ]),
             (T("开发者", "DEVELOPER"), [
-                (T("Git 加速", "Git Acceleration"), ""),
+                (T("Git 加速", "Git Acceleration"), "", "git"),
             ]),
         ]
         try:
@@ -7227,6 +7581,8 @@ class HuimengAIClient:
         nav_parent = nav_scroll.inner
         self.nav_scroll = nav_scroll
         self._nav_rows = []
+        self._nav_row_by_key = {}
+        self._nav_key_by_row = []
         # 侧栏可视高度在启动过程中会变化多次（splash → 正式窗口）：
         # 画布每次改尺寸后都重新对齐选中项，避免只按初始的小高度算滚动量。
         try:
@@ -7240,16 +7596,15 @@ class HuimengAIClient:
             nav_scroll.canvas.bind("<Configure>", _on_nav_resize, add="+")
         except Exception:
             pass
-        idx = 0
         for group, entries in groups:
             if group:
                 tk.Frame(nav_parent, bg="#EEF1F6", height=1).pack(fill="x", padx=16, pady=(12, 0))
                 tk.Label(nav_parent, text=group, bg="#FFFFFF", fg="#475467",
                          font=(SIDEBAR_FONT, GROUP_FONT_PT, "bold")).pack(anchor="w", padx=18, pady=(10, 6))
-            for name, glyph in entries:
+            for name, glyph, page_key in entries:
                 if _uk is not None:
-                    nav = _uk.NavItem(nav_parent, text=name, active=(idx == 0),
-                                      on_click=lambda i=idx: self.select_nav(i),
+                    nav = _uk.NavItem(nav_parent, text=name, active=(not self._nav_rows),
+                                      on_click=lambda k=page_key: self.select_nav(k),
                                       width=SIDEBAR_W - 36, height=NAV_HEIGHT,
                                       font=(SIDEBAR_FONT, NAV_FONT_PT))
                     nav.pack(fill="x", padx=8, pady=3)
@@ -7264,33 +7619,49 @@ class HuimengAIClient:
                     lab.pack(side="left", fill="x", expand=True, ipady=8)
                     self._nav_rows.append((row, bar, lab))
                     for w in (row, lab):
-                        w.bind("<Button-1>", lambda e, i=idx: self.select_nav(i))
-                idx += 1
+                        w.bind("<Button-1>", lambda e, k=page_key: self.select_nav(k))
+                self._nav_row_by_key[page_key] = len(self._nav_rows) - 1
+                self._nav_key_by_row.append(page_key)
         foot = tk.Frame(side, bg="#FFFFFF")
         foot.pack(side="bottom", fill="x", pady=(10, 14), padx=20)
         self.side_status = tk.Label(foot, text="", anchor="w", justify="left", bg="#FFFFFF",
                                     fg="#667085", font=(SMALL_CJK, 10), pady=4)
         self.side_status.pack(fill="x")
 
-        # Ctrl+1..9 对应前 9 页；第 10 页用 Ctrl+0；第 11 页（差异，索引 10）不设快捷键。
+        # Ctrl+1..9 / Ctrl+0 对应侧栏前 10 项，按 page key 绑定，不受页面注册顺序影响。
         # 注意：Tk 没有 "Key-10" 这种 keysym，越界 register 会抛 TclError 直接让启动失败。
-        for i in range(10):
+        for i, page_key in enumerate(self._nav_key_by_row[:10]):
             keysym = "0" if i == 9 else str(i + 1)
-            self.root.bind("<Control-Key-%s>" % keysym, lambda e, x=i: self.select_nav(x))
+            self.root.bind("<Control-Key-%s>" % keysym, lambda e, k=page_key: self.select_nav(k))
         self.root.bind("<Control-Return>", lambda e: self.send_message())
-        self.select_nav(0)
+        self.select_nav("chat")
 
     def _nav_hover(self, idx, on):
         pass
 
-    def _ensure_page(self, idx):
+    def _resolve_page_key(self, page):
+        """把 page key（或兼容的注册序号）解析为稳定的页面 key。"""
+        if isinstance(page, str):
+            key = page.strip().lower()
+            if key in self._page_index:
+                return key
+            raise KeyError("unknown page key: %s" % page)
+        if isinstance(page, int):
+            if 0 <= page < len(PAGE_KEYS):
+                return PAGE_KEYS[page]
+            raise IndexError("page index out of range: %s" % page)
+        raise TypeError("page must be str or int")
+
+    def _ensure_page(self, page):
         try:
-            item = getattr(self, "_lazy_pages", {}).pop(idx, None)
+            key = self._resolve_page_key(page)
+            item = getattr(self, "_lazy_pages", {}).pop(key, None)
             if item:
                 frame, builder = item
                 builder(frame)
+            return key
         except Exception:
-            pass
+            return None
 
     def _scroll_nav_into_view(self, idx, attempt=0, seq=None):
         """让侧栏选中项滚动到可视区；布局未就绪时自动重试（最多 12 次 × 100ms）。
@@ -7327,15 +7698,18 @@ class HuimengAIClient:
         except Exception:
             pass
 
-    def select_nav(self, idx):
+    def select_nav(self, page):
         try:
+            key = self._resolve_page_key(page)
             if getattr(self, "_hxcrash", None):
-                self._hxcrash.mark_page(str(idx))
-            self._ensure_page(idx)
-            self.notebook.select(idx)
-            self._nav_active = idx
+                self._hxcrash.mark_page(key)
+            self._ensure_page(key)
+            self.notebook.select(self._page_index[key])
+            row_idx = self._nav_row_by_key.get(key, -1)
+            self._nav_active = row_idx
+            self._active_page_key = key
             for i, nav in enumerate(self._nav_rows):
-                active = (i == idx)
+                active = (i == row_idx)
                 if hasattr(nav, "set_active"):
                     try:
                         nav.set_active(active)
@@ -7350,12 +7724,13 @@ class HuimengAIClient:
                                   font=(SIDEBAR_FONT, NAV_FONT_PT, "bold") if active else (SIDEBAR_FONT, NAV_FONT_PT))
                     bar.configure(bg="#2563EB" if active else bg)
             self._ui_click("tab")
-            try:
-                self._nav_scroll_seq = getattr(self, "_nav_scroll_seq", 0) + 1
-                _seq = self._nav_scroll_seq
-                self.root.after(80, lambda i=idx, s=_seq: self._scroll_nav_into_view(i, 0, s))
-            except Exception:
-                pass
+            if row_idx >= 0:
+                try:
+                    self._nav_scroll_seq = getattr(self, "_nav_scroll_seq", 0) + 1
+                    _seq = self._nav_scroll_seq
+                    self.root.after(80, lambda i=row_idx, s=_seq: self._scroll_nav_into_view(i, 0, s))
+                except Exception:
+                    pass
         except Exception:
             pass
 
@@ -7806,7 +8181,7 @@ class HuimengAIClient:
             pass
         self._update_source_status()
         try:
-            self.select_nav(0)
+            self.select_nav("chat")
         except Exception:
             pass
         self.queue_message("system", "云端 API 已接入对话")
@@ -7985,7 +8360,7 @@ class HuimengAIClient:
                 self._ocr_last_text = value
                 if not value.startswith(("错误：", "识别失败：", "Error:", "Recognition failed:")):
                     self.input_var.set(value)
-                    self.select_nav(0)
+                    self.select_nav("chat")
                     return
         except Exception:
             pass
@@ -8016,6 +8391,13 @@ class HuimengAIClient:
             build_tools_page(self, parent)
         except Exception:
             ttk.Label(parent, text=T("工具内核未就绪", "Tools unavailable")).pack(padx=20, pady=20)
+
+    def build_models_tab(self, parent):
+        try:
+            from pages_modern import build_model_page
+            build_model_page(self, parent)
+        except Exception as exc:
+            ttk.Label(parent, text=T("模型页面未就绪：", "Models page unavailable: ") + str(exc)).pack(padx=20, pady=20)
 
     def build_plugins_tab(self, parent):
         try:
@@ -8173,25 +8555,29 @@ class HuimengAIClient:
 
     def _splash_tick(self):
         try:
-            pct, text = 12, "正在加载界面…"
+            candidate, text = 12, "正在加载界面…"
             if HOST.get("ready"):
-                pct, text = 35, "内置网关已启动…"
+                candidate, text = 35, "内置网关已启动…"
             if HOST.get("url"):
-                pct, text = 62, "公网隧道已建立…"
+                candidate, text = 62, "公网隧道已建立…"
             try:
                 vals = self.model_combo["values"]
                 if vals:
-                    pct, text = 85, "模型列表已就绪…"
+                    candidate, text = 85, "模型列表已就绪…"
             except Exception:
                 pass
             h = getattr(self, "_health", None) or {}
             if h.get("ok") and h.get("ollama"):
-                pct, text = 100, "启动完成"
+                candidate, text = 100, "启动完成"
+            current = float(SPLASH.get("pct", 0.0) or 0.0)
+            target = max(current, float(candidate))
             elapsed = time.time() - SPLASH.get("t0", time.time())
-            if pct >= 100 or elapsed > 1.6:
+            if target >= 100 or elapsed > 1.6:
                 splash_update(100, "启动完成")
                 self.root.after(180, self._splash_done)
                 return
+            if target > current:
+                splash_update(target, text)
         except Exception:
             pass
         self.root.after(160, self._splash_tick)
@@ -8336,9 +8722,56 @@ class HuimengAIClient:
             time.sleep(2)
 
 SPLASH = {}
+_STARTUP_STAGE_NAMES = ("config", "paths", "plugins", "services", "pages", "first_frame")
+
+
+def _splash_enabled():
+    """Return whether the optional Tk splash is enabled."""
+    return str(os.environ.get("HX_SPLASH", "1")).strip() != "0"
+
+
+def _run_startup_stages(stages, emit=None, timing_module=None):
+    """Run named startup callables, emitting boundaries from a worker-safe loop.
+
+    The callable list is intentionally dependency-free so headless smoke tests can
+    exercise progress and timing without constructing Tk.
+    """
+    timer = timing_module or _hxt
+    total = max(1, len(stages))
+    for index, item in enumerate(stages):
+        name, callback = item
+        if timer is not None:
+            try:
+                timer.stage(name, "start") if hasattr(timer, "stage") else timer.mark("%s:start" % name)
+            except Exception:
+                pass
+        if emit:
+            emit(("start", str(name), index / float(total)))
+        failed = None
+        try:
+            callback()
+        except Exception as exc:
+            failed = exc
+            if timer is not None:
+                try:
+                    timer.stage(name, "failed") if hasattr(timer, "stage") else timer.mark("stage:%s:failed" % name)
+                except Exception:
+                    pass
+            if emit:
+                emit(("error", str(name), index / float(total), exc))
+        if timer is not None:
+            try:
+                timer.stage(name, "end") if hasattr(timer, "stage") else timer.mark("%s:end" % name)
+            except Exception:
+                pass
+        if emit:
+            emit(("end", str(name), (index + 1) / float(total)))
 
 
 def _build_splash(root):
+    if not _splash_enabled():
+        return
+
     try:
         win = tk.Toplevel(root)
         win.overrideredirect(True)
@@ -8365,10 +8798,13 @@ def _build_splash(root):
 
 def splash_update(pct, text=None):
     try:
+        pct = max(0.0, min(100.0, float(pct)))
+        pct = max(float(SPLASH.get("pct", 0.0) or 0.0), pct)
+        SPLASH["pct"] = pct
         win = SPLASH.get("win")
         if not win or not win.winfo_exists():
             return
-        SPLASH["cv"].coords(SPLASH["bar"], 0, 0, 360 * max(0.0, min(100.0, pct)) / 100.0, 6)
+        SPLASH["cv"].coords(SPLASH["bar"], 0, 0, 360 * pct / 100.0, 6)
         if text:
             SPLASH["status"].config(text=text)
         win.update_idletasks()
@@ -8387,6 +8823,9 @@ def splash_close():
 
 
 def main():
+    if "--version" in sys.argv:
+        print(app_version())
+        return 0
     try:
         from hxcore import timing as _hxt_main
         _hxt_main.install()
@@ -8414,7 +8853,6 @@ def main():
         _build_splash(root)
         if _hxt_main:
             _hxt_main.mark("splash")
-        splash_update(8, "正在加载界面…")
     except Exception:
         pass
     try:
@@ -8430,8 +8868,61 @@ def main():
                 _shot_size = None
         except Exception:
             _shot_size = None
-    app = HuimengAIClient(root)
-    root.protocol("WM_DELETE_WINDOW", app._shutdown_app)
+    _startup_app = {}
+
+    def _startup_emit(event):
+        kind, name, fraction = event[:3]
+        percent = int(round(float(fraction) * 100.0))
+        label = {
+            "config": "配置", "paths": "路径", "plugins": "插件",
+            "services": "服务", "pages": "界面", "first_frame": "首帧",
+        }.get(str(name), str(name))
+        if kind == "error":
+            label = "%s（继续）" % label
+        splash_update(percent, "正在加载界面… %d%% · %s" % (percent, label))
+        try:
+            root.update_idletasks()
+            if kind == "end":
+                root.update()
+        except Exception:
+            pass
+
+    def _startup_config():
+        # Read the persisted configuration before constructing the client.
+        if os.path.isfile(CONFIG_FILE):
+            with open(CONFIG_FILE, "r", encoding="utf-8") as _cfg_file:
+                json.load(_cfg_file)
+
+    def _startup_paths():
+        from hxcore.paths import data_dir, ensure_dir, logs_dir
+        ensure_dir(data_dir())
+        ensure_dir(logs_dir())
+
+    def _startup_plugins():
+        # plugins_root creates/discovers the managed plugin directory without
+        # changing the existing opt-in loading policy.
+        from hxcore import plugins as _startup_plugins_module
+        _startup_plugins_module.plugins_root()
+        _startup_plugins_module.discover()
+
+    def _startup_services():
+        _startup_app["app"] = HuimengAIClient(root)
+
+    def _startup_pages():
+        root.protocol("WM_DELETE_WINDOW", _startup_app["app"]._shutdown_app)
+        root.update_idletasks()
+
+    def _startup_first_frame():
+        root.update_idletasks()
+
+    _run_startup_stages([
+        ("config", _startup_config), ("paths", _startup_paths),
+        ("plugins", _startup_plugins), ("services", _startup_services),
+        ("pages", _startup_pages), ("first_frame", _startup_first_frame),
+    ], emit=_startup_emit, timing_module=_hxt_main)
+    app = _startup_app.get("app")
+    if app is None:
+        raise RuntimeError("startup services did not create app")
     if "--shot-demo" in sys.argv:
         try:
             app.conversation_history = [{"role":"user","content":"请给我一个 Python 示例。"},{"role":"assistant","content":"## 示例说明\n- 使用 `pathlib`\n- 可直接运行\n\n```python\nfrom pathlib import Path\nprint(Path.cwd())\n```\n\n参考 https://python.org"},{"role":"user","content":"再解释长文本换行。"},{"role":"assistant","content":"这是一段较长的演示文本，用于验证 AI 气泡的左对齐、最大宽度以及多行换行效果。 " * 5}]
@@ -8453,7 +8944,13 @@ def main():
         root.update_idletasks()
     if _hxt_main:
         _hxt_main.mark("app_init")
-        root.after_idle(lambda: _hxt_main.ready())
+        root.after_idle(_hxt_main.ready)
+    if not _splash_enabled():
+        try:
+            splash_close()
+            root.deiconify()
+        except Exception:
+            pass
     shot_idx = None
     if "--shot-tab" in sys.argv:
         try:
@@ -8462,9 +8959,10 @@ def main():
             shot_idx = None
     if "--selftest" in sys.argv:
         try:
-            for _idx in range(17):
-                app.select_nav(_idx)
+            for _key in PAGE_KEYS:
+                app.select_nav(_key)
                 root.update()
+            splash_close()
             root.destroy()
             print("SELFTEST OK")
             return
@@ -8477,8 +8975,8 @@ def main():
             raise SystemExit(1)
     if shot_idx is not None:
         try:
-            if 0 <= shot_idx <= 16:
-                app.select_nav(shot_idx)
+            if 0 <= shot_idx < len(PAGE_KEYS):
+                app.select_nav(PAGE_KEYS[shot_idx])
             root.update()
             if shot_idx == 1 and getattr(app, "_term_view", None) is not None:
                 _root = app._term_view.widget().winfo_toplevel()

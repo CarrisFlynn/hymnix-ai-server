@@ -23,7 +23,13 @@ except Exception:
 
 
 def _t(app, zh: str, en: str) -> str:
-    """Return the Chinese or English string for the active UI language."""
+    """Translate using the application's locale mapping when available."""
+    translate = getattr(app, "T", None)
+    if callable(translate):
+        try:
+            return translate(zh, en)
+        except Exception:
+            pass
     lang = ""
     try:
         lang = str(getattr(app, "LANG", {}).get("cur") or "")
@@ -184,15 +190,17 @@ def build_crash_page(app, parent) -> None:
                             target.grid()
                     except Exception:
                         pass
+                controls.columnconfigure(0, weight=0)
+                controls.columnconfigure(1, weight=0)
                 expand = PillButton(controls, ui, _t(app, "展开堆栈", "Show stack"), command=toggle, kind="ghost", bg=theme["card"])
-                expand.grid(row=0, column=0, sticky="w")
+                expand.grid(row=0, column=0, sticky="w", padx=(0, ui.px(4)))
                 def copy_stack(value=str(report.get("traceback", "") or "")):
                     try:
                         ui.root.clipboard_clear()
                         ui.root.clipboard_append(value)
                     except Exception:
                         pass
-                PillButton(controls, ui, _t(app, "复制", "Copy"), command=copy_stack, kind="ghost", bg=theme["card"]).grid(row=0, column=1, sticky="w", padx=(ui.px(6), 0))
+                PillButton(controls, ui, _t(app, "复制", "Copy"), command=copy_stack, kind="ghost", bg=theme["card"]).grid(row=0, column=1, sticky="w", padx=(ui.px(4), 0))
                 report_path = pathlib.Path(str(report.get("path", "") or ""))
                 def open_folder(path=report_path):
                     try:
@@ -206,7 +214,7 @@ def build_crash_page(app, parent) -> None:
                                 subprocess.Popen(["xdg-open", str(folder)])
                     except Exception:
                         pass
-                PillButton(controls, ui, _t(app, "打开目录", "Open folder"), command=open_folder, kind="ghost", bg=theme["card"]).grid(row=0, column=2, sticky="w", padx=(ui.px(6), 0))
+                PillButton(controls, ui, _t(app, "打开目录", "Open folder"), command=open_folder, kind="ghost", bg=theme["card"]).grid(row=1, column=0, sticky="w", padx=(0, ui.px(4)), pady=(ui.px(2), 0))
                 def delete_report(path=report_path, holder=card):
                     try:
                         if path.is_file():
@@ -217,7 +225,7 @@ def build_crash_page(app, parent) -> None:
                             holder.destroy()
                     except Exception:
                         pass
-                PillButton(controls, ui, _t(app, "删除", "Delete"), command=delete_report, kind="ghost", bg=theme["card"]).grid(row=0, column=3, sticky="w", padx=(ui.px(6), 0))
+                PillButton(controls, ui, _t(app, "删除", "Delete"), command=delete_report, kind="ghost", bg=theme["card"]).grid(row=1, column=1, sticky="w", padx=(ui.px(4), 0), pady=(ui.px(2), 0))
             except Exception:
                 continue
         if remaining:

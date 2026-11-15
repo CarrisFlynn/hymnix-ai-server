@@ -53,6 +53,16 @@ def check(command,*,mode=None,origin="terminal"):
  elif mode=="readonly": decision="allow" if c["risk"]=="safe" else "deny"
  else: decision="allow" if c["risk"]=="safe" else "ask"
  return {"decision":decision,"risk":c["risk"],"reasons":c["reasons"],"mode":mode,"rule":c["rule"]}
+def approve_retry(tool, args, origin="tool"):
+  """Recheck and record each retry; an ask decision still needs explicit consent."""
+  try:
+   command="tool:"+str(tool)+" "+json.dumps(args,ensure_ascii=False,default=str)
+   decision=check(command,origin=origin)
+   record(decision,command)
+   return {"ok":decision.get("decision")=="allow","decision":decision}
+  except Exception as exc:
+   return {"ok":False,"decision":{"decision":"deny","risk":"unknown","reasons":[str(exc)],"mode":get_mode(),"rule":"retry_error"}}
+
 def rules():
  return [{"id":i,"pattern":p,"risk":r,"note":n} for i,p,r,n in _RULES]
 def record(decision,command):

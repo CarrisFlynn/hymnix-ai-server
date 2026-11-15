@@ -59,6 +59,8 @@ def show_approval_dialog(root, ui, tool, args, risk, reasons, on_decide):
         window.protocol("WM_DELETE_WINDOW", lambda: decide("deny", False))
         window.resizable(True, True)
         window.configure(bg=theme.get("bg", "#202124"))
+        narrow = root.winfo_width() < ui.px(540)
+        text_width = max(ui.px(180), root.winfo_width() - ui.px(100)) if narrow else ui.px(520)
         card = RoundedCard(window, ui, fill=theme.get("card", "#2a2b2e"), pad=16, radius=10)
         card.pack(fill="both", expand=True, padx=12, pady=12)
         body = card.body
@@ -66,7 +68,8 @@ def show_approval_dialog(root, ui, tool, args, risk, reasons, on_decide):
                font=ui.font_obj(14, "bold"), fg=theme.get("text", "#ffffff"),
                bg=theme.get("card", "#2a2b2e")).pack(anchor="w", pady=(0, 8))
         _label(body, text=tr("工具", "Tool") + ": " + str(tool),
-               fg=theme.get("text", "#ffffff"), bg=theme.get("card", "#2a2b2e")).pack(anchor="w")
+               fg=theme.get("text", "#ffffff"), bg=theme.get("card", "#2a2b2e"),
+               wraplength=text_width, justify="left").pack(anchor="w")
         normalized_risk = str(risk).lower()
         risk_specs = {
             "safe": (tr("安全", "Safe"), theme.get("ok", "#2e9d65")),
@@ -77,7 +80,7 @@ def show_approval_dialog(root, ui, tool, args, risk, reasons, on_decide):
         _tag(body, ui, risk_text, bg=theme.get("card", "#2a2b2e"), fill=risk_color, fg="#ffffff").pack(anchor="w", pady=(6, 10))
         _label(body, text=tr("参数预览", "Arguments"), font=ui.font_obj(10, "bold"),
                fg=theme.get("text", "#ffffff"), bg=theme.get("card", "#2a2b2e")).pack(anchor="w")
-        preview = tk.Text(body, height=6, wrap="word", relief="flat", bd=0,
+        preview = tk.Text(body, height=6, width=1, wrap="word", relief="flat", bd=0,
                           bg=theme.get("input_bg", theme.get("bg", "#202124")),
                           fg=theme.get("text", "#ffffff"), font=ui.font_obj(9, mono=True))
         preview.insert("1.0", _preview(tool, args))
@@ -88,26 +91,37 @@ def show_approval_dialog(root, ui, tool, args, risk, reasons, on_decide):
         reason_rows = reasons if isinstance(reasons, (list, tuple)) else [reasons]
         for reason in reason_rows:
             _label(body, text="• " + str(reason), fg=theme.get("text_muted", "#aaaaaa"),
-                   bg=theme.get("card", "#2a2b2e"), wraplength=ui.px(520), anchor="w", justify="left").pack(fill="x", anchor="w")
+                   bg=theme.get("card", "#2a2b2e"), wraplength=text_width, anchor="w", justify="left").pack(fill="x", anchor="w")
         buttons = tk.Frame(body, bg=theme.get("card", "#2a2b2e"))
         buttons.pack(fill="x", pady=(14, 0))
-        PillButton(buttons, ui, tr("拒绝", "Deny"), command=lambda: decide("deny", False),
-                   kind="ghost", bg=theme.get("card", "#2a2b2e")).pack(side="right", padx=(5, 0))
-        PillButton(buttons, ui, tr("本次运行内始终允许", "Always allow this run"),
-                   command=lambda: decide("allow", True), kind="ghost", bg=theme.get("card", "#2a2b2e")).pack(side="right", padx=(5, 0))
-        PillButton(buttons, ui, tr("允许一次", "Allow once"), command=lambda: decide("allow", False),
-                   kind="primary", bg=theme.get("card", "#2a2b2e")).pack(side="right")
+        row = tk.Frame(buttons, bg=theme.get("card", "#2a2b2e")) if narrow else buttons
+        deny = PillButton(row, ui, tr("拒绝", "Deny"), command=lambda: decide("deny", False),
+                          kind="ghost", bg=theme.get("card", "#2a2b2e"))
+        remember = PillButton(buttons, ui, tr("本次运行内始终允许", "Always allow this run"),
+                              command=lambda: decide("allow", True), kind="ghost", bg=theme.get("card", "#2a2b2e"))
+        once = PillButton(row, ui, tr("允许一次", "Allow once"), command=lambda: decide("allow", False),
+                          kind="primary", bg=theme.get("card", "#2a2b2e"))
+        if narrow:
+            remember.pack(side="top", anchor="e")
+            row.pack(side="top", anchor="e", pady=(ui.px(4), 0))
+            deny.pack(side="right", padx=(ui.px(5), 0))
+            once.pack(side="right")
+        else:
+            deny.pack(side="right", padx=(5, 0))
+            remember.pack(side="right", padx=(5, 0))
+            once.pack(side="right")
         try:
             window.update_idletasks()
-            w = max(560, min(760, window.winfo_reqwidth()))
-            h = max(480, min(720, window.winfo_reqheight()))
+            max_width = root.winfo_width() if narrow else 760
+            w = max(320 if narrow else 560, min(max_width, window.winfo_reqwidth()))
+            h = max(420 if narrow else 480, min(720, window.winfo_reqheight()))
             try:
                 rx = root.winfo_rootx() + max(0, (root.winfo_width() - w) // 2)
                 ry = root.winfo_rooty() + max(0, (root.winfo_height() - h) // 3)
                 window.geometry("%dx%d+%d+%d" % (int(w), int(h), int(rx), int(ry)))
             except Exception:
                 window.geometry("%dx%d" % (int(w), int(h)))
-            window.minsize(520, 420)
+            window.minsize(320 if narrow else 520, 420)
             window.lift()
         except Exception:
             pass

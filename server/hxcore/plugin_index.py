@@ -30,6 +30,9 @@ def _source(source_id=None):
 
 def _valid_plugin(item):
     if not isinstance(item,dict) or any(k not in item for k in _REQUIRED): return False
+    if "schema_version" not in item: item["schema_version"]=1; item["legacy"]=True
+    if "capabilities" not in item: item["capabilities"]=["tool"]; item["legacy"]=True
+    if not isinstance(item.get("capabilities"),list): return False
     if not isinstance(item["id"],str) or not _ID.fullmatch(item["id"]):return False
     if not isinstance(item["name"],str) or not item["name"].strip() or not isinstance(item["version"],str) or not item["version"].strip():return False
     if item["apiVersion"]!="1" or not isinstance(item["entry"],str) or not item["entry"]:return False

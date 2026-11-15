@@ -35,6 +35,12 @@ def marks() -> dict:
         return {}
 
 
+def stage(name: str, phase: str = "end") -> float:
+    """Record a named startup stage boundary without raising."""
+    safe = str(name or "stage").strip() or "stage"
+    return mark("%s:%s" % (safe, str(phase or "end").strip() or "end"))
+
+
 def install(enabled: bool | None = None) -> None:
     global _ENABLED, _ATEXIT_REGISTERED
     try:

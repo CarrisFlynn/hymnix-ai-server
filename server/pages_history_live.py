@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
+import time
+import traceback
 import tkinter as tk
 import threading
 import queue
@@ -15,6 +18,15 @@ except Exception:
     _label = _separator = None
 
 __all__ = ["build_history_page", "build"]
+
+
+def _log_export_error():
+    from hxcore.paths import logs_dir
+    folder = logs_dir()
+    os.makedirs(folder, exist_ok=True)
+    detail = traceback.format_exc().rstrip().replace("\r", "\\r").replace("\n", "\\n")
+    with open(os.path.join(folder, "history-export-error.log"), "a", encoding="utf-8", newline="\n") as log:
+        log.write(time.strftime("%Y-%m-%d %H:%M:%S") + " history export failed: " + detail + "\n")
 
 
 def _translator(app, ui):
@@ -58,6 +70,24 @@ def build_history_page(app, parent) -> None:
         theme = ui.theme
         page = ScrollPage(parent, ui)
         page.pack(fill="both", expand=True)
+        after_jobs = set()
+        def schedule_after(delay, callback):
+            ident = None
+            def run():
+                if ident is not None: after_jobs.discard(ident)
+                try:
+                    if page.winfo_exists(): callback()
+                except tk.TclError: pass
+            ident = page.after(delay, run)
+            after_jobs.add(ident)
+            return ident
+        def cancel_page_jobs(event):
+            if event.widget is not page: return
+            for ident in tuple(after_jobs):
+                try: page.after_cancel(ident)
+                except tk.TclError: pass
+            after_jobs.clear()
+        page.bind("<Destroy>", cancel_page_jobs, add="+")
         content = page.content
         content.columnconfigure(0, weight=1)
         header = tk.Frame(content, bg=theme["bg"])
@@ -109,6 +139,48 @@ def build_history_page(app, parent) -> None:
         lb.columnconfigure(0, weight=1); rb.columnconfigure(0, weight=1)
         _label(lb, text=t("会话", "Sessions"), font=ui.font_obj(12, "bold"), fg=theme["text"], bg=theme["card"]).grid(row=0, column=0, sticky="w")
         _label(rb, text=t("消息", "Messages"), font=ui.font_obj(12, "bold"), fg=theme["text"], bg=theme["card"]).grid(row=0, column=0, sticky="w")
+        def delete_selected():
+            sid = state.get("selected")
+            if not sid: return
+            from tkinter import messagebox
+            if not messagebox.askyesno(t("删除会话", "Delete session"), t("删除前会自动备份。确定删除所选会话？", "The session will be backed up before deletion. Delete it?"), parent=parent): return
+            from hxcore import sessions as session_store
+            result = session_store.delete(sid)
+            if result.get("ok"):
+                state["selected"] = ""
+                load(query.get().strip())
+                try:
+                    if messagebox.askyesno(t("恢复会话", "Restore session"), t("已备份。现在恢复该会话？", "Backup created. Restore this session now?"), parent=parent):
+                        restored = session_store.restore(sid, result.get("backup", ""))
+                        if not restored.get("ok"): messagebox.showerror(t("恢复失败", "Restore failed"), restored.get("error", "io_error"), parent=parent)
+                        load(query.get().strip())
+                except Exception: pass
+            else:
+                messagebox.showerror(t("删除失败", "Delete failed"), result.get("error", "not_found"), parent=parent)
+
+        def export_selected(fmt):
+            sid=state.get("selected")
+            if not sid: return
+            try:
+                from tkinter import filedialog
+                path=filedialog.asksaveasfilename(defaultextension=".md" if fmt=="markdown" else ".json", filetypes=[("Markdown","*.md"),("JSON","*.json")])
+                if not path: return
+                from hxcore import history
+                history.export_session(sid,path,fmt)
+            except Exception as exc:
+                try:
+                    _log_export_error()
+                except Exception:
+                    pass  # A log failure must not hide the export error from the user.
+                from tkinter import messagebox
+                prefix = t("导出失败：", "Export failed: ")
+                reason = " ".join(str(exc).split()) or type(exc).__name__
+                width = max(0, 200 - len(prefix))
+                messagebox.showerror(t("导出失败", "Export failed"), prefix + reason[:width], parent=parent)
+        export_bar=tk.Frame(rb,bg=theme["card"]); export_bar.grid(row=0,column=1,sticky="e")
+        tk.Button(export_bar,text="JSON",command=lambda:export_selected("json"),relief="flat").pack(side="left")
+        tk.Button(export_bar,text="Markdown",command=lambda:export_selected("markdown"),relief="flat").pack(side="left")
+        tk.Button(export_bar,text=t("删除", "Delete"),command=delete_selected,relief="flat").pack(side="left")
         session_list = tk.Frame(lb, bg=theme["card"]); session_list.grid(row=1, column=0, sticky="nsew", pady=(ui.px(8), 0))
         message_list = tk.Frame(rb, bg=theme["card"]); message_list.grid(row=1, column=0, sticky="nsew", pady=(ui.px(8), 0))
         state = {"sessions": [], "selected": "", "after": None, "shown": 50, "msg_shown": 100, "results": queue.Queue(), "seq": 0, "busy": False}
@@ -120,9 +192,9 @@ def build_history_page(app, parent) -> None:
             def run():
                 try:
                     from hxcore import history
-                    if kind == "messages": value = history.messages(kwargs["sid"])
+                    if kind == "messages": value = history.messages(kwargs["sid"], limit=kwargs.get("limit", 100), offset=kwargs.get("offset", 0))
                     else:
-                        value = history.search(kwargs.get("term", "")) if kwargs.get("term") else history.sessions()
+                        value = history.sessions(query=kwargs.get("term", ""), limit=kwargs.get("limit", 50), offset=kwargs.get("offset", 0))
                         value = _as_list(value)[:kwargs.get("limit", 50)]
                     state["results"].put((seq, kind, _as_list(value), None))
                 except Exception as exc: state["results"].put((seq, kind, [], str(exc)))
@@ -137,7 +209,7 @@ def build_history_page(app, parent) -> None:
                     elif kind == "messages": render_messages(value)
                     else: render_sessions(value)
             except queue.Empty: pass
-            try: page.after(60, poll_results)
+            try: schedule_after(60, poll_results)
             except tk.TclError: pass
 
         def show_messages(sid):
@@ -156,7 +228,7 @@ def build_history_page(app, parent) -> None:
                 text = msg.get("content") or msg.get("text") or msg.get("message") or ""
                 _label(message_list, text=str(text), font=ui.font_obj(9), fg=theme["text"], bg=theme["card"], justify="left", anchor="w", wraplength=500).pack(fill="x", pady=(ui.px(3), ui.px(6)))
             if len(state["messages"]) >= state["msg_shown"]:
-                tk.Button(message_list, text=t("加载更多", "Load more"), command=lambda: (state.__setitem__("msg_shown", state["msg_shown"] + 100), start_worker("messages", sid=state["selected"], limit=state["msg_shown"])), relief="flat").pack(anchor="w")
+                tk.Button(message_list, text=t("加载更多", "Load more"), command=lambda: (state.__setitem__("msg_shown", state["msg_shown"] + 100), start_worker("messages", sid=state["selected"], limit=100, offset=state["msg_shown"]-100)), relief="flat").pack(anchor="w")
             else:
                 _label(message_list, text=t("已全部加载", "All loaded"), font=ui.font_obj(8), fg=theme["text_muted"], bg=theme["card"]).pack(anchor="w")
 
@@ -178,7 +250,7 @@ def build_history_page(app, parent) -> None:
                 row.bind("<Button-1>", lambda _e, value=sid: show_messages(value))
                 for child in row.winfo_children(): child.bind("<Button-1>", lambda _e, value=sid: show_messages(value))
             if remaining:
-                more = tk.Button(session_list, text=t("加载更多（剩余 %d）", "Load more (%d remaining)") % remaining, command=lambda: (state.__setitem__("shown", state["shown"] + 50), start_worker("sessions", term=query.get().strip(), limit=state["shown"])), relief="flat")
+                more = tk.Button(session_list, text=t("加载更多（剩余 %d）", "Load more (%d remaining)") % remaining, command=lambda: (state.__setitem__("shown", state["shown"] + 50), start_worker("sessions", term=query.get().strip(), limit=50, offset=state["shown"]-50)), relief="flat")
                 more.pack(anchor="w", pady=(ui.px(6), 0))
         def load(term=""):
             state["shown"] = 50
@@ -189,7 +261,7 @@ def build_history_page(app, parent) -> None:
             if state["after"]:
                 try: page.after_cancel(state["after"])
                 except Exception: pass
-            state["after"] = page.after(300, lambda: load(query.get().strip()))
+            state["after"] = schedule_after(300, lambda: load(query.get().strip()))
         query.trace_add("write", debounce)
         try:
             refresh_btn = PillButton(header, ui, t("刷新", "Refresh"),
@@ -197,7 +269,7 @@ def build_history_page(app, parent) -> None:
             refresh_btn.grid(row=0, column=2, rowspan=3, sticky="e", padx=(ui.px(8), 0))
         except Exception:
             pass
-        page.after(60, poll_results)
+        schedule_after(60, poll_results)
         load()
         page.bind_wheel()
     except Exception:

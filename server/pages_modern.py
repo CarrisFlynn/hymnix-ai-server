@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import sys
 import tkinter as tk
+from tkinter import ttk
 import tkinter.font as tkfont
 import webbrowser
 
@@ -32,6 +33,8 @@ __all__ = [
     "SUPPORT_EMAIL",
     "DEFAULT_THEME",
     "build_plugins_page",
+    "DownloadState",
+    "build_model_page",
     "build_sponsor_page",
     "RoundedCard",
     "PillButton",
@@ -943,7 +946,466 @@ def _separator(parent, ui):
     return tk.Frame(parent, bg=ui.theme["sep"], height=1)
 
 
+# ==================== 模型页 ====================
+
+
+class DownloadState:
+    """Pure download lifecycle state suitable for worker/UI coordination."""
+    transitions = {"idle": {"starting"}, "starting": {"downloading", "failed", "cancelled"}, "downloading": {"downloading", "cancelled", "failed", "complete"}, "cancelled": {"starting"}, "failed": {"starting"}, "complete": {"starting"}}
+
+    def __init__(self):
+        self.status = "idle"
+        self.percent = 0.0
+        self.speed = ""
+        self.eta = ""
+        self.error = ""
+        self.detail = ""
+
+    def transition(self, status, percent=None, speed=None, eta=None, error=None, detail=None):
+        if status not in self.transitions.get(self.status, set()):
+            raise ValueError("invalid download transition: %s -> %s" % (self.status, status))
+        self.status = status
+        if percent is not None: self.percent = max(0.0, min(100.0, float(percent)))
+        if speed is not None: self.speed = str(speed)
+        if eta is not None: self.eta = str(eta)
+        if error is not None: self.error = str(error)
+        if detail is not None: self.detail = str(detail)
+        if status == "starting": self.percent, self.error, self.detail = 0.0, "", ""
+        return self
+
+
+def _norm_model(name):
+    text = str(name or "").strip().lower()
+    return text[:-7] if text.endswith(":latest") else text
+
+
+def _model_library(app):
+    """Return the curated model catalogue without importing the app module."""
+    library = getattr(app, "model_library", None)
+    if isinstance(library, dict):
+        return library
+    for module_name in ("hymnix_main", "__main__"):
+        module = sys.modules.get(module_name)
+        candidate = getattr(module, "MODEL_LIBRARY", None) if module else None
+        if isinstance(candidate, dict):
+            return candidate
+    return {}
+
+
+def _installed_names(manager):
+    try:
+        raw = manager.get_available_models() if manager else []
+    except Exception:
+        return []
+    names = []
+    for item in raw or []:
+        name = str(item.get("name", "") if isinstance(item, dict) else item).strip()
+        if name:
+            names.append(name)
+    return names
+
+
+def _format_size(info):
+    if not isinstance(info, dict):
+        return ""
+    size = info.get("size")
+    return str(size).strip() if size else ""
+
+
+def build_model_page(app, parent):
+    """Model inventory with source/size columns, live progress, cancel and retry."""
+    ui = _UI(app, parent)
+    theme = ui.theme
+    page = ScrollPage(parent, ui)
+    page.pack(fill="both", expand=True)
+    content = page.content
+    _page_header(
+        content, ui, "MODELS", ui.t("模型", "Models"),
+        ui.t("查看模型来源与体积；下载可取消，失败可重试。",
+             "See where each model comes from and its size; downloads can be cancelled and retried."),
+    ).grid(row=0, column=0, sticky="ew", pady=(0, ui.px(12)))
+    card = RoundedCard(content, ui, fill=theme["card"], pad=14, radius=12)
+    card.grid(row=1, column=0, sticky="ew")
+    body = card.body
+    body.columnconfigure(0, weight=1)
+
+    manager = getattr(app, "ollama_manager", None)
+    library = _model_library(app)
+    source_default = ui.t("Ollama 官方源", "Ollama official")
+    source_local = ui.t("本机", "Local")
+    card_bg = theme["card"]
+    muted = theme["text_muted"]
+    dim = theme.get("text_dim", muted)
+    state = DownloadState()
+    installed_names = []
+    row_map = {}
+    current = {"model": ""}
+    service = {"installed": False, "running": False}
+
+    _label(
+        body,
+        text=ui.t("下载来源：Ollama 官方源 · registry.ollama.ai",
+                  "Download source: Ollama official registry · registry.ollama.ai"),
+        font=ui.font_obj(9), fg=muted, bg=card_bg,
+    ).grid(row=0, column=0, sticky="w")
+
+    toolbar = tk.Frame(body, bg=card_bg)
+    toolbar.grid(row=1, column=0, sticky="ew", pady=(ui.px(6), ui.px(4)))
+    search_var = tk.StringVar(value="")
+    search_entry = tk.Entry(
+        toolbar, textvariable=search_var, width=18, relief="flat", bd=0,
+        bg=theme.get("input_bg", "#FBFCFE"), fg=theme["text"], insertbackground=theme["text"],
+        highlightthickness=1, highlightbackground=theme["sep"], highlightcolor=theme["accent"],
+        font=ui.font_obj(10),
+    )
+    search_entry.pack(side="left", ipady=ui.px(4), padx=(0, ui.px(6)))
+    _label(toolbar, text=ui.t("搜索", "Search"), font=ui.font_obj(9), fg=muted, bg=card_bg).pack(
+        side="left", padx=(0, ui.px(12)))
+    categories = [ui.t("全部", "All")]
+    categories += sorted({
+        str(info.get("category") or "").strip()
+        for info in library.values()
+        if isinstance(info, dict) and str(info.get("category") or "").strip()
+    })
+    cat_var = tk.StringVar(value=categories[0])
+    cat_box = ttk.Combobox(toolbar, textvariable=cat_var, values=categories, state="readonly",
+                           width=8, font=ui.font_obj(9))
+    cat_box.pack(side="left")
+    only8g = tk.BooleanVar(value=False)
+    tk.Checkbutton(
+        toolbar, text=ui.t("只看 8G 能跑", "8G-friendly only"), variable=only8g,
+        bg=card_bg, fg=theme["text"], activebackground=card_bg, activeforeground=theme["text"],
+        selectcolor=card_bg, font=ui.font_obj(9), highlightthickness=0, bd=0,
+    ).pack(side="left", padx=(ui.px(10), 0))
+    PillButton(toolbar, ui, ui.t("刷新", "Refresh"), command=lambda: reload(), kind="ghost").pack(side="right")
+
+    tree_wrap = tk.Frame(body, bg=card_bg)
+    tree_wrap.grid(row=2, column=0, sticky="nsew", pady=(ui.px(4), ui.px(2)))
+    tree_wrap.columnconfigure(0, weight=1)
+    tree_wrap.rowconfigure(0, weight=1)
+    columns = ("model", "state", "size", "source")
+    tree = ttk.Treeview(tree_wrap, columns=columns, show="headings", height=9, selectmode="browse")
+    for column, text, width, anchor in (
+        ("model", ui.t("模型", "Model"), 220, tk.W),
+        ("state", ui.t("状态", "Status"), 80, tk.CENTER),
+        ("size", ui.t("体积", "Size"), 80, tk.E),
+        ("source", ui.t("来源", "Source"), 140, tk.W),
+    ):
+        tree.heading(column, text=text)
+        tree.column(column, width=ui.px(width), anchor=anchor, stretch=(column == "model"))
+    scrollbar = ttk.Scrollbar(tree_wrap, orient="vertical", command=tree.yview)
+    tree.configure(yscrollcommand=scrollbar.set)
+    tree.grid(row=0, column=0, sticky="nsew")
+    scrollbar.grid(row=0, column=1, sticky="ns")
+
+    info_var = tk.StringVar(value=ui.t("选择模型查看说明。", "Select a model for details."))
+    _label(body, textvariable=info_var, font=ui.font_obj(9), fg=muted, bg=card_bg,
+           justify="left", anchor="w", wraplength=ui.px(640)).grid(
+        row=3, column=0, sticky="ew", pady=(ui.px(2), ui.px(4)))
+    status = tk.StringVar(value=ui.t("正在读取模型列表…", "Loading models…"))
+    detail_var = tk.StringVar(value="")
+    bar = ttk.Progressbar(body, maximum=100)
+    bar.grid(row=4, column=0, sticky="ew", pady=(ui.px(2), ui.px(2)))
+    _label(body, textvariable=status, font=ui.font_obj(9), fg=muted, bg=card_bg).grid(
+        row=5, column=0, sticky="w")
+    _label(body, textvariable=detail_var, font=ui.font_obj(8), fg=dim, bg=card_bg).grid(
+        row=6, column=0, sticky="w")
+
+    buttons = tk.Frame(body, bg=card_bg)
+    buttons.grid(row=7, column=0, sticky="w", pady=(ui.px(8), 0))
+    action_btn = PillButton(buttons, ui, ui.t("下载", "Download"), command=lambda: download())
+    action_btn.pack(side="left", padx=(0, ui.px(8)))
+    cancel_btn = PillButton(buttons, ui, ui.t("取消下载", "Cancel download"),
+                            command=lambda: cancel(), kind="ghost")
+    cancel_btn.pack(side="left")
+    PillButton(buttons, ui, ui.t("启动服务", "Start service"),
+               command=lambda: start_service(), kind="ghost").pack(side="left", padx=(ui.px(8), 0))
+
+    def page_alive():
+        try:
+            return bool(page.winfo_exists())
+        except Exception:
+            return False
+
+    def check_service():
+        try:
+            service["installed"] = bool(manager and manager.is_ollama_installed())
+        except Exception:
+            service["installed"] = False
+        try:
+            service["running"] = bool(manager and manager.is_service_running())
+        except Exception:
+            service["running"] = False
+        return service
+
+    def selected_model():
+        selection = tree.selection()
+        return str(selection[0]) if selection else ""
+
+    def is_busy():
+        return state.status in ("starting", "downloading")
+
+    def update_action():
+        if is_busy():
+            action_btn.set_text(ui.t("下载中…", "Downloading…"))
+        elif state.status in ("failed", "cancelled"):
+            action_btn.set_text(ui.t("重试", "Retry"))
+        else:
+            row = row_map.get(selected_model())
+            if row and row.get("installed"):
+                action_btn.set_text(ui.t("重新下载", "Re-download"))
+            else:
+                action_btn.set_text(ui.t("下载", "Download"))
+
+    def visible_rows():
+        keyword = search_var.get().strip().lower()
+        category = cat_var.get()
+        all_category = categories[0]
+        normalized_library = {_norm_model(key): (key, info) for key, info in library.items()}
+        rows = []
+        used = set()
+        for name in installed_names:
+            entry = normalized_library.get(_norm_model(name))
+            rows.append({"id": name, "info": entry[1] if entry else {}, "installed": True})
+            used.add(_norm_model(name))
+        for key, info in library.items():
+            if _norm_model(key) in used:
+                continue
+            rows.append({"id": key, "info": info if isinstance(info, dict) else {},
+                         "installed": False})
+        result = []
+        for row in rows:
+            info = row["info"]
+            mid = row["id"]
+            desc = str(info.get("desc") or "")
+            if category and category != all_category and info.get("category") != category:
+                continue
+            if only8g.get() and not row["installed"] and not info.get("fits8g", True):
+                continue
+            haystack = " ".join((
+                mid.lower(), desc.lower(), str(info.get("name") or "").lower(),
+                str(info.get("category") or "").lower(),
+            ))
+            if keyword and keyword not in haystack:
+                continue
+            result.append(row)
+        return result
+
+    def update_info():
+        mid = selected_model()
+        if not mid:
+            info_var.set(ui.t("选择模型查看说明。", "Select a model for details."))
+            update_action()
+            return
+        row = row_map.get(mid) or {"info": library.get(mid, {}), "installed": False}
+        info = row.get("info") or {}
+        bits = [mid]
+        if info.get("name"):
+            bits.append(str(info["name"]))
+        size = _format_size(info)
+        if size:
+            bits.append(ui.t("体积 ", "Size ") + size)
+        try:
+            if info.get("vram"):
+                bits.append(ui.t("建议显存 ", "VRAM ") + ("%.1fG" % float(info["vram"])))
+        except Exception:
+            pass
+        if info.get("desc"):
+            bits.append(str(info["desc"]))
+        bits.append(source_local if row.get("installed") else source_default)
+        info_var.set(" · ".join(str(bit) for bit in bits if bit))
+        update_action()
+
+    def refresh_rows(keep=None):
+        previous = keep if keep and tree.exists(keep) else selected_model()
+        tree.delete(*tree.get_children())
+        row_map.clear()
+        rows = visible_rows()
+        for row in rows:
+            mid = row["id"]
+            info = row["info"]
+            state_text = ui.t("已安装", "Installed") if row["installed"] else ui.t("可下载", "Available")
+            size = _format_size(info) or "—"
+            source = source_local if row["installed"] else source_default
+            tree.insert("", "end", iid=mid, values=(mid, state_text, size, source))
+            row_map[mid] = row
+        if previous and tree.exists(previous):
+            tree.selection_set(previous)
+        elif rows and tree.exists(rows[0]["id"]):
+            tree.selection_set(rows[0]["id"])
+        if state.status == "idle":
+            if not service["installed"]:
+                status.set(ui.t("未安装 Ollama，请先安装后再管理模型。",
+                                "Ollama is not installed. Install it before managing models."))
+            elif not service["running"]:
+                status.set(ui.t("Ollama 服务未运行；下载前请先启动服务。",
+                                "Ollama service is not running. Start it before downloading."))
+            else:
+                status.set(ui.t("可下载 %d 个 · 已安装 %d 个",
+                                "%d available · %d installed") % (len(library), len(installed_names)))
+        update_info()
+
+    def reload(keep=None):
+        nonlocal installed_names
+        check_service()
+        installed_names = _installed_names(manager)
+        refresh_rows(keep)
+
+    def apply_progress(info):
+        if not page_alive():
+            return
+        info = info if isinstance(info, dict) else {}
+        try:
+            percent = float(info.get("percent", state.percent))
+        except Exception:
+            percent = state.percent
+        percent = max(0.0, min(100.0, percent))
+        if state.status == "starting":
+            try:
+                state.transition("downloading")
+            except Exception:
+                pass
+        if state.status == "downloading":
+            try:
+                state.transition("downloading", percent=percent, speed=info.get("speed") or "",
+                                 detail=info.get("detail") or "")
+            except Exception:
+                state.percent = percent
+        bar["value"] = percent
+        status.set(str(info.get("status") or ui.t("下载中…", "Downloading…")))
+        detail_var.set(str(info.get("detail") or "")[:180])
+        update_action()
+
+    def finish(ok, message):
+        if not page_alive():
+            return
+        message = str(message or "").strip()
+        if ok:
+            try:
+                state.transition("complete", percent=100)
+            except Exception:
+                state.status, state.percent = "complete", 100.0
+            bar["value"] = 100
+            status.set(ui.t("下载完成：", "Download complete: ") + current["model"])
+            detail_var.set("")
+            reload(keep=current["model"])
+        elif ("取消" in message) or ("cancel" in message.lower()):
+            try:
+                state.transition("cancelled")
+            except Exception:
+                state.status = "cancelled"
+            status.set(ui.t("已取消下载，可重试。", "Download cancelled. Retry available."))
+            detail_var.set("")
+            update_action()
+        else:
+            try:
+                state.transition("failed", error=message)
+            except Exception:
+                state.status, state.error = "failed", message
+            status.set(ui.t("下载失败，可重试。", "Download failed. Retry available."))
+            detail_var.set((message.splitlines()[0] if message else "")[:180])
+            update_action()
+
+    def download():
+        if is_busy():
+            return
+        mid = selected_model()
+        if not mid:
+            status.set(ui.t("请先选择模型。", "Select a model first."))
+            return
+        check_service()
+        if not service["installed"]:
+            status.set(ui.t("请先安装 Ollama，再下载模型。",
+                            "Install Ollama before downloading models."))
+            return
+        if not service["running"]:
+            status.set(ui.t("Ollama 服务未运行，请先点击「启动服务」。",
+                            "Ollama service is not running. Click Start service first."))
+            return
+        downloader = getattr(app, "download_model", None)
+        if not callable(downloader):
+            dialog = getattr(app, "download_model_dialog", None)
+            if callable(dialog):
+                dialog()
+                status.set(ui.t("已打开模型管理器", "Model manager opened"))
+            else:
+                status.set(ui.t("当前版本没有可用的下载入口。",
+                                "No download entry point is available in this build."))
+            return
+        current["model"] = mid
+        try:
+            state.transition("starting")
+        except Exception:
+            state.status, state.percent, state.error, state.detail = "starting", 0.0, "", ""
+        bar["value"] = 0
+        detail_var.set("")
+        status.set(ui.t("正在启动下载…", "Starting download…"))
+        update_action()
+        try:
+            downloader(mid, on_progress=apply_progress, on_done=finish)
+        except TypeError:
+            try:
+                downloader(mid)
+                status.set(ui.t("已交由下载对话框处理", "Handled by the download dialog"))
+            except Exception as exc:
+                finish(False, str(exc))
+        except Exception as exc:
+            finish(False, str(exc))
+
+    def cancel():
+        if not is_busy():
+            status.set(ui.t("当前没有进行中的下载。", "No download in progress."))
+            return
+        stopper = getattr(app, "cancel_model_download", None)
+        if not callable(stopper):
+            status.set(ui.t("当前版本不支持取消下载。",
+                            "This build cannot cancel downloads."))
+            return
+        try:
+            requested = stopper()
+        except Exception as exc:
+            status.set(ui.t("取消失败：", "Cancel failed: ") + str(exc))
+            return
+        if requested is False:
+            status.set(ui.t("下载已经结束。", "The download has already finished."))
+        else:
+            status.set(ui.t("正在取消下载…", "Cancelling download…"))
+            detail_var.set("")
+
+    def start_service():
+        status.set(ui.t("正在启动模型服务…", "Starting model service…"))
+        try:
+            running = bool(manager and manager.is_service_running())
+            if not running:
+                starter = getattr(app, "start_ollama_service", None)
+                if not callable(starter):
+                    starter = getattr(manager, "start_ollama_service", None)
+                if not callable(starter):
+                    raise RuntimeError("Ollama service starter is unavailable")
+                result = starter()
+                if isinstance(result, tuple) and result and not result[0]:
+                    raise RuntimeError(str(result[1] if len(result) > 1 else "service start failed"))
+            check_service()
+            if service["running"]:
+                status.set(ui.t("Ollama 服务正在运行", "Ollama service is running"))
+                reload()
+            else:
+                raise RuntimeError(ui.t("服务启动后仍未运行", "Service is not running after start"))
+        except Exception as exc:
+            status.set(ui.t("启动失败：", "Start failed: ") + str(exc))
+
+    tree.bind("<<TreeviewSelect>>", lambda _event=None: update_info())
+    search_var.trace_add("write", lambda *_args: refresh_rows())
+    cat_var.trace_add("write", lambda *_args: refresh_rows())
+    only8g.trace_add("write", lambda *_args: refresh_rows())
+    reload()
+    return page
+
+
+
+
 # ==================== 插件页 ====================
+
 
 def build_plugins_page(app, parent):
     """构建「插件与能力」页。返回页面 Frame，可忽略。"""

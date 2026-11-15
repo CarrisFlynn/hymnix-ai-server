@@ -16,6 +16,10 @@ try:
     import updater
 except Exception:  # pragma: no cover
     updater = None
+try:
+    from hxcore import channels
+except Exception:  # pragma: no cover
+    channels = None
 
 
 def _T(zh, en):
@@ -24,6 +28,17 @@ def _T(zh, en):
         return hymnix_main.T(zh, en)
     except Exception:
         return zh
+
+
+def _scale(widget):
+    try:
+        return max(1.0, min(3.0, float(widget.winfo_fpixels("1i")) / 96.0))
+    except Exception:
+        return 1.0
+
+
+def _px(widget, value, minimum=1):
+    return max(minimum, int(round(float(value) * _scale(widget))))
 
 
 def _style_btn(btn, name):
@@ -42,6 +57,8 @@ class UpdateDialog(tk.Toplevel):
         self.result = None
         self._cancel = threading.Event()
         self._closed = False
+        self._check_seq = 0
+        self._verified_path = None
 
         self.title(_T("检查更新", "Check for updates"))
         self.transient(master)
@@ -51,18 +68,30 @@ class UpdateDialog(tk.Toplevel):
         except Exception:
             pass
 
-        frm = ttk.Frame(self, style="Card.TFrame", padding=20)
+        self._scale_factor = _scale(self)
+        available_width = max(_px(self, 240), min(_px(self, 460), self.winfo_screenwidth() - _px(self, 40)))
+        self._available_width = available_width
+        frm = ttk.Frame(self, style="Card.TFrame", padding=_px(self, 20))
         frm.pack(fill="both", expand=True)
 
         self.lbl_title = ttk.Label(frm, text=_T("正在检查更新…", "Checking for updates…"),
                                    style="H1.TLabel")
         self.lbl_title.pack(anchor="w")
+        self.channel_var = tk.StringVar(value=self._current_channel())
+        channel_row = ttk.Frame(frm, style="Card.TFrame")
+        channel_row.pack(fill="x", pady=(6, 4))
+        ttk.Label(channel_row, text=_T("更新通道", "Update channel")).pack(side="left")
+        self.channel_box = ttk.Combobox(channel_row, state="readonly", width=12,
+                                        values=("稳定 / Stable", "预览 / Preview"))
+        self.channel_box.current(1 if self.channel_var.get() == "preview" else 0)
+        self.channel_box.pack(side="right")
+        self.channel_box.bind("<<ComboboxSelected>>", self._channel_changed)
 
         self.lbl_body = ttk.Label(frm, text=_T("正在连接 GitHub Releases", "Contacting GitHub Releases"),
-                                  style="Caption.TLabel", wraplength=460, justify="left")
+                                  style="Caption.TLabel", wraplength=available_width, justify="left")
         self.lbl_body.pack(anchor="w", pady=(6, 12))
 
-        self.bar = ttk.Progressbar(frm, mode="determinate", maximum=100, length=460)
+        self.bar = ttk.Progressbar(frm, mode="determinate", maximum=100, length=available_width)
         self.bar.pack(fill="x")
 
         self.lbl_progress = ttk.Label(frm, text="", style="Caption.TLabel")
@@ -75,16 +104,42 @@ class UpdateDialog(tk.Toplevel):
         self.btn_skip.pack(side="right")
         self.btn_main = ttk.Button(btns, text=_T("关闭", "Close"), command=self._close)
         _style_btn(self.btn_main, "Ghost.TButton")
-        self.btn_main.pack(side="right", padx=(0, 8))
+        self.btn_main.pack(side="right", padx=(0, _px(self, 8)))
         self.btn_link = ttk.Button(btns, text=_T("打开发布页", "Release page"),
                                    command=self._open_release)
         _style_btn(self.btn_link, "Ghost.TButton")
 
-        self.geometry("+%d+%d" % (master.winfo_rootx() + 120, master.winfo_rooty() + 80))
+        self.geometry("+%d+%d" % (master.winfo_rootx() + _px(master, 120), master.winfo_rooty() + _px(master, 80)))
         self.protocol("WM_DELETE_WINDOW", self._close)
         self.after(60, self._start)
 
     # ---------- helpers ----------
+    def _current_channel(self):
+        try:
+            value = channels.get() if channels is not None else "stable"
+            return value if value in ("stable", "preview") else "stable"
+        except Exception:
+            return "stable"
+
+    def _channel_changed(self, _event=None):
+        channel = "preview" if self.channel_box.current() == 1 else "stable"
+        try:
+            result = channels.set(channel) if channels is not None else {"ok": False}
+        except Exception as exc:
+            result = {"ok": False, "error": str(exc)}
+        if not result.get("ok"):
+            self.channel_box.current(1 if self.channel_var.get() == "preview" else 0)
+            self._set(body=_T("无法保存更新通道设置。", "Could not save update channel setting."))
+            return
+        self.channel_var.set(channel)
+        self.result = None
+        self._verified_path = None
+        self._check_seq += 1
+        self.btn_main.configure(state="disabled")
+        self._set(_T("通道已更改", "Channel changed"),
+                  _T("当前通道：%s", "Current channel: %s") % ("预览 / Preview" if channel == "preview" else "稳定 / Stable"), 0, "")
+        self.after(0, self._start)
+
     def _log(self, text):
         if callable(self.on_log):
             try:
@@ -133,23 +188,38 @@ class UpdateDialog(tk.Toplevel):
                       _T("找不到 updater.py，无法检查更新。", "updater.py is missing."), 0, "")
             self.btn_main.configure(text=_T("关闭", "Close"), command=self._close)
             return
-        self._set(progress=5, ptext=_T("当前版本 %s" % updater.get_current_version(),
-                                      "Current version %s" % updater.get_current_version()))
-        threading.Thread(target=self._check_worker, daemon=True).start()
+        channel = self._current_channel()
+        channel_label = "预览 / Preview" if channel == "preview" else "稳定 / Stable"
+        self.btn_main.configure(state="disabled")
+        self._set(progress=5, ptext=_T("当前版本 %s · 通道 %s" % (updater.get_current_version(), channel_label),
+                                      "Current version %s · Channel %s" % (updater.get_current_version(), channel_label)))
+        self._check_seq += 1
+        seq = self._check_seq
+        threading.Thread(target=self._check_worker, args=(seq, channel), daemon=True).start()
 
-    def _check_worker(self):
+    def _check_worker(self, seq=None, channel=None):
+        if seq is None:
+            seq = self._check_seq
+        if channel is None:
+            channel = self._current_channel()
         try:
-            info = updater.check_for_update()
+            info = updater.check_for_update(channel=channel)
         except Exception as e:  # pragma: no cover
             info = {"ok": False, "error": "%s: %s" % (type(e).__name__, e)}
         if self._closed:
             return
         try:
-            self.after(0, lambda: self._check_done(info))
+            self.after(0, lambda: self._check_done(info, seq))
         except Exception:
             pass
 
-    def _check_done(self, info):
+    def _check_done(self, info, seq=None):
+        if seq is not None and seq != self._check_seq:
+            return
+        try:
+            self.btn_main.configure(state="normal")
+        except Exception:
+            pass
         self.result = info
         if not info.get("ok"):
             err = info.get("error") or "unknown"
@@ -158,8 +228,8 @@ class UpdateDialog(tk.Toplevel):
                          "Could not fetch update info (%s).\nTry again later, or open the release page." % err),
                       0, "")
             self.btn_main.configure(text=_T("重试", "Retry"), command=self._retry)
-            self.btn_main.pack(side="right", padx=(0, 8))
-            self.btn_link.pack(side="right", padx=(0, 8))
+            self.btn_main.pack(side="right", padx=(0, _px(self, 8)))
+            self.btn_link.pack(side="right", padx=(0, _px(self, 8)))
             return
 
         latest = info.get("latest") or "?"
@@ -181,8 +251,8 @@ class UpdateDialog(tk.Toplevel):
             body += _T("\n\n安装包 %.1f MB" % (size / 1048576.0), "\n\nPackage %.1f MB" % (size / 1048576.0))
         self._set(_T("发现新版本", "Update available"), body, 0, "")
         self.btn_main.configure(text=_T("下载并安装", "Download & install"), command=self._download)
-        self.btn_main.pack(side="right", padx=(0, 8))
-        self.btn_link.pack(side="right", padx=(0, 8))
+        self.btn_main.pack(side="right", padx=(0, _px(self, 8)))
+        self.btn_link.pack(side="right", padx=(0, _px(self, 8)))
         self.btn_skip.pack(side="right")
 
     def _retry(self):
@@ -191,13 +261,21 @@ class UpdateDialog(tk.Toplevel):
         self._start()
 
     def _download(self):
+        info = self.result or {}
+        seq = self._check_seq
+        channel = self._current_channel()
+        if not info.get("asset") or info.get("requested_channel", info.get("channel", channel)) != channel:
+            self.btn_main.configure(state="disabled")
+            self._set(_T("通道已变化，请重新检查。", "Channel changed; check again."))
+            self._start()
+            return
+        self._verified_path = None
         self.btn_main.configure(state="disabled")
         self.btn_skip.configure(text=_T("取消下载", "Cancel"), command=self._close)
         self._set(_T("正在下载…", "Downloading…"), None, 0, "")
-        threading.Thread(target=self._download_worker, daemon=True).start()
+        threading.Thread(target=self._download_worker, args=(seq, channel, dict(info.get("asset") or {})), daemon=True).start()
 
-    def _download_worker(self):
-        asset = (self.result or {}).get("asset") or {}
+    def _download_worker(self, seq, channel, asset):
         def prog(done, total):
             if self._closed:
                 return False
@@ -217,15 +295,19 @@ class UpdateDialog(tk.Toplevel):
         if self._closed:
             return
         try:
-            self.after(0, lambda: self._download_done(path, err))
+            self.after(0, lambda: self._download_done(path, err, seq, channel))
         except Exception:
             pass
 
-    def _download_done(self, path, err):
+    def _download_done(self, path, err, seq=None, channel=None):
+        if seq is not None and (seq != self._check_seq or channel != self._current_channel()):
+            return
+        if path and not err:
+            self._verified_path = path
         if err:
             self._set(_T("下载失败", "Download failed"), err, 0, "")
             self.btn_main.configure(state="normal", text=_T("重试", "Retry"), command=self._download)
-            self.btn_main.pack(side="right", padx=(0, 8))
+            self.btn_main.pack(side="right", padx=(0, _px(self, 8)))
             self.btn_skip.configure(text=_T("关闭", "Close"), command=self._close)
             return
         self._set(_T("下载完成", "Downloaded"),
@@ -236,11 +318,13 @@ class UpdateDialog(tk.Toplevel):
                   100, "")
         self.btn_main.configure(state="normal", text=_T("立即安装并重启", "Install & restart"),
                                 command=lambda: self._apply(path))
-        self.btn_main.pack(side="right", padx=(0, 8))
+        self.btn_main.pack(side="right", padx=(0, _px(self, 8)))
         self.btn_skip.pack(side="right")
 
     def _apply(self, path):
-        if not path:
+        if not path or path != self._verified_path or not self.result:
+            return
+        if self.result.get("requested_channel", self.result.get("channel")) != self._current_channel():
             return
         ok = messagebox.askyesno(_T("确认安装", "Confirm"),
                                  _T("将关闭当前程序、覆盖安装并重新启动。未保存的对话会丢失，继续？",
@@ -249,7 +333,7 @@ class UpdateDialog(tk.Toplevel):
         if not ok:
             return
         try:
-            bat = updater.apply_and_restart(path, os.getpid())
+            bat = updater.apply_and_restart(path, os.getpid(), (self.result or {}).get("latest"))
             self._log(_T("更新已就绪，程序退出后自动重启。", "Update staged; the app will restart."))
             try:
                 self.destroy()

@@ -36,7 +36,8 @@ def build_diff_page(app, parent) -> None:
         patch=tk.Text(body,height=10,wrap="none",font=ui.font_obj(9,mono=True),bg=theme["input_bg"],fg=theme["text"],relief="flat"); patch.grid(row=2,column=0,sticky="ew",pady=(ui.px(4),ui.px(8)))
         stats=_label(body,text=t("尚未预览", "Not previewed"),font=ui.font_obj(9),fg=theme["text_muted"],bg=theme["card"],anchor="w"); stats.grid(row=3,column=0,sticky="w")
         hunks=tk.Frame(body,bg=theme["card"]); hunks.grid(row=4,column=0,sticky="ew",pady=(ui.px(8),0))
-        actions=tk.Frame(body,bg=theme["card"]); actions.grid(row=5,column=0,sticky="w",pady=(ui.px(8),0))
+        actions=tk.Frame(body,bg=theme["card"]); actions.grid(row=5,column=0,sticky="ew",pady=(ui.px(8),0))
+        actions.columnconfigure(0, weight=0); actions.columnconfigure(1, weight=0)
         state={"backup":""}
         def show_hunks(parsed):
             for c in hunks.winfo_children(): c.destroy()
@@ -69,8 +70,8 @@ def build_diff_page(app, parent) -> None:
                 if not state["backup"]: status.configure(text=t("没有可回滚的备份", "No backup to revert")); return
                 if messagebox.askyesno(t("确认回滚", "Confirm revert"), t("确定回滚最近一次应用？", "Revert the latest apply?"), parent=ui.root): status.configure(text=_pretty(api.revert(state["backup"])))
             except Exception as exc: status.configure(text=t("回滚失败：", "Revert failed")+str(exc))
-        for text,cmd in ((t("打开补丁", "Open patch"),load_file),(t("预览", "Preview"),preview),(t("应用", "Apply"),apply_patch),(t("回滚最近一次", "Revert latest"),revert)):
-            PillButton(actions,ui,text,command=cmd,kind="primary" if text in (t("预览","Preview"),t("应用","Apply")) else "ghost",bg=theme["card"]).pack(side="left",padx=(0,ui.px(6)))
+        for index,(text,cmd) in enumerate(((t("打开补丁", "Open patch"),load_file),(t("预览", "Preview"),preview),(t("应用", "Apply"),apply_patch),(t("回滚最近一次", "Revert latest"),revert))):
+            PillButton(actions,ui,text,command=cmd,kind="primary" if text in (t("预览","Preview"),t("应用","Apply")) else "ghost",bg=theme["card"]).grid(row=index // 2,column=index % 2,sticky="w",padx=(0,ui.px(6)),pady=(0,ui.px(4)))
         if _backend() is None: status.configure(text=t("模块未就绪", "Module not ready"))
         page.bind_wheel()
     except Exception:

@@ -44,6 +44,10 @@ __all__ = [
     "load_config",
     "save_config",
     "test_connection",
+    "smoke_cloud",
+    "validate_upstream_key",
+    "resolve_model_route",
+    "can_unload_provider",
 ]
 
 _APP_DIRNAME = "Hymnix"
@@ -265,6 +269,41 @@ def _atomic_write_json(path: Path, payload: Dict[str, Any]) -> None:
         raise
 
 
+
+def _provider_models(metadata: Dict[str, Any]) -> List[Dict[str, Any]]:
+    raw = metadata.get('models', []) if isinstance(metadata, dict) else []
+    if isinstance(raw, dict):
+        raw = [{"id": key, **(value if isinstance(value, dict) else {})} for key, value in raw.items()]
+    result = []
+    if isinstance(raw, (list, tuple)):
+        for item in raw:
+            if isinstance(item, str) and item.strip(): result.append({"id": item.strip()})
+            elif isinstance(item, dict):
+                model_id = item.get('id') or item.get('name') or item.get('model')
+                if model_id: result.append(dict(item, id=str(model_id).strip()))
+    return result
+
+def resolve_model_route(model: str, provider_metadata: Any, *, required_capabilities: Optional[List[str]] = None) -> Tuple[str, str]:
+    requested = str(model or '').strip().lower()
+    if not requested or not isinstance(provider_metadata, dict): raise ValueError('model and provider metadata are required')
+    needed = {str(x).strip().lower() for x in (required_capabilities or []) if str(x).strip()}
+    matches = []
+    for provider_name, metadata in provider_metadata.items():
+        for item in _provider_models(metadata) if isinstance(metadata, dict) else []:
+            model_id = str(item.get('id', '')).strip()
+            aliases = item.get('aliases', [])
+            if isinstance(aliases, str): aliases = [aliases]
+            names = {model_id.lower(), *(str(x).strip().lower() for x in aliases)}
+            capabilities = item.get('capabilities', item.get('tags', []))
+            if isinstance(capabilities, str): capabilities = [capabilities]
+            if requested in names and (not needed or needed.issubset({str(x).lower() for x in capabilities})): matches.append((str(provider_name), model_id))
+    if len(matches) != 1: raise LookupError('model route is not unique: %s' % model)
+    return matches[0]
+
+def can_unload_provider(provider: str, active_streams: Any) -> bool:
+    if isinstance(active_streams, dict): return int(active_streams.get(provider, 0) or 0) <= 0
+    if isinstance(active_streams, (set, list, tuple)): return provider not in active_streams
+    return not bool(active_streams)
 # ---------------------------------------------------------------------------
 # 连通性测试
 # ---------------------------------------------------------------------------
@@ -402,6 +441,46 @@ def _chat_probe(
     return response.status_code, data, ""
 
 
+def _is_placeholder_key(value: str) -> bool:
+    lowered = str(value or "").strip().lower()
+    markers = ("your_api_key", "api_key_here", "replace_me", "sk-...", "<api", "placeholder")
+    return not lowered or lowered in {"changeme", "change-me", "your-key", "test-key"} or any(marker in lowered for marker in markers)
+
+
+def validate_upstream_key(provider: str, api_key: str = "") -> Tuple[bool, str]:
+    """网关调用的统一云端凭据校验入口；本机 provider 不需要密钥。"""
+    name = str(provider or "ollama").strip().lower()
+    if name in ("", "local", "ollama"):
+        return True, ""
+    key = str(api_key or "").strip() or str(os.environ.get("HYMNIX_UPSTREAM_API_KEY") or "").strip() or str(os.environ.get("HYMNIX_CLOUD_KEY") or "").strip()
+    if _is_placeholder_key(key):
+        return False, "云端上游 API Key 未配置或仍是占位符，请配置 HYMNIX_UPSTREAM_API_KEY。"
+    return True, ""
+
+
+def smoke_cloud(provider: str, model: str, prompt: str = "ping", timeout: float = 15) -> Dict[str, Any]:
+    """仅在显式 HYMNIX_CLOUD_SMOKE=1 且配置真实密钥时发起一次最小请求。"""
+    if os.environ.get("HYMNIX_CLOUD_SMOKE") != "1":
+        return {"ok": False, "skipped": True, "reason": "HYMNIX_CLOUD_SMOKE 未设置为 1"}
+    item = (load_config().get("providers") or {}).get(str(provider or "").strip().lower())
+    if not isinstance(item, dict) or _is_placeholder_key(str(item.get("api_key") or "")):
+        return {"ok": False, "skipped": True, "reason": "未配置真实 API Key"}
+    if requests is None:
+        return {"ok": False, "skipped": True, "reason": "requests 不可用"}
+    started = time.perf_counter()
+    try:
+        base = _normalize_base_url(item.get("base_url", ""))
+        headers = {"Authorization": "Bearer " + str(item["api_key"]), "Content-Type": "application/json"}
+        response = requests.post(base + "/chat/completions", headers=headers, json={"model": str(model or item.get("model") or "").strip(), "messages": [{"role": "user", "content": str(prompt or "ping")[:200]}], "max_tokens": 8, "stream": False}, timeout=timeout)
+        data = _safe_json(response)
+        text = ""
+        choices = data.get("choices") if isinstance(data, dict) else None
+        if choices and isinstance(choices[0], dict): text = str((choices[0].get("message") or {}).get("content") or "")
+        return {"ok": response.status_code == 200, "latency_ms": round((time.perf_counter() - started) * 1000, 1), "model": model, "summary": text[:120] if text else _http_error_message(response.status_code, data)}
+    except Exception as exc:
+        return {"ok": False, "latency_ms": round((time.perf_counter() - started) * 1000, 1), "model": model, "summary": _short(exc)}
+
+
 def test_connection(
     base_url: str, api_key: str, model: str = "", timeout: float = 15
 ) -> Tuple[bool, str, float, List[str]]:
@@ -423,8 +502,8 @@ def test_connection(
         return False, "Base URL 不能为空，请填写完整的接口地址（例如 https://api.openai.com/v1）。", 0.0, []
 
     key = str(api_key or "").strip()
-    if not key:
-        return False, "API Key 不能为空，请先在设置中填写密钥。", 0.0, []
+    if not key or _is_placeholder_key(key):
+        return False, "API Key 未配置或仍是占位符，请先在设置中填写真实密钥；未发起网络请求。", 0.0, []
 
     model_name = str(model or "").strip()
     if requests is None:

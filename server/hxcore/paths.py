@@ -6,6 +6,7 @@
 - data_dir(): 用户数据目录（HYMNIX_DATA_DIR > 根目录），个人版数据放在 exe 旁边。
 - logs_dir(): 日志根目录（HYMNIX_LOG_DIR > 根目录/logs）。
 - 所有函数出错时返回可用兜底值，绝不抛异常给调用方（启动路径上不能因路径问题崩溃）。
+- bin_dir(): cloudflared 等架构相关二进制目录。
 """
 from __future__ import annotations
 
@@ -73,6 +74,13 @@ def ensure_dir(path: str) -> str:
     except Exception:
         pass
     return path
+
+
+def bin_dir() -> str:
+    try:
+        return ensure_dir(os.environ.get("HYMNIX_BIN_DIR") or os.path.join(data_dir(), "bin"))
+    except Exception:
+        return "bin"
 
 
 def now_iso() -> str:

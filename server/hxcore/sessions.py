@@ -39,7 +39,7 @@ def _safe_id(value: str) -> str:
 def _read_records(path: str):
     rows = []
     try:
-        with open(path, "r", encoding="utf-8") as fh:
+        with open(path, "r", encoding="utf-8-sig", errors="replace") as fh:
             for raw in fh:
                 try:
                     row = json.loads(raw)
@@ -61,7 +61,7 @@ def _titles() -> dict:
         return {}
 
 
-def list_sessions(limit: int = 100, query: str = "") -> list[dict]:
+def list_sessions(limit: int = 100, query: str = "", offset: int = 0, since: str = "", until: str = "") -> list[dict]:
     found = []
     try:
         folder = root()
@@ -85,18 +85,21 @@ def list_sessions(limit: int = 100, query: str = "") -> list[dict]:
             title = str(overrides.get(sid) or first_text[:40] or "(未命名)")
             if needle and needle not in title.casefold() and not any(needle in str(row.get("text") or "").casefold() for row in rows):
                 continue
+            if since and str(rows[-1].get("ts") or "") < since: continue
+            if until and str(rows[0].get("ts") or "") > until: continue
             try:
                 size = os.path.getsize(path)
             except Exception:
                 size = 0
             found.append({"id": sid, "title": title, "count": len(rows), "first_ts": str(rows[0].get("ts") or ""), "last_ts": str(rows[-1].get("ts") or ""), "bytes": size})
         found.sort(key=lambda item: item["last_ts"], reverse=True)
-        return found[:max(0, min(500, int(limit)))]
+        start=max(0,int(offset))
+        return found[start:start+max(0, min(500, int(limit)))]
     except Exception:
         return []
 
 
-def messages(session_id: str, limit: int = 500, query: str = "") -> list[dict]:
+def messages(session_id: str, limit: int = 500, query: str = "", offset: int = 0) -> list[dict]:
     try:
         sid = _safe_id(session_id)
         if not sid:
@@ -109,9 +112,10 @@ def messages(session_id: str, limit: int = 500, query: str = "") -> list[dict]:
             text = str(row.get("text") or "")
             if needle and needle not in text.casefold():
                 continue
-            result.append({"ts": str(row.get("ts") or ""), "role": str(row.get("role") or ""), "text": text[:4000], "model": str(row.get("model") or "")})
+            result.append({"ts": str(row.get("ts") or ""), "role": str(row.get("role") or ""), "text": text, "model": str(row.get("model") or "")})
         result.sort(key=lambda item: item["ts"])
-        return result[:max(0, min(5000, int(limit)))]
+        start=max(0,int(offset))
+        return result[start:start+max(0, min(5000, int(limit)))]
     except Exception:
         return []
 
@@ -153,6 +157,7 @@ def delete(session_id: str) -> dict:
         folder = root()
         if not os.path.isdir(folder):
             return {"ok": False, "backup": ""}
+        direct = os.path.join(folder, sid + ".jsonl")
         sources = []
         for name in os.listdir(folder):
             if not name.endswith(".jsonl"):
@@ -165,6 +170,8 @@ def delete(session_id: str) -> dict:
                 continue
             if any(_line_session_id(line) == sid for line in raw_lines):
                 sources.append((path, name, raw_lines))
+        if os.path.isfile(direct) and not any(path == direct for path, _, _ in sources):
+            with open(direct, "rb") as fh: sources.append((direct, sid + ".jsonl", fh.readlines()))
         if not sources:
             return {"ok": False, "backup": ""}
 
@@ -180,12 +187,15 @@ def delete(session_id: str) -> dict:
         staged = []
         try:
             for (path, name, raw_lines), backup in zip(sources, backups):
+                if os.path.abspath(path) == os.path.abspath(direct):
+                    continue
                 temp = path + ".tmp"
                 with open(temp, "wb") as fh:
                     fh.writelines(line for line in raw_lines if _line_session_id(line) != sid)
                 staged.append((temp, path))
             for temp, path in staged:
                 os.replace(temp, path)
+            if os.path.isfile(direct): os.remove(direct)
         except Exception:
             for temp, _ in staged:
                 try:
@@ -219,6 +229,57 @@ def delete(session_id: str) -> dict:
     except Exception as exc:
         return {"ok": False, "backup": "", "error": str(exc) or "io_error"}
 
+def restore(session_id: str, backup_path: str) -> dict:
+    """Restore a deleted session from one or more delete backups."""
+    sid = _safe_id(session_id)
+    if not sid or not backup_path:
+        return {"ok": False, "error": "bad_backup"}
+    try:
+        source = Path(str(backup_path))
+        title_path = None
+        if source.is_dir():
+            candidates = sorted(source.glob("deleted-" + sid + "-*.jsonl"), key=lambda p: p.name)
+            if not candidates:
+                return {"ok": False, "error": "backup_not_found"}
+            chunks = [candidate.read_bytes() for candidate in candidates]
+            title_path = None
+        else:
+            if not source.is_file():
+                return {"ok": False, "error": "backup_not_found"}
+            chunks = [source.read_bytes()]
+        folder = Path(root())
+        folder.mkdir(parents=True, exist_ok=True)
+        target = folder / (sid + ".jsonl")
+        if target.exists():
+            return {"ok": False, "error": "already_exists"}
+        if not any(chunks):
+            return {"ok": False, "error": "empty_backup"}
+        merged = bytearray()
+        for chunk in chunks:
+            if not chunk:
+                continue
+            if merged and not merged.endswith((b"\n", b"\r")):
+                merged.extend(b"\n")
+            merged.extend(chunk)
+            if not merged.endswith((b"\n", b"\r")):
+                merged.extend(b"\n")
+        target.write_bytes(bytes(merged))
+        # The deletion bundle may carry a title override; restore it when valid.
+        if title_path is not None and title_path.is_file():
+            try:
+                titles = json.loads(title_path.read_text(encoding="utf-8"))
+                title = titles.get(sid) if isinstance(titles, dict) else None
+                if title:
+                    overrides = _titles()
+                    overrides[sid] = title
+                    temp = folder / "sessions.json.tmp"
+                    temp.write_text(json.dumps(overrides, ensure_ascii=False, indent=2), encoding="utf-8")
+                    os.replace(str(temp), str(folder / "sessions.json"))
+            except Exception:
+                pass
+        return {"ok": True, "path": str(target)}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc) or "io_error"}
 
 def _line_session_id(raw: bytes) -> str:
     try:

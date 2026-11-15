@@ -1,6 +1,7 @@
 """Headless command registry for the Hymnix terminal."""
 from __future__ import annotations
 import os, platform, shlex, subprocess, time
+from datetime import datetime
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -34,6 +35,99 @@ _NAMES = [
     ("dir", "dir", "List workspace directory", "dir"),
 ]
 COMMANDS = {n: {"name": n, "usage": u, "desc": d, "example": e} for n, u, d, e in _NAMES}
+
+
+class TerminalTraceStore:
+    """Append-only terminal trace store using the shared events JSONL convention."""
+    KINDS = {"USER", "THINK", "TOOL", "REPLY"}
+
+    def __init__(self, session_id="default", path=None):
+        self.session_id = str(session_id or "default")
+        self._path = path
+        self._last_key = None
+
+    def _file(self):
+        if self._path:
+            return self._path
+        try:
+            from hxcore.paths import logs_dir
+            root = logs_dir()
+        except Exception:
+            root = os.path.join(os.getcwd(), "logs")
+        root = os.path.join(root, "terminal")
+        os.makedirs(root, exist_ok=True)
+        return os.path.join(root, "trace-%s.jsonl" % time.strftime("%Y-%m-%d"))
+
+    @staticmethod
+    def _timestamp(value=None):
+        return str(value or datetime.now().isoformat(timespec="milliseconds"))
+
+    def append(self, kind, text, level="INFO", source="terminal", timestamp=None):
+        kind = str(kind or "REPLY").upper()
+        if kind not in self.KINDS:
+            kind = "REPLY"
+        row = {"timestamp": self._timestamp(timestamp), "session_id": self.session_id,
+               "event_type": "terminal_trace", "kind": kind, "role": kind,
+               "level": str(level or "INFO").upper(), "source": str(source or "terminal"),
+               "text": str(text if text is not None else "")}
+        key = tuple(row[k] for k in ("session_id", "kind", "level", "source", "text"))
+        if key == self._last_key:
+            return row
+        try:
+            path = self._file()
+            import json
+            previous_key = None
+            try:
+                with open(path, "rb+") as handle:
+                    handle.seek(0, os.SEEK_END)
+                    end = handle.tell()
+                    if end:
+                        handle.seek(end - 1)
+                        position = end - 2 if handle.read(1) == b"\n" else end - 1
+                        while position >= 0:
+                            handle.seek(position)
+                            if handle.read(1) == b"\n":
+                                break
+                            position -= 1
+                        line_start = position + 1
+                        handle.seek(line_start)
+                        previous = json.loads(handle.read().decode("utf-8", errors="replace").strip())
+                        if previous.get("event_type") == "terminal_trace":
+                            previous_key = tuple(str(previous.get(k, "")) for k in ("session_id", "kind", "level", "source", "text"))
+            except (OSError, ValueError, TypeError):
+                pass
+            if key == previous_key or key == self._last_key:
+                self._last_key = key
+                return row
+            with open(path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
+            self._last_key = key
+        except OSError:
+            pass
+        return row
+
+    def load(self, limit=2000):
+        import json
+        rows = []
+        try:
+            from hxcore.paths import logs_dir
+            root = os.path.dirname(self._path) if self._path else os.path.join(logs_dir(), "terminal")
+            paths = [self._path] if self._path else [os.path.join(root, name) for name in os.listdir(root) if name.startswith("trace-") and name.endswith(".jsonl")]
+        except (OSError, TypeError):
+            paths = [self._file()]
+        for path in sorted(set(paths)):
+            try:
+                with open(path, encoding="utf-8-sig", errors="replace") as handle:
+                    for raw in handle:
+                        try:
+                            row = json.loads(raw)
+                        except (TypeError, ValueError):
+                            continue
+                        if row.get("event_type") == "terminal_trace" and str(row.get("session_id")) == self.session_id:
+                            rows.append(row)
+            except OSError:
+                continue
+        return rows[-max(1, int(limit)):]
 
 def help_text() -> str:
     return "\n".join(f"{v['usage']:<34} {v['desc']}" for v in COMMANDS.values())

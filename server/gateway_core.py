@@ -19,6 +19,7 @@ import sys
 import threading
 import time
 import traceback
+import re
 import urllib.parse
 from collections import deque
 from datetime import datetime
@@ -492,10 +493,37 @@ def log_event(kind, **kw):
     append_log("events-%s.jsonl" % _today(), kw)
 
 
-def _normalize_upstream_error(exc=None, status=None, raw="", upstream_url=""):
+def _redact_upstream_url(value):
+    try:
+        parts = urllib.parse.urlsplit(str(value or ""))
+        host = parts.hostname or ""
+        if ":" in host and not host.startswith("["):
+            host = "[" + host + "]"
+        if parts.port:
+            host += ":%d" % parts.port
+        return urllib.parse.urlunsplit((parts.scheme, host, parts.path, "", ""))
+    except Exception:
+        return ""
+
+
+def _normalize_upstream_error(exc=None, status=None, raw="", upstream_url="", provider=None, model=""):
     """Return stable OpenAI-compatible error and retain a bounded diagnostic."""
     text = str(raw or exc or "upstream error")
     low = text.lower()
+    provider = str(provider or os.environ.get("HYMNIX_UPSTREAM_PROVIDER") or "ollama").strip()[:40]
+    model = str(model or "").strip()[:100]
+    if not model and isinstance(raw, (str, bytes)):
+        try:
+            raw_text = raw.decode("utf-8", "ignore") if isinstance(raw, bytes) else raw
+            parsed = json.loads(raw_text)
+            if isinstance(parsed, dict):
+                model = str(parsed.get("model") or "")[:100]
+        except Exception:
+            pass
+    credential_pattern = re.compile(r"(?:sk-[A-Za-z0-9_-]{8,}|Bearer\s+[A-Za-z0-9._~-]{8,}|\b[0-9a-fA-F]{32,}\b)")
+    if status in (401, 403) or credential_pattern.search(text):
+        text = "上游认证失败" if status in (401, 403) else "上游响应包含敏感凭据，已隐藏"
+    text = text[:300]
     if status in (401, 403):
         code, out_status = "upstream_auth", 502
     elif status == 404:
@@ -511,17 +539,17 @@ def _normalize_upstream_error(exc=None, status=None, raw="", upstream_url=""):
     else:
         code, out_status = "upstream_bad_gateway", 502
     item = {"ts": _now_iso(), "code": code, "status": out_status,
-            "upstream_url": str(upstream_url or ""), "message": text[:300]}
+            "upstream_url": _redact_upstream_url(upstream_url), "message": text[:300]}
     with LOCK:
         ERROR_RECENT.append(item)
         STATS["last_error"] = text[:300]
         STATS["errors"] = STATS.get("errors", 0) + 1
     log_event("upstream_error_normalized", **item)
-    return out_status, {"error": {"code": code, "message": text[:300], "type": "upstream_error"}}
+    return out_status, {"error": {"code": code, "message": text[:300], "type": "upstream_error", "provider": provider, "model": model}}
 
 
-def _error_response(exc=None, status=None, raw="", upstream_url=""):
-    out_status, body = _normalize_upstream_error(exc, status, raw, upstream_url)
+def _error_response(exc=None, status=None, raw="", upstream_url="", provider=None, model=""):
+    out_status, body = _normalize_upstream_error(exc, status, raw, upstream_url, provider, model)
     return out_status, body
 
 
@@ -1446,6 +1474,17 @@ class Handler(BaseHTTPRequestHandler):
                 payload = json.loads(body.decode("utf-8", "ignore"))
             except Exception:
                 payload = {}
+        upstream_provider = str(os.environ.get("HYMNIX_UPSTREAM_PROVIDER") or "").strip().lower()
+        cloud_mode = bool(upstream_provider and upstream_provider not in ("local", "ollama"))
+        if is_chat and cloud_mode:
+            try:
+                import providers as _providers
+                key_ok, key_message = _providers.validate_upstream_key(upstream_provider, os.environ.get("HYMNIX_UPSTREAM_API_KEY", ""))
+            except Exception:
+                key_ok, key_message = False, "云端上游凭据校验不可用，请检查配置。"
+            if not key_ok:
+                return self._json(400, {"error": {"code": "missing_upstream_key", "message": key_message, "provider": upstream_provider}})
+
         if path == "/v1/chat/completions" and isinstance(payload, dict) and (
                 payload.get("tools") or payload.get("model") in (CFG.get("model_aliases") or {})):
             return self._openai_tools(payload, ua)
@@ -1526,7 +1565,7 @@ class Handler(BaseHTTPRequestHandler):
             conn, resp = _open_upstream(method, target, body=body if body else None,
                                         headers=headers, timeout=900)
         except Exception as e:
-            status, body_obj = _error_response(exc=e, upstream_url=target)
+            status, body_obj = _error_response(exc=e, upstream_url=target, provider=upstream_provider, model=model)
             log_event("upstream_error", ip=ip, path=path, error=str(e))
             return self._json(status, body_obj)
 
@@ -1539,14 +1578,15 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
             except Exception:
                 pass
-            status, body_obj = _error_response(status=resp.status, raw=raw_error.decode("utf-8", "ignore"), upstream_url=target)
+            status, body_obj = _error_response(status=resp.status, raw=raw_error.decode("utf-8", "ignore"), upstream_url=target, provider=upstream_provider, model=model)
             return self._json(status, body_obj)
 
         meta["status"] = resp.status
         capture = Capture(is_chat and resp.status == 200, meta["stream"], meta)
 
         try:
-            content_type = (resp.getheader("Content-Type", "") or "").lower()
+            upstream_content_type = resp.getheader("Content-Type", "") or ""
+            content_type = upstream_content_type.lower()
             stream_requested = bool(meta.get("stream"))
             first_chunk = b""
             stream_mode = "text/event-stream" in content_type
@@ -1557,10 +1597,20 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(resp.status)
             for k, v in resp.getheaders():
                 if k.lower() in ("transfer-encoding", "connection", "content-length",
-                                 "keep-alive", "content-encoding"):
+                                 "keep-alive", "content-encoding", "content-type"):
                     continue
                 self.send_header(k, v)
             self.send_header("Connection", "close")
+            if stream_mode:
+                self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                self.send_header("Cache-Control", "no-cache")
+            else:
+                nonstream_content_type = upstream_content_type
+                if not nonstream_content_type:
+                    nonstream_content_type = "application/json; charset=utf-8"
+                elif nonstream_content_type.lower().split(";", 1)[0].strip() == "application/json" and "charset=" not in nonstream_content_type.lower():
+                    nonstream_content_type += "; charset=utf-8"
+                self.send_header("Content-Type", nonstream_content_type)
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             self.close_connection = True
@@ -1661,7 +1711,10 @@ class Handler(BaseHTTPRequestHandler):
                     prompt_tokens=int(rec.get("prompt_tokens") or 0),
                     reply_tokens=int(rec.get("reply_tokens") or 0),
                     elapsed_ms=float(rec.get("elapsed_ms") or 0),
-                    provider="local",
+                    provider=rec.get("provider") or "local",
+                    success=bool(rec.get("success", int(rec.get("status") or 200) < 400)),
+                    error=rec.get("error") or "",
+                    estimated=bool(rec.get("estimated")),
                 )
         except Exception:
             pass

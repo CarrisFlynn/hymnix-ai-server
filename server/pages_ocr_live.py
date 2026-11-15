@@ -14,9 +14,10 @@ except Exception:
     _UI = ScrollPage = RoundedCard = PillButton = _page_header = _label = _tag = _separator = None
 
 try:
-    from hxcore import ocr
+    from hxcore import ocr, ocr_overlay
 except Exception:
     ocr = None
+    ocr_overlay = None
 
 TESSERACT_URL = "https://github.com/tesseract-ocr/tesseract"
 LANGUAGES = ("chi_sim", "eng", "chi_sim+eng")
@@ -99,8 +100,7 @@ def build_ocr_page(app, parent):
         language_menu = tk.OptionMenu(controls, lang_var, *LANGUAGES)
         language_menu.configure(font=ui.font_obj(9), relief="flat", bg=theme["btn"], fg=theme["text"])
         language_menu.pack(side="left", padx=(ui.px(8), 0))
-        # not implemented yet: Screenshot area selection requires manual drag-box UI; image path input is supported for now.
-        _label(controls, text=_t(ui, "截图区域：手动框选待实现", "Screenshot region: manual selection TODO"), font=ui.font_obj(9), fg=theme["text_dim"], bg=theme["card"]).pack(side="left", padx=(ui.px(14), 0))
+
 
         result_card = RoundedCard(content, ui, fill=theme["card"], pad=14, radius=12)
         result_card.grid(row=3, column=0, sticky="nsew")
@@ -128,6 +128,24 @@ def build_ocr_page(app, parent):
                 ui.root.update_idletasks()
             except Exception:
                 pass
+        def show_result(data):
+            text = str(data.get("text") or "")
+            lines = data.get("lines") or []
+            rendered = "\n".join(str(x) for x in lines) if lines else text
+            put_result(rendered or _t(ui, "未识别到文字。", "No text was recognized.") if data.get("ok") else _t(ui, "识别失败：", "Recognition failed: ") + str(data.get("error") or "unknown"))
+            rect = data.get("rect")
+            suffix = (" · rect=" + str(rect)) if rect else ""
+            meta_var.set(_t(ui, "引擎：{0} · {1:.1f} 毫秒", "Engine: {0} · {1:.1f} ms").format(data.get("engine") or "-", float(data.get("ms") or 0)) + suffix)
+        def select_capture():
+            if ocr is None or ocr_overlay is None:
+                put_result(_t(ui, "框选不可用：Tk 或 OCR 模块不可用。", "Region capture unavailable: Tk or OCR module is unavailable.")); return
+            try:
+                rect = ocr_overlay.select_region(root=ui.root)
+                if not rect:
+                    put_result(_t(ui, "已取消框选或框选超时。", "Selection cancelled or timed out.")); return
+                show_result(ocr.screenshot_to_text(rect, lang_var.get()))
+            except Exception as exc:
+                put_result(_t(ui, "框选失败：", "Region capture failed: ") + str(exc))
         def recognize():
             path = path_var.get()
             if not path:
@@ -150,16 +168,16 @@ def build_ocr_page(app, parent):
                 data = ocr.image_to_text(path, lang_var.get()) if ocr is not None else {"ok": False, "error": "module_missing", "text": "", "engine": "", "ms": 0}
             except Exception as exc:
                 data = {"ok": False, "error": "ocr_error", "text": str(exc), "engine": "", "ms": 0}
-            text = str(data.get("text") or "")
-            put_result(text or _t(ui, "未识别到文字。", "No text was recognized.") if data.get("ok") else _t(ui, "识别失败：", "Recognition failed: ") + str(data.get("error") or "unknown"))
-            meta_var.set(_t(ui, "引擎：{0} · {1:.1f} 毫秒", "Engine: {0} · {1:.1f} ms").format(data.get("engine") or "-", float(data.get("ms") or 0)))
+            show_result(data)
         button_row = tk.Frame(input_card.body, bg=theme["card"])
         button_row.pack(fill="x", pady=(ui.px(10), 0))
         try:
-            PillButton(button_row, ui, _t(ui, "开始识别", "Recognize"), command=recognize, kind="primary", bg=theme["card"]).pack(side="left")
+            PillButton(button_row, ui, _t(ui, "框选截图", "Select screen"), command=select_capture, kind="ghost", bg=theme["card"]).pack(side="left")
+            PillButton(button_row, ui, _t(ui, "开始识别", "Recognize"), command=recognize, kind="primary", bg=theme["card"]).pack(side="left", padx=(ui.px(8), 0))
             PillButton(button_row, ui, _t(ui, "复制结果", "Copy result"), command=copy_result, kind="ghost", bg=theme["card"]).pack(side="left", padx=(ui.px(8), 0))
         except Exception:
-            tk.Button(button_row, text=_t(ui, "开始识别", "Recognize"), command=recognize).pack(side="left")
+            tk.Button(button_row, text=_t(ui, "框选截图", "Select screen"), command=select_capture).pack(side="left")
+            tk.Button(button_row, text=_t(ui, "开始识别", "Recognize"), command=recognize).pack(side="left", padx=(ui.px(8), 0))
             tk.Button(button_row, text=_t(ui, "复制结果", "Copy result"), command=copy_result).pack(side="left", padx=(ui.px(8), 0))
 
         def refresh_info():
@@ -185,7 +203,11 @@ def _selftest():
     assert LANGUAGES == ("chi_sim", "eng", "chi_sim+eng")
     assert TESSERACT_URL.startswith("https://")
     class UI:
-        def t(self, zh, en): return en
+        def t(self, zh, en):
+            try:
+                return self.ui.t(zh, en)
+            except Exception:
+                return en
     assert _t(UI(), "中文", "English") == "English"
     print("SELFTEST OK")
 

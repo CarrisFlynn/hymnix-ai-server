@@ -19,7 +19,9 @@ def _connect():
     ensure_dir(os.path.dirname(_DB)); c=sqlite3.connect(_DB,timeout=30)
     c.execute("PRAGMA journal_mode=WAL")
     c.execute("CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, ts REAL, iso TEXT, source TEXT, kind TEXT, text TEXT, payload TEXT, day TEXT)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts)"); c.execute("CREATE INDEX IF NOT EXISTS idx_events_source_kind ON events(source,kind)")
+    for sql in ("CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts)", "CREATE INDEX IF NOT EXISTS idx_events_source_kind ON events(source,kind)", "CREATE INDEX IF NOT EXISTS idx_events_day ON events(day)", "CREATE INDEX IF NOT EXISTS idx_events_kind_ts ON events(kind,ts)"):
+        try: c.execute(sql)
+        except sqlite3.DatabaseError: pass
     _FTS=False
     if not os.environ.get("HX_INDEX_NO_FTS"):
         try:

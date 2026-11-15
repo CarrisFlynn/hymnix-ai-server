@@ -13,16 +13,38 @@ def _t(ui,zh,en):
  try:return ui.t(zh,en)
  except Exception:return zh
 def _root(app):return getattr(app,'root',None) or getattr(app,'tk',None)
-def _run_async(root,work,done,busy=None):
- q=queue.Queue(maxsize=1)
- if busy:busy(True)
+def _run_async(root,work,done,busy=None,owner=None):
+ q=queue.Queue(maxsize=1); after_id=[None]; closed=[False]
+ def alive():
+  try:
+   root_check=getattr(root,'winfo_exists',None); root_ok=True if not callable(root_check) else bool(root_check())
+   owner_check=getattr(owner,'winfo_exists',None) if owner is not None else None; owner_ok=True if not callable(owner_check) else bool(owner_check())
+   return not closed[0] and root_ok and owner_ok
+  except Exception:return False
+ def cancel(_event=None):
+  closed[0]=True
+  try:
+   if after_id[0] is not None:root.after_cancel(after_id[0])
+  except Exception:pass
+ if owner is not None:owner.bind('<Destroy>',lambda e:cancel() if e.widget is owner else None,add='+')
+ if busy and alive():busy(True)
  def poll():
+  if not alive():
+   cancel()
+   if busy:
+    try:busy(False)
+    except Exception:pass
+   return
   try:r,e=q.get_nowait()
   except queue.Empty:
-   root.after(60,poll);return
+   try:after_id[0]=root.after(60,poll)
+   except Exception:cancel()
+   return
+  after_id[0]=None
   if busy:busy(False)
-  done(r,e)
- root.after(60,poll)
+  if alive():done(r,e)
+ try:after_id[0]=root.after(60,poll)
+ except Exception:cancel();return
  def worker():
   try:q.put((work(),None))
   except Exception as exc:q.put((None,exc))
@@ -34,7 +56,7 @@ def _selftest():
 
 def build_cloudhub_page(app,parent):
  if _UI is None:
-  box=tk.Frame(parent);box.pack(fill='both',expand=True);tk.Label(box,text='Cloud hub 模块未就绪 / Cloud hub module not ready',anchor='w').pack(padx=16,pady=20);return box
+  box=tk.Frame(parent);box.pack(fill='both',expand=True);text=app.T('Cloud hub 模块未就绪','Cloud hub module not ready') if callable(getattr(app,'T',None)) else 'Cloud hub module not ready';tk.Label(box,text=text,anchor='w',wraplength=420).pack(fill='x',padx=16,pady=20);return box
  ui=_UI(app,parent);page=ScrollPage(parent,ui);page.pack(fill='both',expand=True);content=page.content;content.columnconfigure(0,weight=1)
  h=_page_header(content,ui,'CLOUD',_t(ui,'Cloud hub / 多服务商聚合','Cloud hub / Providers'),_t(ui,'统一查看服务商；密钥只检测是否存在。','View providers; keys are checked only for presence.'))
  h.grid(row=0,column=0,sticky='ew');host=tk.Frame(content,bg=ui.theme['bg']);host.grid(row=1,column=0,sticky='ew');host.columnconfigure(0,weight=1)
@@ -54,7 +76,7 @@ def build_cloudhub_page(app,parent):
    try:b.configure(state='disabled' if v else 'normal');l.configure(text=_t(ui,'处理中…','Working…') if v else '')
    except Exception:pass
  def action(parent,text,fn):
-  w=tk.Frame(parent,bg=ui.theme['card']);w.pack(side='left',padx=3);b=PillButton(w,ui,text,command=fn,kind='ghost',bg=ui.theme['card']);b.pack(side='left');l=tk.Label(w,text='',bg=ui.theme['card']);l.pack(side='left');buttons.append((b,l))
+  w=tk.Frame(parent,bg=ui.theme['card']);w.pack(anchor='w',fill='x',padx=3,pady=2);b=PillButton(w,ui,text,command=fn,kind='ghost',bg=ui.theme['card']);b.pack(anchor='w');l=tk.Label(w,text='',bg=ui.theme['card']);l.pack(anchor='w');buttons.append((b,l))
  def card(title,row):
   c=RoundedCard(host,ui,fill=ui.theme['card'],pad=10,radius=10);c.grid(row=row,column=0,sticky='ew',pady=4);_label(c.body,text=title,fg=ui.theme['text'],bg=ui.theme['card']).pack(anchor='w');return c.body
  def load():
@@ -64,7 +86,7 @@ def build_cloudhub_page(app,parent):
    render(data[0],data[1])
   # Tk 变量只能在主线程读；worker 线程里 days.get() 会抛 "main thread is not in main loop"
   span=days.get()
-  _run_async(root,lambda:(cloudhub.providers(),cloudhub.usage_summary(span)),done,busy)
+  _run_async(root,lambda:(cloudhub.providers(),cloudhub.usage_summary(span)),done,busy,owner=page)
  def render(providers,usage):
   for x in host.winfo_children():x.destroy()
   buttons.clear()
@@ -76,7 +98,7 @@ def build_cloudhub_page(app,parent):
    path=filedialog.asksaveasfilename(defaultextension='.json')
    if path:
     _run_async(root,lambda:cloudhub.export_summary(path),
-               lambda r,e:say(_t(ui,'已导出：','Exported: ')+str((r or {}).get('path',path))) if not e else say(_t(ui,'导出失败：','Export failed: ')+str(e),True),busy)
+               lambda r,e:say(_t(ui,'已导出：','Exported: ')+str((r or {}).get('path',path))) if not e else say(_t(ui,'导出失败：','Export failed: ')+str(e),True),busy,owner=page)
   action(bar,_t(ui,'导出汇总','Export'),export)
   total=usage.get('total',{});s=card(_t(ui,'总计','Total'),3)
   _label(s,text='calls %s · $%s · ¥%s'%(total.get('calls',0),total.get('usd',0),total.get('cny',0)),fg=ui.theme['text_muted'],bg=ui.theme['card']).pack(anchor='w')
@@ -109,7 +131,7 @@ def build_cloudhub_page(app,parent):
     rows=sorted((r or {}).get('providers',[]) if isinstance(r,dict) else [],key=lambda x:(x.get('latency_ms') if x.get('status')=='ok' else float('inf')))
     for x in rows:
      _label(hc,text='%s: %s (%sms)%s'%(x.get('name') or x.get('id'),x.get('status','error'),x.get('latency_ms',0),(' - '+str(x.get('error'))) if x.get('error') else ''),fg=ui.theme['text_muted'],bg=ui.theme['card']).pack(anchor='w')
-   _run_async(root,lambda:cloudhub.probe(provider_id=provider_id,timeout=8,allow_network=ok),done,busy)
+   _run_async(root,lambda:cloudhub.probe(provider_id=provider_id,timeout=8,allow_network=ok),done,busy,owner=page)
   action(hc,_t(ui,'对比连通性','Compare'),health)
   rc=card(_t(ui,'用量对账','Usage reconciliation'),base+2)
   def reconcile():
@@ -125,7 +147,7 @@ def build_cloudhub_page(app,parent):
       _label(rc,text='%s: calls %s · prompt %s · completion %s'%(key,row.get('calls',0),row.get('prompt',0),row.get('completion',0)),fg='#d97706' if mismatch else ui.theme['text_muted'],bg=ui.theme['card']).pack(anchor='w')
     models=(r or {}).get('by_model',[])
     if models:_label(rc,text=_t(ui,'按模型：','By model: ')+', '.join(str(x.get('model','')) for x in models if isinstance(x,dict)),fg=ui.theme['text_muted'],bg=ui.theme['card']).pack(anchor='w')
-   _run_async(root,lambda:cloudhub.reconcile(days=span),done,busy)
+   _run_async(root,lambda:cloudhub.reconcile(days=span),done,busy,owner=page)
   action(rc,_t(ui,'运行对账','Reconcile'),reconcile)
   say(_t(ui,'就绪（默认离线）','Ready (offline by default)'))
  load()

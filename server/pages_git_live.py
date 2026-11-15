@@ -57,23 +57,40 @@ def _selftest():
     assert finished.wait(2) and seen == [(3,None)]
     print("SELFTEST OK")
 
-def _run_async(root, work, done, busy=None):
-    results=queue.Queue(maxsize=1)
-    if busy: busy(True)
+def _run_async(root, work, done, busy=None, owner=None):
+    results=queue.Queue(maxsize=1); after_id=[None]; closed=[False]
+    def alive():
+        try:
+            root_check=getattr(root,'winfo_exists',None); root_ok=True if not callable(root_check) else bool(root_check())
+            owner_check=getattr(owner,'winfo_exists',None) if owner is not None else None; owner_ok=True if not callable(owner_check) else bool(owner_check())
+            return not closed[0] and root_ok and owner_ok
+        except Exception: return False
+    def cancel(_event=None):
+        closed[0]=True
+        try:
+            if after_id[0] is not None: root.after_cancel(after_id[0])
+        except Exception: pass
+    if owner is not None: owner.bind('<Destroy>',lambda event: cancel() if event.widget is owner else None,add='+')
+    if busy and alive(): busy(True)
     def poll():
+        if not alive():
+            cancel()
+            if busy:
+                try: busy(False)
+                except Exception: pass
+            return
         try: result,error=results.get_nowait()
         except queue.Empty:
-            try: root.after(60,poll)
-            except Exception:
-                if busy: busy(False)
+            try: after_id[0]=root.after(60,poll)
+            except Exception: cancel()
             return
+        after_id[0]=None
         if busy: busy(False)
-        done(result,error)
-    try:
-        root.after(60,poll)
+        if alive(): done(result,error)
+    try: after_id[0]=root.after(60,poll)
     except Exception as exc:
         if busy: busy(False)
-        done(None,exc)
+        if alive(): done(None,exc)
         return
     def runner():
         try: results.put((work(),None))
@@ -101,9 +118,9 @@ def build_git_page(app,parent):
                 label.configure(text=_t(ui,"处理中…","Working…") if value else "")
             except Exception: pass
     def add_action(parent_widget,text,fn,side="left"):
-        wrap=tk.Frame(parent_widget,bg=ui.theme["card"]); wrap.pack(side=side,padx=(4,0))
-        button=_button(wrap,ui,text,fn); button.pack(side="left")
-        label=tk.Label(wrap,text="",bg=ui.theme["card"],fg=ui.theme["text_muted"],font=ui.font_obj(8)); label.pack(side="left",padx=4)
+        wrap=tk.Frame(parent_widget,bg=ui.theme["card"]); wrap.pack(anchor="w",fill="x",padx=(4,0),pady=2)
+        button=_button(wrap,ui,text,fn); button.pack(anchor="w")
+        label=tk.Label(wrap,text="",bg=ui.theme["card"],fg=ui.theme["text_muted"],font=ui.font_obj(8)); label.pack(anchor="w",padx=4)
         busy_widgets.append((button,label)); return button
     def report(result,error):
         if error: _err(ui,error); return
@@ -111,7 +128,7 @@ def build_git_page(app,parent):
         refresh()
     def write(work,confirm_zh,confirm_en):
         if not _confirm(ui,confirm_zh,confirm_en): return
-        _run_async(root,work,report,set_busy)
+        _run_async(root,work,report,set_busy,owner=page)
     def refresh_view(st, candidates, env):
         for x in host.winfo_children(): x.destroy()
         busy_widgets.clear(); th=ui.theme
@@ -136,7 +153,7 @@ def build_git_page(app,parent):
         eb=_card(host,ui,_t(ui,"环境代理","Environment proxy"),3)
         _label(eb,text=f"HTTP_PROXY={os.environ.get('HTTP_PROXY','-')}  HTTPS_PROXY={os.environ.get('HTTPS_PROXY','-')}  ALL_PROXY={os.environ.get('ALL_PROXY','-')}  ({env.get('from','unknown')})",font=ui.font_obj(9),fg=th["text_muted"],bg=th["card"],wraplength=ui.px(700),justify="left").pack(anchor="w")
         db=_card(host,ui,_t(ui,"危险区","Danger zone"),4)
-        _button(db,ui,""+_t(ui,"证书安装需要管理员权限，未实现","Certificate install requires admin; not implemented"),lambda:None,state="disabled").pack(anchor="w")
+        tk.Label(db,text=_t(ui,"证书安装需要管理员权限，未实现","Certificate install requires admin; not implemented"),anchor="w",justify="left",wraplength=ui.px(360),bg=th["card"],fg=th["text_muted"]).pack(anchor="w",fill="x")
         rb=tk.Frame(db,bg=th["card"]); rb.pack(fill="x",pady=(8,0)); re=tk.Entry(rb); re.pack(side="left",fill="x",expand=True)
         def revert_backup():
             backup=re.get().strip()
@@ -157,7 +174,7 @@ def build_git_page(app,parent):
         def work():
             if gitproxy is None: raise RuntimeError(_t(ui,"Git 代理模块未就绪","Git proxy module not ready"))
             st=gitproxy.status() or {}; candidates=gitproxy.candidates() or []; env=gitproxy.detect_proxy() or {}; return st,candidates,env
-        _run_async(root,work,load_done)
+        _run_async(root,work,load_done,owner=page)
     refresh(); return page
 
 if __name__ == "__main__" and "--selftest" in sys.argv: _selftest()

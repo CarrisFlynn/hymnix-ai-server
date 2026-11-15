@@ -153,6 +153,18 @@ def mix(color_a, color_b, t):
     return _rgb_to_hex(tuple(a[i] + (b[i] - a[i]) * t for i in range(3)))
 
 
+def _dpi_scale(widget):
+    """Return the physical DPI scale while keeping 100% behavior unchanged."""
+    try:
+        return max(1.0, min(3.0, float(widget.winfo_fpixels("1i")) / 96.0))
+    except Exception:
+        return 1.0
+
+
+def _scaled(widget, value, minimum=1):
+    return max(minimum, int(round(float(value) * _dpi_scale(widget))))
+
+
 def _parent_bg(parent):
     try:
         return parent.cget("bg")
@@ -494,7 +506,9 @@ class SquareLogo(tk.Canvas):
         font_weight="bold",
         **kwargs,
     ):
-        size = max(16, int(size))
+        base_size = max(16, int(size))
+        scale = _dpi_scale(parent)
+        size = _scaled(parent, base_size, minimum=16)
         bg = bg or _parent_bg(parent)
         kwargs.setdefault("highlightthickness", 0)
         kwargs.setdefault("bd", 0)
@@ -505,14 +519,26 @@ class SquareLogo(tk.Canvas):
         self._fg = fg or PALETTE["on_primary"]
         self._radius = radius if radius is not None else max(8, int(round(size * 0.30)))
         self._font_family = font_family or FONT_FAMILY
-        self._font_px = int(font_size) if font_size else max(10, int(round(size * 0.58)))
+        # Positive Tk sizes are points; keep the pixel-sized canvas independent.
+        self._font_pt = (float(font_size) * 72.0 / 96.0 if font_size else
+                         max(8.0, base_size * 0.58 * 72.0 / 96.0))
         self._font_weight = font_weight
+        try:
+            # Tk scaling is the point-to-pixel factor even before the window maps.
+            point_scale = float(self.tk.call("tk", "scaling"))
+        except Exception:
+            try:
+                point_scale = float(self.winfo_fpixels("1i")) / 72.0
+            except Exception:
+                point_scale = 96.0 / 72.0
+        font_px = max(8, int(round(self._font_pt * point_scale)))
+        self._font_px = font_px
         self._bg = bg
         self._tiles = {}
         self._text_font = tkfont.Font(
             root=self,
             family=self._font_family,
-            size=-self._font_px,
+            size=max(1, int(round(self._font_pt))),
             weight=self._font_weight,
         )
         self._redraw()
@@ -581,16 +607,16 @@ class RoundedFrame(tk.Canvas):
         kwargs.setdefault("highlightthickness", 0)
         kwargs.setdefault("bd", 0)
         super().__init__(parent, bg=bg, **kwargs)
-        self._radius = int(radius)
+        self._radius = _scaled(parent, radius)
         self._fill = fill or PALETTE["card"]
-        self._padding = int(padding)
+        self._padding = _scaled(parent, padding)
         self._bg = bg
         self._tiles = {}
         self._auto = width is None and height is None
         if width is not None:
-            self.configure(width=int(width))
+            self.configure(width=_scaled(parent, width))
         if height is not None:
-            self.configure(height=int(height))
+            self.configure(height=_scaled(parent, height))
         self.body = tk.Frame(self, bg=self._fill)
         self._body_item = None
         self._last_size = None
@@ -675,9 +701,12 @@ class NavItem(tk.Canvas):
         kwargs.setdefault("highlightthickness", 0)
         kwargs.setdefault("bd", 0)
         self._font = _resolve_font(parent, font or FONTS["nav"])
+        width = _scaled(parent, width) if width is not None else None
+        self.PAD_X = _scaled(parent, 16)
+        self.PAD_Y = _scaled(parent, 12)
         self._font_bold = _fit_font(parent, self._font, weight="bold")
-        h = int(height) if height else self._font.metrics("linespace") + 2 * self.PAD_Y
-        h = max(28, h)
+        h = _scaled(parent, height) if height else self._font.metrics("linespace") + 2 * self.PAD_Y
+        h = max(_scaled(parent, 28), h)
         super().__init__(parent, width=int(width), height=h, bg=bg, **kwargs)
         self._height = h
         self._text = str(text)
@@ -685,7 +714,7 @@ class NavItem(tk.Canvas):
         self._hover = False
         self._press = False
         self._on_click = on_click
-        self._radius = h // 2 if radius is None else int(radius)
+        self._radius = h // 2 if radius is None else _scaled(parent, radius)
         self._bg = bg
         self._tiles = {}
         self._size = None
@@ -801,15 +830,17 @@ class FlatButton(tk.Canvas):
         kwargs.setdefault("highlightthickness", 0)
         kwargs.setdefault("bd", 0)
         self._font = _resolve_font(parent, font or FONTS["button"])
-        h = int(height) if height else self._font.metrics("linespace") + 20
-        h = max(30, h)
+        h = int(height) if height else self._font.metrics("linespace") + _scaled(parent, 20)
+        h = max(_scaled(parent, 30), h)
         if width is None:
-            width = max(96, self._font.measure(str(text)) + 36)
+            width = max(_scaled(parent, 96), self._font.measure(str(text)) + _scaled(parent, 36))
+        else:
+            width = _scaled(parent, width)
         super().__init__(parent, width=int(width), height=h, bg=bg, **kwargs)
         self._height = h
         self._text = str(text)
         self._kind = kind if kind in ("primary", "ghost") else "primary"
-        self._radius = int(radius)
+        self._radius = _scaled(parent, radius)
         self._bg = bg
         self._tiles = {}
         self._on_click = on_click

@@ -4,7 +4,7 @@ from __future__ import annotations
 import sys
 import tkinter as tk
 try:
-    from pages_modern import _UI, ScrollPage, RoundedCard, PillButton, Tag, _page_header, _label, _separator, _round_rect
+    from pages_modern import _UI, ScrollPage, RoundedCard, PillButton, Tag, _page_header, _label, _separator, _round_rect, _after
 except Exception:
     _UI = ScrollPage = RoundedCard = PillButton = Tag = _page_header = _label = _separator = _round_rect = None
 try:
@@ -90,13 +90,13 @@ def build_usage_page(app, parent) -> None:
                 return
             chart.bind("<Configure>",lambda _e:draw_chart(pairs))
             draw_chart(pairs)
-            try:chart.after(150,lambda:draw_chart(pairs))
+            try:_after(chart,150,lambda:draw_chart(pairs))
             except Exception:pass
         def draw_chart(pairs):
             try:
                 chart.delete("all");w=chart.winfo_width()
                 if w<60:
-                    chart.after(120,lambda:draw_chart(pairs));return
+                    _after(chart,120,lambda:draw_chart(pairs));return
                 h=chart.winfo_height();maxv=max((_num(v.get("total",_num(v.get("prompt"))+_num(v.get("completion")))) for _,v in pairs),default=0) or 0
                 if maxv<=0:
                     chart.create_text(w//2,h//2,text=t("暂无用量记录","No usage recorded"),fill=theme["text_muted"],font=(ui.font,9));return

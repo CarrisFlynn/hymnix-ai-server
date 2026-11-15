@@ -15,6 +15,7 @@ r"""Hymnix Client — 现代化桌面 AI 聊天客户端（单文件 · UTF-8）
 仅依赖标准库 tkinter 与 requests；不依赖任何第三方 UI 组件。
 """
 
+import codecs
 import json
 import math
 import os
@@ -267,6 +268,30 @@ FACTORY = {
 }
 
 
+def decode_sse_lines(chunks):
+    """按 UTF-8 字节流增量解码 SSE，避免多字节字符跨 TCP chunk 被替换。"""
+    decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+    pending = ""
+    first = True
+    for chunk in chunks:
+        if not chunk:
+            continue
+        if isinstance(chunk, str):
+            text = chunk
+        else:
+            text = decoder.decode(bytes(chunk), final=False)
+        if first:
+            text = text.lstrip("\ufeff")
+            first = False
+        pending += text
+        while "\n" in pending:
+            line, pending = pending.split("\n", 1)
+            yield line.rstrip("\r")
+    pending += decoder.decode(b"", final=True)
+    if pending:
+        yield pending.rstrip("\r")
+
+
 def normalize_base(url):
     """把用户填写的地址规范成网关根地址（去掉尾部 / 与 /v1、/api）。"""
     u = (url or "").strip()
@@ -431,6 +456,18 @@ class ChatHTTPError(Exception):
 # ---------------------------------------------------------------------------
 # 基础绘制部件
 # ---------------------------------------------------------------------------
+def _ui_scale(widget):
+    """Return Tk physical DPI scale for pixel-based canvas geometry."""
+    try:
+        return max(1.0, min(3.0, float(widget.winfo_fpixels("1i")) / 96.0))
+    except Exception:
+        return 1.0
+
+
+def _ui_px(widget, value, minimum=1):
+    return max(minimum, int(round(float(value) * _ui_scale(widget))))
+
+
 def shade(color, factor):
     """把 #RRGGBB 颜色按比例调亮/调暗。"""
     try:
@@ -450,7 +487,7 @@ class StatusPill(tk.Canvas):
     """顶部圆角状态胶囊（圆点 + 文案）。"""
 
     def __init__(self, master, theme, fonts):
-        super().__init__(master, width=150, height=28, bg=theme["surface"],
+        super().__init__(master, width=_ui_px(master, 150), height=_ui_px(master, 28), bg=theme["surface"],
                          highlightthickness=0, bd=0)
         self.theme = theme
         self.font = fonts["pill"]
@@ -476,11 +513,12 @@ class StatusPill(tk.Canvas):
     def _draw(self):
         self.delete("all")
         bg, fg, dot = self._colors()
-        width = max(96, self.font.measure(self.text) + 40)
-        self.configure(width=width, height=28)
-        round_rect(self, 1, 1, width - 1, 27, 13, fill=bg, outline="")
-        self.create_oval(13, 11, 19, 17, fill=dot, outline="")
-        self.create_text(25, 14, anchor="w", text=self.text, font=self.font, fill=fg)
+        width = max(_ui_px(self, 96), self.font.measure(self.text) + _ui_px(self, 40))
+        height = _ui_px(self, 28)
+        self.configure(width=width, height=height)
+        round_rect(self, 1, 1, width - 1, height - 1, _ui_px(self, 13), fill=bg, outline="")
+        self.create_oval(_ui_px(self, 13), _ui_px(self, 11), _ui_px(self, 19), _ui_px(self, 17), fill=dot, outline="")
+        self.create_text(_ui_px(self, 25), height / 2, anchor="w", text=self.text, font=self.font, fill=fg)
 
 
 class RoundButton(tk.Canvas):
@@ -493,9 +531,9 @@ class RoundButton(tk.Canvas):
         self.kind = kind
         self.command = command
         self.text = text
-        self.padx = padx
-        self.pady = pady
-        self.radius = radius
+        self.padx = _ui_px(master, padx)
+        self.pady = _ui_px(master, pady)
+        self.radius = _ui_px(master, radius)
         self.bg = bg if bg else theme["surface"]
         self._enabled = True
         self._hovering = False
@@ -604,14 +642,15 @@ class Avatar(tk.Canvas):
     SIZE = 30
 
     def __init__(self, master, role, theme, fonts, bg):
-        super().__init__(master, width=self.SIZE, height=self.SIZE, bg=bg,
+        self._size = _ui_px(master, self.SIZE)
+        super().__init__(master, width=self._size, height=self._size, bg=bg,
                          highlightthickness=0, bd=0)
         is_user = role == "user"
         fill = theme["accent"] if is_user else theme["accent_soft"]
         fg = theme["accent_text"] if is_user else theme["accent"]
-        self.create_oval(1, 1, self.SIZE - 1, self.SIZE - 1, fill=fill, outline="")
+        self.create_oval(1, 1, self._size - 1, self._size - 1, fill=fill, outline="")
         letter = "H" if not is_user else tr("role_you")[:1]
-        self.create_text(self.SIZE / 2.0, self.SIZE / 2.0, text=letter,
+        self.create_text(self._size / 2.0, self._size / 2.0, text=letter,
                          font=fonts["avatar"], fill=fg)
 
 
@@ -779,11 +818,13 @@ class ChatView(tk.Frame):
         self.rows = []
         self.bubbles = []
         self.kinds = []
+        self.notice_labels = []
         self.follow = True
         self._last_width = 0
-        self._maxw = 620
+        self._maxw = _ui_px(self, 620)
         self._resize_job = None
         self._empty = None
+        self._empty_hint = None
         self._build_empty_overlay()
 
     # ---- 空状态 ----
@@ -791,16 +832,18 @@ class ChatView(tk.Frame):
         theme = self.app.theme
         fonts = self.app.fonts
         overlay = tk.Frame(self, bg=theme["chat_bg"])
-        logo = tk.Canvas(overlay, width=64, height=64, bg=theme["chat_bg"],
+        logo_size = _ui_px(overlay, 64)
+        logo = tk.Canvas(overlay, width=logo_size, height=logo_size, bg=theme["chat_bg"],
                          highlightthickness=0, bd=0)
-        round_rect(logo, 2, 2, 62, 62, 16, fill=theme["accent_soft"], outline="")
-        logo.create_text(32, 32, text="H", font=fonts["title"], fill=theme["accent"])
+        round_rect(logo, _ui_px(overlay, 2), _ui_px(overlay, 2), logo_size - _ui_px(overlay, 2), logo_size - _ui_px(overlay, 2), _ui_px(overlay, 16), fill=theme["accent_soft"], outline="")
+        logo.create_text(logo_size / 2, logo_size / 2, text="H", font=fonts["title"], fill=theme["accent"] )
         logo.pack(pady=(0, 18))
         tk.Label(overlay, text=tr("empty_title"), font=fonts["title"],
                  fg=theme["text"], bg=theme["chat_bg"]).pack()
-        tk.Label(overlay, text=tr("empty_hint"), font=fonts["small"],
-                 fg=theme["text_muted"], bg=theme["chat_bg"], wraplength=460,
-                 justify="center").pack(pady=(8, 0))
+        self._empty_hint = tk.Label(overlay, text=tr("empty_hint"), font=fonts["small"],
+                                    fg=theme["text_muted"], bg=theme["chat_bg"],
+                                    wraplength=_ui_px(overlay, 460), justify="center")
+        self._empty_hint.pack(pady=(8, 0))
         self._empty = overlay
         overlay.place(relx=0.5, rely=0.44, anchor="center")
 
@@ -820,8 +863,12 @@ class ChatView(tk.Frame):
         except Exception:
             width = 0
         if width < 200:
-            width = 960
-        return max(300, min(660, int(width * 0.72)))
+            width = _ui_px(self, 660)
+        computed = max(_ui_px(self, 300), min(_ui_px(self, 660), int(width * 0.72)))
+        if self.canvas.winfo_width() > 1:
+            limit = max(_ui_px(self, 200), self.canvas.winfo_width() - _ui_px(self, 88))
+            computed = min(computed, limit)
+        return computed
 
     def _on_canvas_configure(self, event):
         try:
@@ -840,9 +887,25 @@ class ChatView(tk.Frame):
     def _relayout(self):
         self._resize_job = None
         new_width = self._bubble_width()
-        if abs(new_width - self._maxw) < 4:
-            return
+        old_width = self._maxw
         self._maxw = new_width
+        canvas_width = self.canvas.winfo_width()
+        if canvas_width <= 1:
+            notice_width = _ui_px(self, 560)
+        else:
+            notice_width = max(120, canvas_width - _ui_px(self, 88))
+            notice_width = min(notice_width, max(1, canvas_width - _ui_px(self, 16)))
+        if self._empty_hint is not None:
+            empty_width = canvas_width if canvas_width > 1 else _ui_px(self, 460)
+            empty_width = min(_ui_px(self, 460), max(_ui_px(self, 180), empty_width - _ui_px(self, 32)))
+            self._empty_hint.configure(wraplength=empty_width)
+        for notice_label in self.notice_labels:
+            try:
+                notice_label.configure(wraplength=notice_width)
+            except Exception:
+                pass
+        if abs(new_width - old_width) < 4:
+            return
         for bubble in self.bubbles:
             if bubble is not None:
                 try:
@@ -890,9 +953,16 @@ class ChatView(tk.Frame):
             "warn": theme["notice_warn"],
         }.get(level, theme["notice_info"])
         row = tk.Frame(self.inner, bg=theme["chat_bg"])
+        canvas_width = self.canvas.winfo_width()
+        if canvas_width <= 1:
+            notice_width = _ui_px(self, 560)
+        else:
+            notice_width = max(120, canvas_width - _ui_px(self, 88))
+            notice_width = min(notice_width, max(1, canvas_width - _ui_px(self, 16)))
         label = tk.Label(row, text=text, font=self.app.fonts["small"], fg=color,
-                         bg=theme["chat_bg"], wraplength=560, justify="center")
-        label.pack(padx=44, pady=4)
+                         bg=theme["chat_bg"], wraplength=notice_width, justify="center")
+        label.pack(padx=_ui_px(self, 44), pady=_ui_px(self, 4))
+        self.notice_labels.append(label)
         row.pack(fill="x")
         index = len(self.bubbles)
         self.rows.append(row)
@@ -1746,13 +1816,15 @@ class ClientApp(tk.Tk):
         except Exception as exc:
             raise self._request_error(exc)
         self._active_resp = resp
+        # Gateway payloads are UTF-8 even when Content-Type omits charset.
         try:
             if resp.status_code in (401, 403):
                 raise ChatHTTPError("auth")
+            resp.encoding = "utf-8"
             if resp.status_code != 200:
                 body = ""
                 try:
-                    body = resp.text[:400]
+                    body = (resp.content or b"").decode("utf-8-sig", "replace")[:400]
                 except Exception:
                     pass
                 raise ChatHTTPError("http", code=resp.status_code,
@@ -1760,20 +1832,21 @@ class ClientApp(tk.Tk):
             ctype = (resp.headers.get("Content-Type") or "").lower()
             if "text/event-stream" not in ctype:
                 try:
-                    data = resp.json()
+                    raw_json = resp.content or b""
+                    data = json.loads(raw_json.decode("utf-8-sig", "replace"))
                 except Exception:
                     raise ChatHTTPError("empty")
                 self._consume_completion(data, state, gen_id)
                 return
             try:
-                lines = resp.iter_lines(decode_unicode=True)
-                for raw in lines:
+                # Read raw bytes and decode incrementally: UTF-8 characters can
+                # be split across arbitrary HTTP chunks.
+                for raw in decode_sse_lines(resp.iter_content(chunk_size=1024)):
                     if self._cancel.is_set():
                         break
                     if raw is None:
                         continue
-                    line = raw.strip() if isinstance(raw, str) else \
-                        raw.decode("utf-8", "ignore").strip()
+                    line = raw.strip()
                     if not line:
                         continue
                     if line.startswith("data:"):
@@ -1782,6 +1855,7 @@ class ClientApp(tk.Tk):
                         data_text = line
                     else:
                         continue
+                    data_text = data_text.lstrip("\ufeff")
                     if data_text == "[DONE]":
                         break
                     try:
@@ -1811,16 +1885,18 @@ class ClientApp(tk.Tk):
         try:
             if resp.status_code in (401, 403):
                 raise ChatHTTPError("auth")
+            resp.encoding = "utf-8"
             if resp.status_code != 200:
                 body = ""
                 try:
-                    body = resp.text[:400]
+                    body = (resp.content or b"").decode("utf-8-sig", "replace")[:400]
                 except Exception:
                     pass
                 raise ChatHTTPError("http", code=resp.status_code,
                                     detail=self._extract_error(body))
             try:
-                data = resp.json()
+                raw_json = resp.content or b""
+                data = json.loads(raw_json.decode("utf-8-sig", "replace"))
             except Exception:
                 raise ChatHTTPError("empty")
             self._consume_completion(data, state, gen_id)
@@ -2761,6 +2837,16 @@ def parse_args(argv):
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
+    if "--version" in argv:
+        version = APP_VER
+        base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+        try:
+            with open(os.path.join(base, "VERSION"), "r", encoding="utf-8") as fh:
+                version = fh.read().strip() or version
+        except OSError:
+            pass
+        print(version)
+        return 0
     opts = parse_args(argv)
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")

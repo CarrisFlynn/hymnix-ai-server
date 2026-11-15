@@ -33,7 +33,22 @@ def build_sessions_page(app,parent):
  try:
   ui=_UI(app,parent);theme=ui.theme;t=lambda z,e:ui.t(z,e);backend=_backend()
   if backend is None:tk.Label(parent,text=t('多会话模块未就绪','Sessions module not ready')).pack(fill='both',expand=True);return
-  page=ScrollPage(parent,ui);page.pack(fill='both',expand=True);content=page.content;content.columnconfigure(0,weight=1);content.rowconfigure(4,weight=1)
+  page=ScrollPage(parent,ui);page.pack(fill='both',expand=True);after_jobs=set()
+  def schedule_after(delay,callback):
+   ident=None
+   def run():
+    if ident is not None: after_jobs.discard(ident)
+    try:
+     if page.winfo_exists(): callback()
+    except tk.TclError: pass
+   ident=page.after(delay,run);after_jobs.add(ident);return ident
+  def cancel_page_jobs(event):
+   if event.widget is not page:return
+   for ident in tuple(after_jobs):
+    try:page.after_cancel(ident)
+    except tk.TclError:pass
+   after_jobs.clear()
+  page.bind('<Destroy>',cancel_page_jobs,add='+');content=page.content;content.columnconfigure(0,weight=1);content.rowconfigure(4,weight=1)
   _page_header(content,ui,'SESSIONS',t('会话管理','Sessions'),t('管理多个对话会话与消息。','Manage multiple conversations and messages.')).grid(row=0,column=0,sticky='ew')
   controls=tk.Frame(content,bg=theme['bg']);controls.grid(row=1,column=0,sticky='ew',pady=(8,6));query=tk.StringVar();stats=tk.StringVar();hint=tk.StringVar();results=queue.Queue();state={'rows':[],'selected':'','seq':0,'busy':False,'after':None,'list_limit':50,'msg_limit':100,'list_done':False,'msg_done':False}
   def poll():
@@ -53,7 +68,7 @@ def build_sessions_page(app,parent):
        rows=result if isinstance(result,list) else [];state['msg_done']=len(rows)<state['msg_limit'];render_messages(rows)
      else:hint.set(t('操作已完成','Operation completed'));begin('list',query=query.get().strip())
    except queue.Empty:pass
-   try:page.after(60,poll)
+   try:schedule_after(60,poll)
    except tk.TclError:pass
   def worker(seq,kind,kw):
    try:
@@ -84,7 +99,7 @@ def build_sessions_page(app,parent):
    for c in message_box.winfo_children():c.destroy()
    if not rows:_label(message_box,text=t('该会话没有消息','This session has no messages'),fg=theme['text_muted'],bg=theme['card']).pack(anchor='w');return
    state['msg_done'] = state['msg_done'] or len(rows) < state['msg_limit']
-   visible, _remaining = visible_slice(sorted(rows,key=lambda x:str(x.get('ts','')) if isinstance(x,dict) else ''), state['msg_limit'])
+   visible, _remaining = visible_slice(rows, state['msg_limit'])
    for item in visible:
     item=item if isinstance(item,dict) else {};role=str(item.get('role','system'));text,clipped=_truncate(item.get('text',''));r=tk.Frame(message_box,bg=theme['card']);r.pack(fill='x',pady=(0,8));fill=theme['accent'] if role=='user' else theme['ok'] if role=='assistant' else theme['text_muted'];_tag(r,ui,role.upper(),theme['card'],fill=fill,fg='#fff').pack(anchor='w');_label(r,text=text+(' ['+t('已截断','Truncated')+']' if clipped else ''),fg=theme['text'],bg=theme['card'],wraplength=ui.px(700),anchor='w',justify='left').pack(fill='x')
    if not state['msg_done']:
@@ -101,13 +116,13 @@ def build_sessions_page(app,parent):
     PillButton(list_box,ui,t('加载更多','Load more'),command=lambda: (state.__setitem__('list_limit',state['list_limit']+50),begin('list',query=query.get().strip(),limit=state['list_limit'])),kind='ghost',bg=theme['card']).pack(anchor='w')
    else:
     _label(list_box,text=t('已全部加载','All loaded'),fg=theme['text_muted'],bg=theme['card']).pack(anchor='w')
-  ent=tk.Entry(controls,textvariable=query,bg=theme['input_bg'],fg=theme['text'],relief='flat');ent.pack(side='left',fill='x',expand=True);PillButton(controls,ui,t('新建会话','New session'),command=create,kind='ghost',bg=theme['bg']).pack(side='left');PillButton(controls,ui,t('刷新','Refresh'),command=refresh,kind='ghost',bg=theme['bg']).pack(side='left');_label(content,textvariable=stats,fg=theme['text_muted'],bg=theme['bg']).grid(row=2,column=0,sticky='w');_label(content,textvariable=hint,fg=theme['accent'],bg=theme['bg']).grid(row=3,column=0,sticky='w')
-  columns=tk.Frame(content,bg=theme['bg']);columns.grid(row=4,column=0,sticky='nsew',pady=(6,0));columns.columnconfigure(0,weight=0,minsize=ui.px(300));columns.columnconfigure(1,weight=1);columns.rowconfigure(0,weight=1);left=RoundedCard(columns,ui,pad=10,radius=8,shadow=False);right=RoundedCard(columns,ui,pad=10,radius=8,shadow=False);left.grid(row=0,column=0,sticky='nsew',padx=(0,ui.px(5)));right.grid(row=0,column=1,sticky='nsew',padx=(ui.px(5),0));_label(left.body,text=t('会话','Sessions'),fg=theme['text'],bg=theme['card']).pack(anchor='w');_label(right.body,text=t('消息','Messages'),fg=theme['text'],bg=theme['card']).pack(anchor='w')
+  controls.columnconfigure(0,weight=1); ent=tk.Entry(controls,textvariable=query,bg=theme['input_bg'],fg=theme['text'],relief='flat'); ent.grid(row=0,column=0,sticky='ew',padx=(0,ui.px(6))); toolbar=tk.Frame(controls,bg=theme['bg']); toolbar.grid(row=1,column=0,sticky='w',pady=(ui.px(6),0)); PillButton(toolbar,ui,t('新建会话','New session'),command=create,kind='ghost',bg=theme['bg']).pack(side='left',padx=(0,ui.px(6))); PillButton(toolbar,ui,t('刷新','Refresh'),command=refresh,kind='ghost',bg=theme['bg']).pack(side='left'); _label(content,textvariable=stats,fg=theme['text_muted'],bg=theme['bg']).grid(row=2,column=0,sticky='w'); _label(content,textvariable=hint,fg=theme['accent'],bg=theme['bg']).grid(row=3,column=0,sticky='w')
+  columns=tk.Frame(content,bg=theme['bg']);columns.grid(row=4,column=0,sticky='nsew',pady=(6,0));columns.columnconfigure(0,weight=1,minsize=ui.px(140));columns.columnconfigure(1,weight=2,minsize=ui.px(140));columns.rowconfigure(0,weight=1);left=RoundedCard(columns,ui,pad=10,radius=8,shadow=False);right=RoundedCard(columns,ui,pad=10,radius=8,shadow=False);left.grid(row=0,column=0,sticky='nsew',padx=(0,ui.px(5)));right.grid(row=0,column=1,sticky='nsew',padx=(ui.px(5),0));_label(left.body,text=t('会话','Sessions'),fg=theme['text'],bg=theme['card']).pack(anchor='w');_label(right.body,text=t('消息','Messages'),fg=theme['text'],bg=theme['card']).pack(anchor='w')
   list_wrap=tk.Frame(left.body,bg=theme['card']);list_wrap.pack(fill='both',expand=True);list_canvas=tk.Canvas(list_wrap,bg=theme['card'],highlightthickness=0,width=ui.px(280));list_scroll=tk.Scrollbar(list_wrap,orient='vertical',command=list_canvas.yview);list_canvas.configure(yscrollcommand=list_scroll.set);list_scroll.pack(side='right',fill='y');list_canvas.pack(side='left',fill='both',expand=True);list_box=tk.Frame(list_canvas,bg=theme['card']);list_window=list_canvas.create_window((0,0),window=list_box,anchor='nw');list_box.bind('<Configure>',lambda e:list_canvas.configure(scrollregion=list_canvas.bbox('all')));list_canvas.bind('<Configure>',lambda e:list_canvas.itemconfigure(list_window,width=e.width));message_box=tk.Frame(right.body,bg=theme['card']);message_box.pack(fill='both',expand=True)
   def schedule(*_):
    if state['after']:page.after_cancel(state['after'])
-   state['after']=page.after(300,refresh)
-  query.trace_add('write',schedule);ent.bind('<Return>',lambda e:refresh());page.after(60,poll);refresh();page.bind_wheel()
+   state['after']=schedule_after(300,refresh)
+  query.trace_add('write',schedule);ent.bind('<Return>',lambda e:refresh());schedule_after(60,poll);refresh();page.bind_wheel()
  except Exception:
   try:tk.Label(parent,text=t('多会话模块未就绪','Sessions module not ready')).pack(fill='both',expand=True)
   except Exception:pass

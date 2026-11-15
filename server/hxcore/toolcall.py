@@ -18,7 +18,8 @@ def _mirror(event: dict) -> None:
 
 def begin(tool: str, args: dict, origin: str = "ui") -> str:
     cid = uuid.uuid4().hex
-    event = {"phase":"begin", "id":cid, "tool":str(tool), "args":args if isinstance(args, dict) else {}, "origin":origin, "t0":time.time()}
+    now = time.time()
+    event = {"phase":"begin", "id":cid, "tool":str(tool), "args":args if isinstance(args, dict) else {}, "origin":origin, "t0":now, "ts":now}
     with _lock:
         _events.append(dict(event))
         if len(_events) > _MAX: del _events[:-_MAX]
@@ -34,7 +35,7 @@ def end(cid: str, ok: bool, result=None, error: str = "", ms: float | None = Non
     with _lock:
         found = next((e for e in reversed(_events) if e.get("id")==cid and e.get("phase")=="begin"), None)
         t0 = found.get("t0", t1) if found else t1
-        event={"phase":"end","id":cid,"tool":found.get("tool","") if found else "","args":found.get("args",{}) if found else {},"origin":found.get("origin", "ui") if found else "ui","t0":t0,"t1":t1,"ms":float(ms if ms is not None else max(0,(t1-t0)*1000)),"ok":bool(ok),"result":result,"error":str(error or "")}
+        event={"phase":"end","id":cid,"tool":found.get("tool","") if found else "","args":found.get("args",{}) if found else {},"origin":found.get("origin", "ui") if found else "ui","t0":t0,"t1":t1,"ts":t1,"ms":float(ms if ms is not None else max(0,(t1-t0)*1000)),"ok":bool(ok),"result":result,"error":error if isinstance(error,str) else str(error or "")}
         _events.append(event)
         if len(_events) > _MAX: del _events[:-_MAX]
         subscribers=list(_subscribers)
@@ -52,3 +53,8 @@ def subscribe(fn) -> None:
     if not callable(fn): return
     with _lock:
         if fn not in _subscribers: _subscribers.append(fn)
+
+def unsubscribe(fn) -> None:
+    """Release an observer when its page is destroyed."""
+    with _lock:
+        if fn in _subscribers: _subscribers.remove(fn)
