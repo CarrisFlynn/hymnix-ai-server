@@ -5,6 +5,8 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/).
 
+**English** | [简体中文](CHANGELOG.zh-CN.md)
+
 ## [1.2.1] - 2026-11-15
 
 ### Fixed
@@ -120,6 +122,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Admin endpoints protected by a separate key
 - Structured error codes for 401, 429 and 5xx responses
 
-[Unreleased]: https://github.com/CarrisFlynn/hymnix-ai-server/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/CarrisFlynn/hymnix-ai-server/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/CarrisFlynn/hymnix-ai-server/releases/tag/v1.2.1
+[1.2.0]: https://github.com/CarrisFlynn/hymnix-ai-server/releases/tag/v1.2.0
+[1.1.0]: https://github.com/CarrisFlynn/hymnix-ai-server/releases/tag/v1.1.0
 [1.0.0]: https://github.com/CarrisFlynn/hymnix-ai-server/releases/tag/v1.0.0
 
