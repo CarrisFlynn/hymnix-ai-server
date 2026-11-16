@@ -1,197 +1,161 @@
-# Hymnix AI
+# Hymnix Orbit 1.3.0
 
-**English** | [简体中文](README.zh-CN.md)
+**One app, two roles: run a local model server for friends, or connect to a friend and use their hardware.**
 
-**A local-first AI gateway and Windows desktop console for running, sharing, and operating OpenAI-compatible local models.**
+![Hymnix Orbit](assets/hero.png)
 
-Hymnix connects Ollama-compatible models to a practical desktop workflow: chat, terminal operations, monitoring, tools, files, approvals, history, and optional remote access stay under the operator's control.
+## What it is
 
-![License](https://img.shields.io/badge/license-AGPL--3.0-blue)
-![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey)
-![Release](https://img.shields.io/badge/release-1.2.1-blueviolet)
-![Python](https://img.shields.io/badge/python-3.11%2B-3776AB)
+Hymnix Orbit is a desktop application that bundles a local model gateway (Python, no Java, no Node required on the target machine) with an Electron client UI.
 
-## Screenshots
+- **Host mode** — you run the gateway on your machine, share a name and a password, open a public tunnel, and friends chat against your hardware.
+- **Guest mode** — you enter a friend address, the share name and the connection password, and your chats and model list come from their machine.
+- **Local mode** — everything stays on your own machine, no tunnel, no account.
 
-![Hymnix AI preview](docs/images/en/preview.png)
+> Previous releases (1.0–1.2) shipped a separate server build and a separate client build. **1.3.0 merges them into one integrated product.** The old split builds are no longer required; hosting and connecting are two modes of the same app.
 
-![Hymnix AI overview](docs/images/en/overview.png)
+## Downloads
 
-![Chat](docs/images/en/01-chat.png)
-![Terminal](docs/images/en/02-terminal.png)
-![Monitor](docs/images/en/03-monitor.png)
-![API](docs/images/en/04-api.png)
-![Cloud Hub](docs/images/en/05-cloudhub.png)
-![Plugins](docs/images/en/06-plugins.png)
+| Package | File | Notes |
+|---|---|---|
+| Installer | installer/Hymnix-Orbit-1.3.0-Setup.exe | NSIS, installs per user, ~168 MB |
+| Portable | portable/Hymnix-Orbit-1.3.0-Portable.exe | Single file, no installation |
 
-All 17 pages are captured in [docs/images/en](docs/images/en) (chat, terminal, monitor, cloud API, cloud hub, plugins, tools, crash report, history, sessions, files, diff, support, approvals, usage, OCR, git).
-
-## What's new in 1.2.1
-
-- Chinese text no longer turns into mojibake: every streamed reply, tool trace and log line is decoded as UTF-8.
-- The sidebar can no longer open the wrong page: navigation resolves pages by id instead of by position.
-- The terminal keeps its compact 1.2.0 density on high-DPI displays, and the window / taskbar icon is restored.
-- History is read in full, searchable and exportable; terminal traces survive a restart.
-- See [CHANGELOG.md](CHANGELOG.md) / [CHANGELOG.zh-CN.md](CHANGELOG.zh-CN.md).
-
-## What's new in 1.2.0
-
-- A full local AI workbench: 17 pages covering chat, terminal, monitoring, cloud endpoints, plugins, tools, crash reports, history, sessions, files, diffs, approvals, usage, OCR and git.
-- Plugin kernel with manifests, permission allowlists and lifecycle controls; built-in tools plus MCP (stdio/HTTP) with approval gates.
-- Multi-session history, context compression, file tree and search, hunk-level diff apply and rollback.
-- Per-request usage and cost visibility, cloud hub, git acceleration, and a hardened one-click update path.
-- English-first interface with Chinese, French, Russian and Spanish; full high-DPI rendering.
-
-## Features
-
-### Local gateway and OpenAI-compatible API
-
-- Local HTTP gateway with OpenAI-compatible chat completions, streaming, usage data, and tool-call responses.
-- Ollama model passthrough, model aliases, configurable compatibility modes, and upstream error normalization.
-- Localhost-first defaults, separate model and administration credentials, and per-client request serialization.
-
-### Models and hardware
-
-- Select any installed local model instead of being tied to a single default.
-- Model discovery and refresh from the desktop client.
-- Live hardware signals including GPU utilization, VRAM, power, latency, tokens, and estimated energy cost.
-- Idle unloading and agent-aware keep-alive settings to balance responsiveness and resource use.
-
-### Terminal console
-
-- Keyboard-driven terminal page with status chips, live logs, command history, completion, and confirmation for destructive actions.
-- Commands for service control, model selection, configuration, tunnel state, hardware, history, export, and log inspection.
-
-### Multiple sessions and context compression
-
-- Multiple conversation sessions with persistent local history, search, message browsing, statistics, and refresh.
-- Context trimming preserves system instructions and can compress long conversations before sending.
-- Session deletion creates a backup before removal.
-
-### Plugin kernel and permissions
-
-- Manifest-based plugins with permission declarations, allowlists, install/update/remove flows, and isolated lifecycle controls.
-- Package validation, timeout limits, enable/disable controls, and a recoverable trash area for removed plugins.
-
-### Tool calling and MCP
-
-- Built-in tools with schema validation, safe expression evaluation, root-directory boundaries, and a visible invocation timeline.
-- MCP stdio and HTTP transport support for compatible tool servers.
-- Tool access can be gated by approval rules before execution.
-
-### Files, repositories, and diffs
-
-- Read-only file trees, filename and text search, filtering, scan statistics, and bounded workspace access.
-- Diff preview with hunk-level review, apply, revert, backup, and rollback records.
-- Repository-aware workflows for inspecting project files without granting unrestricted filesystem access.
-
-### Approvals and security
-
-- Human confirmation for risky commands, tools, plugin operations, and other sensitive actions.
-- DNS and private-network checks, loopback and redirect protections, undeclared-argument rejection, and bounded roots.
-- Conversation and event records remain local by default; treat them as sensitive because prompts and responses may be stored.
-
-### Usage and cost
-
-- Request history with latency, token, GPU, VRAM, power, and estimated cost fields.
-- Usage summaries and exportable records for local operations and supported remote services.
-
-### Cloud Hub
-
-- Optional cloud endpoint configuration for compatible providers.
-- Cloud usage reconciliation, account-aware status, and offline-friendly local behavior when remote credentials are unavailable.
-
-### OCR
-
-- OCR page and tool integration using a locally installed Tesseract-compatible engine when available.
-- Clear availability reporting when no OCR engine is installed; OCR is optional and remains local.
-
-### Git acceleration
-
-- Local Git proxy settings and repository-focused inspection flows for development work.
-- Git-aware diff and status workflows complement the file tree and review pages.
-
-### Updates and publishing
-
-- One-click update checks with release notes, progress, SHA-256 verification, and restart into the downloaded build.
-- Update channels and publishing preparation are kept separate from the running executable.
-
-### Languages and high DPI
-
-- English, Simplified Chinese, French, Russian, and Spanish interface options.
-- Windows desktop UI with language selection; verify rendering on your display scaling before deployment.
+Checksums are in `SHA256SUMS.txt`. The binaries are signed with a self-signed certificate, so Windows SmartScreen may still warn until the certificate is trusted; see `SIGNING.md` in the repository for the public-signing plan.
 
 ## Quick start
 
-### Prerequisites
+### Use it alone
 
-- Windows 10 or 11, Python 3.11 or newer for source runs.
-- [Ollama](https://ollama.com/download) with at least one installed model.
-- Optional: a local Tesseract-compatible OCR engine and a tunnel client for remote access.
+1. Launch Hymnix Orbit and keep the default language.
+2. Open **Models**, press **Start Ollama** if the card says the model service is offline.
+3. Pick a model from the installed list, or download one from the catalog.
+4. Go back to **Chat** and type. Press **Enter** to send, **Shift+Enter** for a new line.
 
-### Run a prebuilt build
+### Host for a friend
 
-1. Download the server executable from the project's Releases page.
-2. Start it in a dedicated folder.
-3. Install or select a local model in Ollama.
-4. Open the console, verify the gateway and model status, then configure an OpenAI-compatible client with the displayed endpoint and generated API key.
+1. Open **Gateway** → **Host a server**.
+2. Set a **share name** and a **share password** (the tunnel refuses to start without a password).
+3. Press **Start tunnel**. When the state chip turns **Ready**, copy the public address.
+4. Send the address, share name and password to your friend. Their chats now run on your GPU/CPU.
 
-### Run from source
+### Connect to a friend
 
-```powershell
-git clone https://github.com/CarrisFlynn/hymnix-ai-server.git
-cd hymnix-ai-server/server
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-python hymnix_main.py
-```
+1. Open **Gateway** → **Connect to a friend**.
+2. Enter the address you received, the share name and the connection password.
+3. Press **Connect**. The model list and chat requests switch to their machine.
 
-Set HYMNIX_LANG (en, zh, fr, ru, es) to force the interface language, for example `$env:HYMNIX_LANG = "en"`.
+## Features
 
-## Build from source
+- Local model management: list, load, unload, delete, download from a 30+ model catalog.
+- Cloud API as an alternative source (any OpenAI-compatible endpoint).
+- Terminal console: status strip, live tunnel log, command set including `status`, `models`, `tunnel`, `hardware`, `config`, `set <key> <value>`.
+- Chat with markdown, code blocks with copy, and a collapsible **thinking process** panel for reasoning models.
+- Right control panel: model, reasoning effort, conversation save/load/export, GPU / VRAM / AI / RAM telemetry.
+- Settings: startup behaviour, fullscreen, display scaling, smooth scrolling, GPU acceleration, cache location, in-app preview vs default browser.
+- In-app preview pane (Chromium) for files and model output.
+- English and Simplified Chinese, five themes.
 
-Windows builds use PyInstaller and the specs in server/ and client/. From the repository root:
+## Screenshots
 
-```powershell
-.\build.ps1 -Clean
-```
+| | |
+|---|---|
+| ![Chat](screenshots/chat.png) | ![Gateway](screenshots/gateway.png) |
+| ![Models](screenshots/models.png) | ![Terminal](screenshots/terminal.png) |
+| ![Settings](screenshots/settings.png) | ![Support](screenshots/support.png) |
 
-This produces dist\Hymnix 1.2.0.exe (server console) and dist\Hymnix Client 1.2.0.exe (thin client). Build one side with -ServerOnly or -ClientOnly.
+## Requirements
 
-Release checklist: clean build, launch the app, run the self-test, write SHA256SUMS.txt next to the artifacts, and never commit local configuration, logs or credentials.
+- Windows 10/11 x64.
+- No Java, no Node.js, no WebView2 installation required.
+- For local models: Ollama installed, or use the bundled start button.
 
-## Repository layout
+## Privacy
 
-```
-server/      desktop server console (gateway, UI pages, hxcore modules, locales, assets)
-client/      thin client for people you share a gateway with
-docs/        screenshots, terminal command reference, architecture notes
-config/      example configuration files (no secrets)
-packaging/   MSIX packaging assets
-build.ps1    PyInstaller build entry point
-```
-
-## Security notes
-
-- The gateway is local-first and requires an API key for model requests and a separate administration key for administrative endpoints.
-- Optional tunnels expose the gateway beyond the local machine; start them deliberately and share credentials only with trusted users.
-- Conversation logs can contain full prompts, responses, file paths, and tool results. Protect the host account and clear or archive records when appropriate.
-- Keep the server, tunnel client, OCR engine, model runtime, and dependencies up to date.
-- Review every tool, plugin, diff, and approval request before allowing an action to run.
-
-## Roadmap
-
-- More efficient incremental rendering for long streaming responses.
-- Broader MCP interoperability and richer tool-call presentation.
-- Additional repository workflows and scalable virtualized lists.
-- More provider integrations with explicit offline behavior and user-supplied credentials.
+- No telemetry and no analytics.
+- API keys and the share password stay in `%LOCALAPPDATA%\Hymnix\gateway_config.json` on your machine.
+- When you connect to a friend, your prompts are processed on their machine. When they connect to you, theirs are processed on yours.
 
 ## License
 
-Hymnix AI is licensed under the [GNU Affero General Public License v3.0](LICENSE).
+GNU Affero General Public License v3.0. See `LICENSE`.
 
-## Contributing
+## Links
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and the documentation in `docs/` before opening an issue or pull request. Keep changes focused, document user-visible behavior, add regression coverage where practical, and never include credentials or private conversation data.
+- Repository: https://github.com/CarrisFlynn/hymnix-ai-server
+- X: https://x.com/ShayHymnix
+- Sponsor: https://ifdian.net/a/hymnixstudio
 
+---
+
+# Hymnix Orbit 1.3.0（中文）
+
+**一个应用，两种角色：用自己的机器给朋友当模型服务端，或者连朋友的机器用他的硬件。**
+
+## 这是什么
+
+Hymnix Orbit 是把本地模型网关（Python，目标机器不需要 Java、不需要 Node）和 Electron 客户端界面打包在一起的桌面应用。
+
+- **作为主机**：网关跑在你的机器上，你设共享名称和密码、开公网隧道，朋友连进来用你的硬件对话。
+- **连接朋友**：填对方地址、共享名称、连接密码，模型列表和对话都来自对方机器。
+- **本地模式**：全部留在本机，不开隧道、不需要账号。
+
+> 以前（1.0–1.2）是客户端和服务端两个包分开发布，**1.3.0 合并成一个集成产品**：托管和连接是同一个应用的两种模式，旧的分开版本不再需要。
+
+## 下载
+
+| 版本 | 文件 | 说明 |
+|---|---|---|
+| 安装版 | installer/Hymnix-Orbit-1.3.0-Setup.exe | NSIS 安装包，按用户安装，约 168 MB |
+| 免安装版 | portable/Hymnix-Orbit-1.3.0-Portable.exe | 单文件，双击即用 |
+
+校验值见 `SHA256SUMS.txt`。当前是自签名证书，正式公开签名前 Windows SmartScreen 仍可能提示。
+
+## 快速开始
+
+### 自己用
+
+1. 打开 Hymnix Orbit。
+2. 进 **模型**，如果提示模型服务未启动，点 **启动 Ollama**。
+3. 从已安装列表里选一个模型，或从可下载清单里下载一个。
+4. 回到 **对话** 输入，**回车发送**，Shift+回转换行。
+
+### 给朋友当主机
+
+1. 打开 **网关** → **作为主机**。
+2. 设置 **共享名称** 和 **共享密码**（没有密码时隧道拒绝启动）。
+3. 点 **启动隧道**，状态变成 **已就绪** 后复制公网地址。
+4. 把地址、名称、密码发给朋友，他的对话就跑到你的硬件上。
+
+### 连接朋友
+
+1. 打开 **网关** → **连接朋友**。
+2. 填对方给的地址、共享名称、连接密码。
+3. 点 **连接**，模型列表与对话请求都切到对方机器。
+
+## 功能
+
+- 本地模型管理：列表、加载、卸载、删除，30+ 模型的可下载清单。
+- 云端 API 作为另一种对话来源（任意 OpenAI 兼容地址）。
+- 终端控制台：状态条、隧道实时日志，命令含 `status`、`models`、`tunnel`、`hardware`、`config`、`set <key> <value>`。
+- 对话支持 Markdown、代码块复制、推理模型的 **思考过程** 折叠面板。
+- 右侧控制栏：模型、推理强度、对话保存/加载/导出、GPU / VRAM / AI / RAM 遥测。
+- 设置：启动行为、全屏、显示缩放、平滑滚动、GPU 加速、缓存位置、应用内预览或默认浏览器。
+- 应用内预览（Chromium）用于文件和模型输出。
+- 中英双语，5 套主题。
+
+## 环境要求
+
+- Windows 10/11 x64。
+- 不需要预装 Java、Node.js、WebView2。
+- 跑本地模型需要 Ollama，可直接用内置的启动按钮。
+
+## 隐私
+
+- 没有遥测、没有统计上报。
+- API Key 与共享密码只存在本机的 `%LOCALAPPDATA%\Hymnix\gateway_config.json`。
+- 你连朋友时，你的提问在对方机器上处理；对方连你时，他的提问在你的机器上处理。
+
+## 许可证
+
+GNU Affero General Public License v3.0，见 `LICENSE`。

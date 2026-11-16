@@ -25,6 +25,47 @@ from collections import deque
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+def _files_int(raw, minimum, maximum, name):
+    if not re.fullmatch(r"(?:0|[1-9][0-9]*)", str(raw)):
+        raise ValueError("invalid_" + name)
+    value = int(raw)
+    if value < minimum or value > maximum:
+        raise ValueError("invalid_" + name)
+    return value
+
+
+_TOOL_APPROVAL_LOCK = threading.RLock()
+_TOOL_APPROVAL_ARGS = {}
+_TOOL_APPROVAL_TTL = 60.0
+_TOOL_APPROVAL_MAX = 256
+_SAFE_REMOTE_TOOLS = {"time.now", "calc", "fs.list", "fs.read", "fs.stat", "sysinfo", "repo.tree", "repo.search", "repo.read"}
+
+
+class _BoundedJSONError(Exception):
+    def __init__(self, status, code):
+        super().__init__(code)
+        self.status = status
+        self.code = code
+
+
+def _approval_redact(value):
+    try:
+        from hxcore.approvals import redacted_args
+        return redacted_args(value if isinstance(value, dict) else {"value": value}).get("value") if not isinstance(value, dict) else redacted_args(value)
+    except Exception:
+        if isinstance(value, dict):
+            return {str(k): "[REDACTED]" if any(s in str(k).lower() for s in ("token", "secret", "password", "key", "auth")) else _approval_redact(v) for k, v in list(value.items())[:64]}
+        if isinstance(value, list):
+            return [_approval_redact(v) for v in value[:64]]
+        if isinstance(value, str):
+            return value[:512]
+        return value
+
+
+_TOOL_REQUEST_IDS = {}
+_TOOL_REQUEST_MAX = 2048
+
+
 _BUNDLE_DIR = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
 _EXE_DIR = (os.path.dirname(os.path.abspath(sys.executable)) if getattr(sys, "frozen", False)
             else os.path.dirname(os.path.abspath(__file__)))
@@ -34,7 +75,18 @@ if not os.path.isdir(BASE_DIR):
     os.makedirs(BASE_DIR, exist_ok=True)
 CONFIG_PATH = os.path.join(BASE_DIR, "gateway_config.json")
 LOG_DIR = os.path.join(BASE_DIR, "logs")
-VERSION = "1.2.0"
+def _read_version():
+    for base in (os.path.dirname(_BUNDLE_DIR), _EXE_DIR, _BUNDLE_DIR, os.path.dirname(_EXE_DIR)):
+        try:
+            value = open(os.path.join(base, "VERSION"), encoding="utf-8").read().strip()
+            if value:
+                return value
+        except (OSError, UnicodeError):
+            pass
+    return "1.2.1"
+
+
+VERSION = _read_version()
 
 DEFAULT_CONFIG = {
     "listen_host": "0.0.0.0",
@@ -43,12 +95,18 @@ DEFAULT_CONFIG = {
     "upstream_port": 11434,
     "api_key": "",
     "admin_key": "",
+    "host_name": "Hymnix Orbit",
+    "host_password": "",
+    "allow_remote": True,
+    "chat_source": "local",
+    "cloud_enabled": False,
+    "cloud_api": {"base_url": "", "api_key": "", "model": ""},
     "max_body_mb": 32,
     "online_timeout_s": 120,
     "keep_log_days": 30,
     "model_aliases": {},
     "default_model": "",
-    "inject_time": True,
+    "inject_time": False,
     "compat_mode": "auto",
     "prompt_char_limit": 26000,
     "idle_unload_seconds": 60,
@@ -340,6 +398,8 @@ def _ensure_keys(cfg):
     changed = False
     if not str(cfg.get("api_key") or "").strip():
         cfg["api_key"] = "Hymnix" + secrets.token_urlsafe(24)
+    if not str(cfg.get("host_password") or "").strip():
+        cfg["host_password"] = secrets.token_urlsafe(9)
         changed = True
     if not str(cfg.get("admin_key") or "").strip():
         cfg["admin_key"] = "HymnixAdmin-" + secrets.token_hex(6)
@@ -365,6 +425,18 @@ def load_config():
 
 
 CFG = load_config()
+if not str(CFG.get("host_name") or "").strip():
+    CFG["host_name"] = "Hymnix Orbit"
+if not str(CFG.get("host_password") or "").strip():
+    CFG["host_password"] = secrets.token_urlsafe(9)
+if "allow_remote" not in CFG:
+    CFG["allow_remote"] = True
+try:
+    _CFG_PATH = CONFIG_PATH
+    with open(_CFG_PATH, "w", encoding="utf-8") as _handle:
+        json.dump(CFG, _handle, ensure_ascii=False, indent=2)
+except Exception:
+    pass
 API_KEY = str(CFG["api_key"])
 ADMIN_KEY = str(CFG["admin_key"])
 UP_HOST = CFG["upstream_host"]
@@ -387,6 +459,141 @@ BAN_THRESHOLD = 8   # 10 分钟内失败 8 次
 BAN_WINDOW = 600
 BAN_SECONDS = 1800
 TUNNEL_FILE = os.path.join(BASE_DIR, "tunnel_url.txt")
+OLLAMA_STATE = {"proc": None}
+TUNNEL_STATE = {"proc": None, "state": "off", "url": "", "started_ever": False, "stopped": False, "log": [], "watchdog": False}
+TUNNEL_LOG = []
+
+
+def _tunnel_note(text):
+    TUNNEL_LOG.append("[%s] %s" % (time.strftime("%H:%M:%S"), text))
+    if len(TUNNEL_LOG) > 60:
+        del TUNNEL_LOG[: len(TUNNEL_LOG) - 60]
+    TUNNEL_STATE["log"] = list(TUNNEL_LOG)
+
+
+def _cloudflared_path():
+    here = os.path.dirname(os.path.abspath(sys.executable if getattr(sys, "frozen", False) else __file__))
+    candidates = [
+        os.path.join(here, "cloudflared.exe"),
+        os.path.join(BASE_DIR, "cloudflared.exe"),
+        os.path.join(os.path.dirname(here), "cloudflared.exe"),
+        os.path.join(os.path.dirname(BASE_DIR), "cloudflared.exe"),
+    ]
+    for item in candidates:
+        if os.path.exists(item):
+            return item
+    return ""
+
+
+def _tunnel_pump(proc):
+    import re as _re
+    pattern = _re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")
+    try:
+        for raw in iter(proc.stdout.readline, b""):
+            if not raw:
+                break
+            line = raw.decode("utf-8", "ignore").strip()
+            if not line:
+                continue
+            _tunnel_note(line[:200])
+            match = pattern.search(line)
+            if match:
+                TUNNEL_STATE["url"] = match.group(0)
+                TUNNEL_STATE["state"] = "up"
+                try:
+                    with open(TUNNEL_FILE, "w", encoding="utf-8") as handle:
+                        handle.write(TUNNEL_STATE["url"])
+                except Exception:
+                    pass
+                _tunnel_note("ready: " + TUNNEL_STATE["url"])
+    except Exception as exc:
+        _tunnel_note("pump error: %s" % exc)
+
+
+def _tunnel_watchdog():
+    time.sleep(30)
+    while True:
+        try:
+            if TUNNEL_STATE.get("started_ever") and not TUNNEL_STATE.get("stopped"):
+                proc = TUNNEL_STATE.get("proc")
+                if proc is None or proc.poll() is not None:
+                    _tunnel_note("tunnel lost, reconnecting")
+                    start_tunnel()
+        except Exception:
+            pass
+        time.sleep(20)
+
+
+def start_tunnel():
+    if not str(CFG.get("host_password") or "").strip():
+        TUNNEL_STATE["state"] = "failed"
+        _tunnel_note("refused: share password is empty")
+        return tunnel_status()
+    proc = TUNNEL_STATE.get("proc")
+    if proc is not None and proc.poll() is None:
+        return tunnel_status()
+    exe = _cloudflared_path()
+    if not exe:
+        TUNNEL_STATE["state"] = "failed"
+        _tunnel_note("cloudflared.exe not found")
+        return tunnel_status()
+    port = int(CFG.get("listen_port") or 11435)
+    try:
+        proc = subprocess.Popen(
+            [exe, "tunnel", "--url", "http://127.0.0.1:%d" % port, "--no-autoupdate"],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except Exception as exc:
+        TUNNEL_STATE["state"] = "failed"
+        _tunnel_note("spawn failed: %s" % exc)
+        return tunnel_status()
+    TUNNEL_STATE["proc"] = proc
+    TUNNEL_STATE["state"] = "starting"
+    TUNNEL_STATE["url"] = ""
+    TUNNEL_STATE["started_ever"] = True
+    TUNNEL_STATE["stopped"] = False
+    _tunnel_note("spawned cloudflared pid=%s" % proc.pid)
+    threading.Thread(target=_tunnel_pump, args=(proc,), daemon=True).start()
+    if not TUNNEL_STATE.get("watchdog"):
+        TUNNEL_STATE["watchdog"] = True
+        threading.Thread(target=_tunnel_watchdog, daemon=True).start()
+    return tunnel_status()
+
+
+def stop_tunnel():
+    proc = TUNNEL_STATE.get("proc")
+    if proc is not None:
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+    TUNNEL_STATE["proc"] = None
+    TUNNEL_STATE["state"] = "off"
+    TUNNEL_STATE["url"] = ""
+    TUNNEL_STATE["stopped"] = True
+    try:
+        if os.path.exists(TUNNEL_FILE):
+            os.remove(TUNNEL_FILE)
+    except Exception:
+        pass
+    _tunnel_note("stopped")
+    return tunnel_status()
+
+
+def tunnel_status():
+    proc = TUNNEL_STATE.get("proc")
+    alive = proc is not None and proc.poll() is None
+    state = TUNNEL_STATE.get("state") or "off"
+    if state == "up" and not alive:
+        state = "lost"
+    return {
+        "ok": True,
+        "state": state,
+        "url": TUNNEL_STATE.get("url") or "",
+        "pid": getattr(proc, "pid", None) if alive else None,
+        "log": TUNNEL_STATE.get("log") or [],
+    }
 
 
 def read_tunnel_url():
@@ -842,6 +1049,231 @@ class Handler(BaseHTTPRequestHandler):
         return self.rfile.read(n)
 
     # ---------- HTTP 动词 ----------
+    # ---------- 一体化：主机身份 / 访客登录 / 公网隧道 ----------
+    def _connect_verify(self):
+        body = self._read_body()
+        try:
+            payload = json.loads(body.decode("utf-8", "ignore") or "{}")
+        except Exception:
+            return self._json(400, {"ok": False, "error": "invalid_json"})
+        if not isinstance(payload, dict):
+            return self._json(400, {"ok": False, "error": "invalid_payload"})
+        name = str(payload.get("name") or "").strip()
+        password = str(payload.get("password") or "")
+        if not CFG.get("allow_remote", True):
+            return self._json(403, {"ok": False, "error": "remote_disabled"})
+        expected_name = str(CFG.get("host_name") or "").strip()
+        expected_password = str(CFG.get("host_password") or "")
+        if name and expected_name and name != expected_name:
+            return self._json(401, {"ok": False, "error": "name_mismatch"})
+        if not hmac.compare_digest(password.encode(), expected_password.encode()):
+            return self._json(401, {"ok": False, "error": "bad_password"})
+        return self._json(200, {"ok": True, "name": expected_name, "token": API_KEY, "gateway": VERSION})
+
+    def _admin_network(self):
+        return self._json(200, {
+            "ok": True,
+            "host_name": CFG.get("host_name") or "",
+            "host_password": CFG.get("host_password") or "",
+            "allow_remote": bool(CFG.get("allow_remote", True)),
+            "tunnel": read_tunnel_url(),
+            "tunnel_running": TUNNEL_STATE.get("proc") is not None,
+            "listen_port": CFG.get("listen_port"),
+        })
+
+    def _mask_key(self, value):
+        text = str(value or "")
+        return "" if not text else ("*" * max(0, len(text) - 4) + text[-4:])
+
+    CONFIG_EDITABLE = {
+        "default_model", "idle_unload_seconds", "idle_check_seconds", "prompt_char_limit",
+        "keep_log_days", "online_timeout_s", "max_body_mb", "billing_enabled",
+        "daily_quota_tokens", "power_price", "base_power_w", "allow_remote",
+        "chat_source", "timezone", "compat_mode", "inject_time", "enable_note_injection",
+    }
+
+    def _admin_ollama(self, method="POST"):
+        payload = {}
+        if method == "POST":
+            body = self._read_body()
+            try:
+                payload = json.loads(body.decode("utf-8", "ignore") or "{}")
+            except Exception:
+                payload = {}
+        action = str((payload or {}).get("action") or "status").strip().lower()
+        if action == "start":
+            if not upstream_status().get("online"):
+                try:
+                    exe = "ollama"
+                    proc = subprocess.Popen([exe, "serve"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                    OLLAMA_STATE["proc"] = proc
+                    for _ in range(40):
+                        time.sleep(0.5)
+                        if upstream_status().get("online"):
+                            break
+                except Exception as exc:
+                    return self._json(503, {"ok": False, "error": "ollama_start_failed", "detail": str(exc)[:160]})
+            status = upstream_status()
+            return self._json(200, {"ok": True, "online": bool(status.get("online")), "models": len(status.get("models") or [])})
+        if action == "stop":
+            proc = OLLAMA_STATE.get("proc")
+            if proc is not None:
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
+                OLLAMA_STATE["proc"] = None
+            return self._json(200, {"ok": True, "online": bool(upstream_status().get("online"))})
+        status = upstream_status()
+        return self._json(200, {"ok": True, "online": bool(status.get("online")), "models": len(status.get("models") or [])})
+
+    def _admin_config(self, method):
+        if method == "GET":
+            data = {key: CFG.get(key) for key in sorted(self.CONFIG_EDITABLE)}
+            data["host_name"] = CFG.get("host_name")
+            data["listen_port"] = CFG.get("listen_port")
+            data["upstream_port"] = CFG.get("upstream_port")
+            return self._json(200, {"ok": True, "editable": sorted(self.CONFIG_EDITABLE), "values": data})
+        body = self._read_body()
+        try:
+            payload = json.loads(body.decode("utf-8", "ignore") or "{}")
+        except Exception:
+            return self._json(400, {"ok": False, "error": "invalid_json"})
+        if not isinstance(payload, dict):
+            return self._json(400, {"ok": False, "error": "invalid_payload"})
+        changed = {}
+        rejected = []
+        for key, value in payload.items():
+            if key not in self.CONFIG_EDITABLE:
+                rejected.append(key)
+                continue
+            current = CFG.get(key)
+            if isinstance(current, bool):
+                value = bool(value)
+            elif isinstance(current, int) and not isinstance(current, bool):
+                try:
+                    value = int(value)
+                except Exception:
+                    rejected.append(key)
+                    continue
+            elif isinstance(current, float):
+                try:
+                    value = float(value)
+                except Exception:
+                    rejected.append(key)
+                    continue
+            else:
+                value = str(value)
+            CFG[key] = value
+            changed[key] = value
+        if changed:
+            try:
+                with open(CONFIG_PATH, "w", encoding="utf-8") as handle:
+                    json.dump(CFG, handle, ensure_ascii=False, indent=2)
+            except Exception:
+                pass
+            append_log("config-%s.jsonl" % _today(), {"t": time.strftime("%Y-%m-%d %H:%M:%S"), "changed": changed})
+        return self._json(200, {"ok": True, "changed": changed, "rejected": rejected})
+
+    def _admin_cloud(self):
+        cloud = CFG.get("cloud_api") or {}
+        return self._json(200, {
+            "ok": True,
+            "chat_source": CFG.get("chat_source") or "local",
+            "cloud_enabled": bool(CFG.get("cloud_enabled", False)),
+            "base_url": cloud.get("base_url") or "",
+            "model": cloud.get("model") or "",
+            "api_key_masked": self._mask_key(cloud.get("api_key")),
+            "has_key": bool(cloud.get("api_key")),
+        })
+
+    def _admin_cloud_save(self):
+        body = self._read_body()
+        try:
+            payload = json.loads(body.decode("utf-8", "ignore") or "{}")
+        except Exception:
+            return self._json(400, {"ok": False, "error": "invalid_json"})
+        if not isinstance(payload, dict):
+            return self._json(400, {"ok": False, "error": "invalid_payload"})
+        cloud = dict(CFG.get("cloud_api") or {})
+        if "base_url" in payload:
+            cloud["base_url"] = str(payload.get("base_url") or "").strip()
+        if "model" in payload:
+            cloud["model"] = str(payload.get("model") or "").strip()
+        api_key = payload.get("api_key")
+        if isinstance(api_key, str) and api_key.strip() and "*" not in api_key:
+            cloud["api_key"] = api_key.strip()
+        CFG["cloud_api"] = cloud
+        if isinstance(payload.get("chat_source"), str) and payload["chat_source"] in ("local", "cloud"):
+            CFG["chat_source"] = payload["chat_source"]
+        if "cloud_enabled" in payload:
+            CFG["cloud_enabled"] = bool(payload.get("cloud_enabled"))
+        try:
+            with open(CONFIG_PATH, "w", encoding="utf-8") as handle:
+                json.dump(CFG, handle, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+        return self._admin_cloud()
+
+    def _admin_cloud_test(self):
+        cloud = CFG.get("cloud_api") or {}
+        base = str(cloud.get("base_url") or "").rstrip("/")
+        key = str(cloud.get("api_key") or "")
+        if not base:
+            return self._json(400, {"ok": False, "error": "base_url_missing"})
+        url = base + "/models" if base.endswith("/v1") else base + "/v1/models"
+        try:
+            request = urllib.request.Request(url, headers={"Authorization": "Bearer " + key, "Accept": "application/json"})
+            with urllib.request.urlopen(request, timeout=15) as response:
+                data = json.loads(response.read().decode("utf-8", "ignore") or "{}")
+            models = [item.get("id") for item in (data.get("data") or []) if isinstance(item, dict)]
+            return self._json(200, {"ok": True, "count": len(models), "models": models[:20]})
+        except Exception as exc:
+            return self._json(502, {"ok": False, "error": "cloud_unreachable", "detail": str(exc)[:200]})
+
+
+    def _admin_network_save(self):
+        body = self._read_body()
+        try:
+            payload = json.loads(body.decode("utf-8", "ignore") or "{}")
+        except Exception:
+            return self._json(400, {"ok": False, "error": "invalid_json"})
+        if not isinstance(payload, dict):
+            return self._json(400, {"ok": False, "error": "invalid_payload"})
+        if isinstance(payload.get("host_name"), str) and payload["host_name"].strip():
+            CFG["host_name"] = payload["host_name"].strip()[:40]
+        password = payload.get("host_password")
+        if isinstance(password, str) and password.strip():
+            CFG["host_password"] = password.strip()[:64]
+        if "allow_remote" in payload:
+            CFG["allow_remote"] = bool(payload.get("allow_remote"))
+        try:
+            with open(CONFIG_PATH, "w", encoding="utf-8") as handle:
+                json.dump(CFG, handle, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+        _tunnel_note("host identity updated")
+        return self._json(200, {"ok": True, "host_name": CFG.get("host_name"), "has_password": bool(CFG.get("host_password"))})
+
+    def _admin_tunnel(self):
+        body = self._read_body()
+        try:
+            payload = json.loads(body.decode("utf-8", "ignore") or "{}")
+        except Exception:
+            payload = {}
+        action = str((payload or {}).get("action") or "start").strip().lower()
+        if action == "stop":
+            stop_tunnel()
+            return self._admin_tunnel_status()
+        if action == "restart":
+            stop_tunnel()
+        state = start_tunnel()
+        return self._json(200, state)
+
+    def _admin_tunnel_status(self):
+        return self._json(200, tunnel_status())
+
     def do_OPTIONS(self):
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -866,12 +1298,60 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
         try:
+            if path == "/api/tools":
+                if method != "GET":
+                    return self._json(405, {"ok": False, "error": "method_not_allowed"})
+                if parsed.query:
+                    return self._json(400, {"ok": False, "error": "query_not_allowed"})
+                return self._tools_catalog()
+            if path == "/api/tools/call":
+                if method != "POST":
+                    return self._json(405, {"ok": False, "error": "method_not_allowed"})
+                if parsed.query:
+                    return self._json(400, {"ok": False, "error": "query_not_allowed"})
+                return self._tools_call()
+            if path == "/admin/approvals":
+                if method != "GET":
+                    return self._json(405, {"ok": False, "error": "method_not_allowed"})
+                if parsed.query:
+                    return self._json(400, {"ok": False, "error": "query_not_allowed"})
+                return self._admin_approvals_list()
+            if path.startswith("/admin/approvals/"):
+                if method != "POST":
+                    return self._json(405, {"ok": False, "error": "method_not_allowed"})
+                if parsed.query:
+                    return self._json(400, {"ok": False, "error": "query_not_allowed"})
+                return self._admin_approval_decide(path.rsplit("/", 1)[-1])
+            if path in ("/api/files/tree", "/api/files/search", "/api/files/read"):
+                if method != "GET":
+                    return self._json(405, {"ok": False, "error": "method_not_allowed"})
+                return self._files_api(path, parsed.query)
             if path == "/admin/cleanup" and method == "POST":
                 return self._admin_cleanup()
             if path == "/admin/send" and method == "POST":
                 return self._inbox_send()
             if path == "/api/inbox":
                 return self._inbox_fetch()
+            if path == "/connect" and method == "POST":
+                return self._connect_verify()
+            if path == "/admin/network" and method == "GET":
+                return self._admin_network()
+            if path == "/admin/network" and method == "POST":
+                return self._admin_network_save()
+            if path == "/admin/ollama" and method in ("GET", "POST"):
+                return self._admin_ollama(method)
+            if path == "/admin/config":
+                return self._admin_config(method)
+            if path == "/admin/cloud" and method == "GET":
+                return self._admin_cloud()
+            if path == "/admin/cloud" and method == "POST":
+                return self._admin_cloud_save()
+            if path == "/admin/cloud/test" and method == "POST":
+                return self._admin_cloud_test()
+            if path == "/admin/tunnel" and method == "POST":
+                return self._admin_tunnel()
+            if path == "/admin/tunnel" and method == "GET":
+                return self._admin_tunnel_status()
             if path == "/health":
                 st = upstream_status()
                 return self._json(200, {"ok": True, "gateway": VERSION,
@@ -893,6 +1373,268 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(500, {"error": "gateway internal error"})
             except Exception:
                 pass
+            traceback.print_exc()
+            try:
+                self._json(500, {"error": "gateway internal error"})
+            except Exception:
+                pass
+    # ---------- 管理接口 ----------
+    def _tools_catalog(self):
+        if not self._api_key_ok():
+            return self._json(401, {"ok": False, "error": "unauthorized"})
+        try:
+            from hxcore import tools as tool_registry
+            tool_registry.builtin_tools()
+            catalog = []
+            for item in tool_registry.all_tools():
+                if not isinstance(item, dict):
+                    continue
+                catalog.append({
+                    "name": str(item.get("name") or ""),
+                    "description": str(item.get("description") or ""),
+                    "schema": item.get("schema") if isinstance(item.get("schema"), dict) else {"type": "object", "properties": {}},
+                    "danger": bool(item.get("danger")),
+                    "permission": item.get("permission"),
+                })
+            catalog.sort(key=lambda item: item["name"])
+            return self._json(200, {"ok": True, "tools": catalog, "count": len(catalog)})
+        except Exception:
+            return self._json(500, {"ok": False, "error": "tools_catalog_unavailable"})
+
+    def _tools_call(self):
+        if not self._api_key_ok():
+            return self._json(401, {"ok": False, "error": "unauthorized"})
+        try:
+            raw = self._read_bounded_json(16384)
+            request_id = raw.get("request_id")
+            name = raw.get("tool")
+            args = raw.get("args", {})
+            if (not isinstance(request_id, str) or not re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", request_id)
+                    or not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", name)
+                    or not isinstance(args, dict) or set(raw) - {"request_id", "tool", "args"}):
+                return self._json(400, {"ok": False, "error": "invalid_request"})
+            if len(json.dumps(args, ensure_ascii=False).encode("utf-8")) > 8192:
+                return self._json(413, {"ok": False, "error": "arguments_too_large"})
+            import time as _time
+            from hxcore import approvals, tools as tool_registry
+            tool_registry.builtin_tools()
+            now = _time.time()
+            with _TOOL_APPROVAL_LOCK:
+                for rid, expiry in list(_TOOL_REQUEST_IDS.items()):
+                    if expiry <= now:
+                        del _TOOL_REQUEST_IDS[rid]
+                if request_id in _TOOL_REQUEST_IDS:
+                    return self._json(409, {"ok": False, "error": "duplicate_request_id"})
+                if len(_TOOL_REQUEST_IDS) >= _TOOL_REQUEST_MAX:
+                    oldest = min(_TOOL_REQUEST_IDS, key=_TOOL_REQUEST_IDS.get)
+                    del _TOOL_REQUEST_IDS[oldest]
+                _TOOL_REQUEST_IDS[request_id] = now + _TOOL_APPROVAL_TTL
+            item = tool_registry.get(name)
+            if name in _SAFE_REMOTE_TOOLS:
+                if not item:
+                    return self._json(400, {"ok": False, "error": "unknown_tool"})
+                result = tool_registry.call(name, args)
+                safe_result = _approval_redact(result.get("result"))
+                status = 200 if result.get("ok") else 400
+                return self._json(status, {"ok": bool(result.get("ok")), "request_id": request_id,
+                                           "tool": name, "result": safe_result,
+                                           "error": str(result.get("error") or "")[:128]})
+            command = "tool:" + name + " " + json.dumps(args, ensure_ascii=False, sort_keys=True)
+            decision = approvals.check(command, origin="api")
+            approvals.record(decision, "tool:" + name + " [args_sha256:" + approvals.args_digest(args) + "]")
+            pending = approvals.create_pending(request_id, name, args, decision=decision)
+            if not pending.get("ok"):
+                status = 409 if pending.get("error") == "conflict" else 400
+                return self._json(status, {"ok": False, "error": pending.get("error", "pending_failed")})
+            with _TOOL_APPROVAL_LOCK:
+                _TOOL_APPROVAL_ARGS[pending["approval_id"]] = {
+                    "request_id": request_id, "tool": name, "args": args,
+                    "expires_at": pending["expires_at"]}
+                if len(_TOOL_APPROVAL_ARGS) > _TOOL_APPROVAL_MAX:
+                    oldest = sorted(_TOOL_APPROVAL_ARGS, key=lambda k: _TOOL_APPROVAL_ARGS[k]["expires_at"])
+                    for key in oldest[:-_TOOL_APPROVAL_MAX]:
+                        _TOOL_APPROVAL_ARGS.pop(key, None)
+            return self._json(202, {"ok": False, "error": "approval_required",
+                                    "approval": {"id": pending["approval_id"], "request_id": request_id,
+                                                 "tool": name, "args": pending.get("args_redacted", {}),
+                                                 "risk": decision.get("risk", "unknown"),
+                                                 "reasons": decision.get("reasons", []),
+                                                 "expires_at": pending.get("expires_at")}})
+        except _BoundedJSONError as exc:
+            return self._json(exc.status, {"ok": False, "error": exc.code})
+        except (UnicodeError, json.JSONDecodeError):
+            return self._json(400, {"ok": False, "error": "invalid_json"})
+
+    def _admin_approvals_list(self):
+        if not self._admin_ok():
+            return self._json(401, {"ok": False, "error": "admin_key_required"})
+        from hxcore import approvals
+        rows = []
+        with _TOOL_APPROVAL_LOCK:
+            entries = list(_TOOL_APPROVAL_ARGS.items())
+        for approval_id, cached in entries:
+            pending = approvals.get_pending(approval_id)
+            if not pending.get("ok"):
+                with _TOOL_APPROVAL_LOCK:
+                    _TOOL_APPROVAL_ARGS.pop(approval_id, None)
+                continue
+            decision = pending.get("decision") or {}
+            rows.append({"id": approval_id, "request_id": pending.get("request_id"),
+                         "tool": pending.get("tool"), "args": pending.get("args_redacted", {}),
+                         "risk": decision.get("risk", "unknown"), "reasons": decision.get("reasons", []),
+                         "created_at": pending.get("created_at"), "expires_at": pending.get("expires_at")})
+        rows.sort(key=lambda row: row.get("created_at") or 0, reverse=True)
+        return self._json(200, {"ok": True, "approvals": rows[:100], "count": min(len(rows), 100)})
+
+    def _admin_approval_decide(self, approval_id):
+        if not self._admin_ok():
+            return self._json(401, {"ok": False, "error": "admin_key_required"})
+        if not re.fullmatch(r"[a-f0-9]{32}", approval_id):
+            return self._json(400, {"ok": False, "error": "invalid_approval_id"})
+        try:
+            payload = self._read_bounded_json(4096)
+        except _BoundedJSONError as exc:
+            return self._json(exc.status, {"ok": False, "error": exc.code})
+        except (UnicodeError, json.JSONDecodeError):
+            return self._json(400, {"ok": False, "error": "invalid_json"})
+        action = payload.get("decision")
+        if set(payload) != {"decision"} or action not in ("allow", "deny"):
+            return self._json(400, {"ok": False, "error": "invalid_decision"})
+        from hxcore import approvals, tools as tool_registry
+        pending = approvals.get_pending(approval_id)
+        if not pending.get("ok"):
+            return self._json(410, {"ok": False, "error": "stale_or_replayed"})
+        with _TOOL_APPROVAL_LOCK:
+            cached = _TOOL_APPROVAL_ARGS.get(approval_id)
+            if not cached or cached.get("expires_at", 0) <= time.time():
+                _TOOL_APPROVAL_ARGS.pop(approval_id, None)
+                return self._json(410, {"ok": False, "error": "stale"})
+            cached = dict(cached)
+        name, args, request_id = cached["tool"], cached["args"], cached["request_id"]
+        tool_registry.builtin_tools()
+        command = "tool:" + name + " " + json.dumps(args, ensure_ascii=False, sort_keys=True)
+        current = approvals.check(command, origin="api")
+        if action == "allow" and current.get("decision") != "ask":
+            return self._json(409, {"ok": False, "error": "policy_changed"})
+        consumed = approvals.consume_pending(approval_id, request_id, name, args, action)
+        if not consumed.get("ok"):
+            with _TOOL_APPROVAL_LOCK:
+                _TOOL_APPROVAL_ARGS.pop(approval_id, None)
+            code = 409 if consumed.get("error") == "conflict" else 410
+            return self._json(code, {"ok": False, "error": consumed.get("error", "stale_or_replayed")})
+        with _TOOL_APPROVAL_LOCK:
+            _TOOL_APPROVAL_ARGS.pop(approval_id, None)
+        if action == "deny":
+            approvals.record({**current, "decision": "deny", "admin_decision": "deny"}, "tool:" + name + " [args_sha256:" + approvals.args_digest(args) + "]")
+            return self._json(200, {"ok": True, "approval_id": approval_id, "decision": "deny"})
+        def _approved(tool, call_args, _decision):
+            return (tool == name and approvals.args_digest(call_args) == pending.get("args_digest")
+                    and consumed.get("state") == "consumed")
+        result = tool_registry.call(name, args, approve=_approved)
+        return self._json(200 if result.get("ok") else 400,
+                          {"ok": bool(result.get("ok")), "approval_id": approval_id,
+                           "tool": name, "result": _approval_redact(result.get("result")),
+                           "error": str(result.get("error") or "")[:128]})
+
+    def _read_bounded_json(self, maximum):
+        try:
+            length = int(self.headers.get("Content-Length") or "0")
+        except ValueError:
+            raise _BoundedJSONError(400, "invalid_content_length")
+        if length <= 0:
+            raise _BoundedJSONError(400, "empty_body")
+        if length > maximum:
+            raise _BoundedJSONError(413, "body_too_large")
+        body = self.rfile.read(length)
+        if len(body) != length:
+            raise _BoundedJSONError(400, "incomplete_body")
+        try:
+            obj = json.loads(body.decode("utf-8", "strict"))
+        except (UnicodeError, json.JSONDecodeError):
+            raise _BoundedJSONError(400, "invalid_json")
+        if not isinstance(obj, dict):
+            raise _BoundedJSONError(400, "invalid_payload")
+        return obj
+
+    def _files_api(self, path, raw_query):
+        if not self._api_key_ok():
+            return self._json(401, {"ok": False, "error": "unauthorized"})
+        try:
+            pairs = urllib.parse.parse_qsl(raw_query, keep_blank_values=True, strict_parsing=True, max_num_fields=8)
+            q = {}
+            for key, value in pairs:
+                if key in q:
+                    raise ValueError("duplicate_parameter")
+                q[key] = value
+            allowed = {"/api/files/tree": {"path", "depth", "limit"},
+                       "/api/files/search": {"path", "q", "mode", "include", "limit"},
+                       "/api/files/read": {"path"}}[path]
+            if set(q) - allowed:
+                raise ValueError("unknown_parameter")
+            rel = q.get("path", ".")
+            if not rel or len(rel) > 2048 or "\x00" in rel:
+                raise ValueError("invalid_path")
+            from pathlib import Path
+            from hxcore.paths import root_dir
+            root = Path(root_dir()).resolve(strict=True)
+            target = (root / rel).resolve(strict=True)
+            try:
+                target.relative_to(root)
+            except ValueError:
+                return self._json(400, {"ok": False, "error": "out_of_scope"})
+            scope = target.relative_to(root).as_posix() or "."
+            if path.endswith("/tree"):
+                depth = _files_int(q.get("depth", "2"), 0, 8, "depth")
+                limit = _files_int(q.get("limit", "200"), 1, 500, "limit")
+                import hxcore.fstree as fstree
+                items = fstree.tree(scope, depth=depth, limit=limit)
+                if fstree.last_error():
+                    return self._json(400, {"ok": False, "error": "tree_failed"})
+                return self._json(200, {"ok": True, "results": items[:limit], "count": len(items[:limit])})
+            if path.endswith("/search"):
+                text = q.get("q", "")
+                if not text or len(text) > 512 or any(ord(ch) < 32 for ch in text):
+                    raise ValueError("invalid_query")
+                mode = q.get("mode", "name")
+                if mode not in ("name", "text"):
+                    raise ValueError("invalid_mode")
+                limit = _files_int(q.get("limit", "100"), 1, 200, "limit")
+                if "include" in q and (not q["include"] or len(q["include"]) > 128):
+                    raise ValueError("invalid_include")
+                import hxcore.fstree as fstree
+                items = (fstree.search_name(text, limit=limit) if mode == "name"
+                         else fstree.search_text(text, path=scope, include=q.get("include"), limit=limit))
+                if fstree.last_error():
+                    return self._json(400, {"ok": False, "error": "search_failed"})
+                return self._json(200, {"ok": True, "results": items[:limit], "count": len(items[:limit])})
+            if not target.is_file():
+                raise ValueError("not_a_file")
+            max_bytes = 262144
+            if target.stat().st_size > max_bytes:
+                return self._json(413, {"ok": False, "error": "file_too_large", "max_bytes": max_bytes})
+            data = target.read_bytes()
+            if len(data) > max_bytes:
+                return self._json(413, {"ok": False, "error": "file_too_large", "max_bytes": max_bytes})
+            if b"\x00" in data:
+                return self._json(415, {"ok": False, "error": "binary_file"})
+            try:
+                content = data.decode("utf-8", "strict")
+            except UnicodeDecodeError:
+                return self._json(415, {"ok": False, "error": "invalid_utf8"})
+            return self._json(200, {"ok": True, "path": scope,
+                                    "content": content, "size": len(data)})
+        except (ValueError, TypeError) as exc:
+            return self._json(400, {"ok": False, "error": str(exc) or "invalid_query"})
+        except FileNotFoundError:
+            return self._json(404, {"ok": False, "error": "not_found"})
+        except PermissionError:
+            return self._json(403, {"ok": False, "error": "forbidden"})
+        except OSError:
+            return self._json(400, {"ok": False, "error": "filesystem_error"})
+
+    def _api_key_ok(self):
+        got = self._key()
+        return bool(got and hmac.compare_digest(got.encode(), API_KEY.encode()))
 
     # ---------- 管理接口 ----------
     def _admin_ok(self):
@@ -999,6 +1741,54 @@ class Handler(BaseHTTPRequestHandler):
                 STATS["auth_fail"] += 1
             log_event("admin_auth_fail", ip=self._ip(), path=path)
             return self._json(401, {"error": "admin key required"})
+
+        if path == "/admin/models":
+            tags_status, tags = upstream_json("/api/tags", timeout=8)
+            ps_status, ps = upstream_json("/api/ps", timeout=8)
+            if tags_status != 200 or not isinstance(tags, dict):
+                status, body = _error_response(status=tags_status or 502, raw="Ollama model catalog unavailable", upstream_url="http://%s:%d/api/tags" % (UP_HOST, UP_PORT))
+                return self._json(status, body)
+            loaded = {}
+            if ps_status == 200 and isinstance(ps, dict):
+                for item in ps.get("models") or []:
+                    if isinstance(item, dict):
+                        name = item.get("name") or item.get("model")
+                        if name: loaded[str(name)] = item
+            models = []
+            for item in tags.get("models") or []:
+                if not isinstance(item, dict): continue
+                name = item.get("name") or item.get("model")
+                if not name: continue
+                models.append({"name": str(name), "size": int(item.get("size") or 0), "loaded": str(name) in loaded})
+            return self._json(200, {"models": models})
+
+        if path in ("/admin/models/pull", "/admin/models/delete", "/admin/models/start", "/admin/models/stop"):
+            try:
+                raw = self._read_body()
+                payload = json.loads(raw.decode("utf-8", "ignore")) if raw else {}
+                model = str(payload.get("model") or "").strip()
+                if not model or len(model) > 200 or any(ord(ch) < 32 for ch in model):
+                    return self._json(400, {"error": {"code": "invalid_model", "message": "model is required"}})
+                if path.endswith("/pull"):
+                    target, body = "/api/pull", {"name": model, "stream": False}
+                elif path.endswith("/delete"):
+                    target, body = "/api/delete", {"name": model}
+                elif path.endswith("/start"):
+                    target, body = "/api/generate", {"model": model, "prompt": "", "keep_alive": -1, "stream": False}
+                else:
+                    target, body = "/api/generate", {"model": model, "prompt": "", "keep_alive": 0, "stream": False}
+                encoded = json.dumps(body).encode("utf-8")
+                conn, resp = _open_upstream("POST", target, encoded, {"Content-Type": "application/json"}, timeout=900 if target == "/api/pull" else 30)
+                raw_response = resp.read(1024 * 1024)
+                if resp.status < 200 or resp.status >= 300:
+                    status, result = _error_response(status=resp.status, raw=raw_response.decode("utf-8", "ignore"), upstream_url="http://%s:%d%s" % (UP_HOST, UP_PORT, target), model=model)
+                    return self._json(status, result)
+                try: result = json.loads(raw_response.decode("utf-8", "ignore")) if raw_response else {}
+                except Exception: result = {}
+                return self._json(200, {"ok": True, "model": model, "status": result.get("status", "success"), "result": result})
+            except Exception as exc:
+                status, result = _error_response(exc=exc, upstream_url="http://%s:%d" % (UP_HOST, UP_PORT))
+                return self._json(status, result)
 
         if path == "/admin/usage":
             q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
@@ -1340,7 +2130,7 @@ class Handler(BaseHTTPRequestHandler):
                             raise
                     continue
                 if not line:
-                    break
+                    raise EOFError("upstream closed before stream completion")
                 line = line.strip()
                 if not line:
                     continue

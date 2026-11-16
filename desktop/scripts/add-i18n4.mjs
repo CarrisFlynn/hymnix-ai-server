@@ -1,0 +1,12 @@
+import fs from "node:fs";
+const file="src/renderer/i18n.ts";
+const src=fs.readFileSync(file,"utf8");
+const start=src.indexOf("export const zh");
+const open=src.indexOf("{",start);
+const end=src.indexOf("\n};",open);
+const obj=eval("({" + src.slice(open+1,end) + "})");
+const extra={"NAVIGATION":"导航","No sessions yet":"暂无会话","Model service":"模型服务","SERVER STATUS":"服务端状态","ACTIVE CONTEXT":"当前上下文","Session":"会话","Messages":"消息数","Theme":"主题"};
+for(const k of Object.keys(extra)) obj[k]=extra[k];
+const keys=Object.keys(obj).sort();
+fs.writeFileSync(file, src.slice(0,open+1)+"\n"+keys.map(k=>"  "+JSON.stringify(k)+": "+JSON.stringify(obj[k])).join(",\n")+src.slice(end));
+console.log("keys="+keys.length);

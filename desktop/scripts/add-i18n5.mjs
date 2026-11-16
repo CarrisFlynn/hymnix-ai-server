@@ -1,0 +1,12 @@
+import fs from "node:fs";
+const file="src/renderer/i18n.ts";
+const src=fs.readFileSync(file,"utf8");
+const start=src.indexOf("export const zh");
+const open=src.indexOf("{",start);
+const end=src.indexOf("\n};",open);
+const obj=eval("({" + src.slice(open+1,end) + "})");
+const extra={"Pull a model":"拉取模型","Pull":"拉取","Pull a model to get started.":"先拉取一个模型开始使用。","TERMINAL":"终端","Run commands in the workspace and stream the output.":"在工作区执行命令并实时查看输出。","Command":"命令","Run":"执行","No output yet":"暂无输出","Working...":"处理中...","Loaded":"已加载","Start":"启动","Delete":"删除","Pulling":"正在拉取","Pull complete":"拉取完成"};
+for(const k of Object.keys(extra)) obj[k]=extra[k];
+const keys=Object.keys(obj).sort();
+fs.writeFileSync(file, src.slice(0,open+1)+"\n"+keys.map(k=>"  "+JSON.stringify(k)+": "+JSON.stringify(obj[k])).join(",\n")+src.slice(end));
+console.log("keys="+keys.length);

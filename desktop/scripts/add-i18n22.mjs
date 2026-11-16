@@ -1,0 +1,12 @@
+import fs from "node:fs";
+const file="src/renderer/i18n.ts";
+const src=fs.readFileSync(file,"utf8");
+const start=src.indexOf("export const zh");
+const open=src.indexOf("{",start);
+const end=src.indexOf("\n};",open);
+const obj=eval("({" + src.slice(open+1,end) + "})");
+const extra={"Installed models":"已安装","Select":"选择","Selected":"已选中","Downloadable models":"可下载","Search models…":"搜索模型…","Everything in the catalog is already installed.":"清单里的模型都已安装。","Tiny general":"极小通用","Small general":"小型通用","Fast general":"快速通用","Strong general chat":"强力通用对话","Large general chat":"大型通用对话","Strong Chinese chat":"强力中文对话","Coding":"编码","Strong coding":"强力编码","Strong reasoning":"强力推理"};
+for(const k of Object.keys(extra)) obj[k]=extra[k];
+const keys=Object.keys(obj).sort();
+fs.writeFileSync(file, src.slice(0,open+1)+"\n"+keys.map(k=>"  "+JSON.stringify(k)+": "+JSON.stringify(obj[k])).join(",\n")+src.slice(end));
+console.log("keys="+keys.length);

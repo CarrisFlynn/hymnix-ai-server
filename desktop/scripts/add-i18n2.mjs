@@ -1,0 +1,13 @@
+import fs from "node:fs";
+const file="src/renderer/i18n.ts";
+const src=fs.readFileSync(file,"utf8");
+const start=src.indexOf("export const zh");
+const open=src.indexOf("{",start);
+const end=src.indexOf("\n};",open);
+const obj=eval("({" + src.slice(open+1,end) + "})");
+const extra={"Start with {workspace} or choose a prompt.":"从 {workspace} 开始，或选择一个提示。","Gateway chat and model discovery are connected. History, files, tools, approvals, plugins, terminal, monitoring, settings and logs remain on the React migration path.":"对话与模型发现已接入真实网关。历史、文件、工具、审批、插件、终端、监控、设置与日志仍在迁移到新界面的过程中。","IP addresses and user agents are never displayed.":"IP 地址与用户代理不会显示。","Load protected summary":"加载受保护摘要","Client data is sensitive. Only online/total counts and operational summaries are shown":"客户端数据敏感，仅显示在线/总数与运行摘要","Camellia white":"茶花白","SERVER FEATURES":"服务端功能","Server features":"服务端功能","Ask Hymnix Orbit anything...":"输入你想问的内容...","Choose a workspace to browse files.":"选择一个工作区以浏览文件。"};
+for(const k of Object.keys(extra)) if(!obj[k]) obj[k]=extra[k];
+const keys=Object.keys(obj).sort();
+const out=keys.map(k=>"  "+JSON.stringify(k)+": "+JSON.stringify(obj[k])).join(",\n");
+fs.writeFileSync(file, src.slice(0,open+1)+"\n"+out+src.slice(end));
+console.log("keys="+keys.length+" hasTemplate="+!!obj["Start with {workspace} or choose a prompt."]);

@@ -1,0 +1,12 @@
+import fs from "node:fs";
+const file="src/renderer/i18n.ts";
+const src=fs.readFileSync(file,"utf8");
+const start=src.indexOf("export const zh");
+const open=src.indexOf("{",start);
+const end=src.indexOf("\n};",open);
+const obj=eval("({" + src.slice(open+1,end) + "})");
+const extra={"Share this machine's models with friends, or connect to a friend's machine.":"把本机模型共享给朋友，或连接朋友的机器。","This device":"这台设备","Host a server":"作为主机","Connect to a friend":"连接朋友","Share name":"共享名称","Share password":"共享密码","friends type this":"朋友输入这个","Public tunnel":"公网隧道","Not started":"未启动","Stop tunnel":"停止隧道","Friends connect with this address, name and password. Their chats run on your hardware.":"朋友用这个地址、名称和密码连接，对话跑在你的硬件上。","Your chats will run on the friend's hardware.":"你的对话将跑在朋友的硬件上。","Connect":"连接","share with friends":"与朋友共享"};
+for(const k of Object.keys(extra)) obj[k]=extra[k];
+const keys=Object.keys(obj).sort();
+fs.writeFileSync(file, src.slice(0,open+1)+"\n"+keys.map(k=>"  "+JSON.stringify(k)+": "+JSON.stringify(obj[k])).join(",\n")+src.slice(end));
+console.log("keys="+keys.length);

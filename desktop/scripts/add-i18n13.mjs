@@ -1,0 +1,12 @@
+import fs from "node:fs";
+const file="src/renderer/i18n.ts";
+const src=fs.readFileSync(file,"utf8");
+const start=src.indexOf("export const zh");
+const open=src.indexOf("{",start);
+const end=src.indexOf("\n};",open);
+const obj=eval("({" + src.slice(open+1,end) + "})");
+const extra={"CONVERSATIONS":"对话记录","Saved conversations on this machine.":"保存在本机的对话。","Clear all":"全部清空","No saved conversations":"还没有保存的对话","Use Save in the chat panel to keep a conversation.":"在对话页右栏点“保存”即可保留一段对话。","Open":"打开","GATEWAY CONNECTION":"网关连接","Host your hardware for friends, or connect to a friend's host. Both modes live here.":"把本机共享给朋友，或连接朋友的主机。两种模式都在这里。","Connected: chats run on the friend's hardware.":"已连接：对话跑在朋友的硬件上。","Not connected. Chats run locally.":"未连接，对话在本机运行。","CHANGELOG":"更新日志","Changelog":"更新日志","What changed in each release.":"每个版本改了什么。","Product renamed to Hymnix Orbit.":"产品更名为 Hymnix Orbit。","New client-style UI with bubbles, terminal console and control panel.":"全新客户端式界面：气泡对话、终端控制台、右侧控制栏。","Host mode with share password and public tunnel.":"主机模式：共享密码 + 公网隧道。","Guest mode: chats and models run on the host's hardware.":"访客模式：对话与模型都跑在主机硬件上。","Cloud API source alongside local models.":"本地模型之外新增云端 API 来源。","17 pages in one window.":"17 个页面收进一个窗口。","Bubble cards with avatars and code copy.":"气泡卡片、头像、代码复制。","Terminal console with status strips.":"带状态条的终端控制台。","Five languages, 418 keys.":"五语、418 个词条。","First public build with gateway and local models.":"首个公开版本：网关 + 本地模型。","Open gateway connection":"打开网关连接"};
+for(const k of Object.keys(extra)) obj[k]=extra[k];
+const keys=Object.keys(obj).sort();
+fs.writeFileSync(file, src.slice(0,open+1)+"\n"+keys.map(k=>"  "+JSON.stringify(k)+": "+JSON.stringify(obj[k])).join(",\n")+src.slice(end));
+console.log("keys="+keys.length);

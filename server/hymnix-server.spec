@@ -3,7 +3,7 @@ import os
 import struct
 
 _SPEC_DIR = os.path.abspath(globals().get('SPECPATH') or os.path.dirname(globals().get('__file__', os.getcwd())))
-_ROOT = os.path.abspath(os.path.join(_SPEC_DIR, '..', '..'))
+_ROOT = os.path.abspath(os.path.join(_SPEC_DIR, '..'))
 _VERSION_PATH = os.path.join(_ROOT, 'VERSION')
 with open(_VERSION_PATH, 'r', encoding='utf-8') as _version_file:
     _VERSION = _version_file.read().strip()
@@ -22,7 +22,10 @@ def _asset(name):
     return None
 
 datas = [(_VERSION_PATH, '.')]
-for name in ('dashboard.html', 'icon.ico', 'icon.png', 'key1.wav', 'key2.wav', 'key3.wav', 'splash.png'):
+_java_jar = os.path.join(_ROOT, 'engine-java', 'build', 'hymnix-engine.jar')
+if os.path.isfile(_java_jar):
+    datas.append((_java_jar, os.path.join('engine-java', 'build')))
+for name in ('dashboard.html', 'hymnix-red-white-star.ico', 'hymnix-red-white-star.png', 'icon.ico', 'icon.png', 'key1.wav', 'key2.wav', 'key3.wav', 'splash.png'):
     path = _asset(name)
     if path:
         datas.append((path, '.'))
@@ -31,25 +34,36 @@ if os.path.isdir(os.path.join(_SPEC_DIR, 'locales')):
 if os.path.isdir(os.path.join(_SPEC_DIR, 'assets')):
     datas.append((os.path.join(_SPEC_DIR, 'assets'), 'assets'))
 
-_icon = _asset('icon.ico')
+_icon = _asset('hymnix-red-white-star.ico') or _asset('icon.ico')
 if not _icon:
-    raise SystemExit('icon.ico not found: expected assets/icon.ico in ' + _SPEC_DIR)
-_splash = _asset('splash.png')
+    raise SystemExit('server icon not found in ' + _SPEC_DIR)
+# Headless backend: never attach a splash screen (no window may appear).
+_splash = None
 
 _cloudflared = os.path.join(_SPEC_DIR, 'cloudflared.exe')
 if not os.path.exists(_cloudflared):
     _cloudflared = os.path.join(_ROOT, 'cloudflared.exe')
 
 a = Analysis(
-    [os.path.join(_SPEC_DIR, 'hymnix_main.py')],
+    [os.path.join(_SPEC_DIR, 'headless_gateway.py')],
     pathex=[_SPEC_DIR],
     binaries=[(_cloudflared, '.')] if os.path.exists(_cloudflared) else [],
     datas=datas,
-    hiddenimports=['gateway_core', 'usage', 'providers', 'i18n', 'pages_modern', 'ui_kit', 'page_manager', 'hxcore.timing', 'hxcore.logindex', 'hxcore.crash', 'hxcore.plugins', 'hxcore.tools', 'hxcore.toolcall', 'pages_tools_live', 'pages_plugins_live', 'hxcore.mcp', 'hxcore.history', 'pages_crash_live', 'pages_history_live', 'hxcore.ocr', 'hxcore.fstree', 'hxcore.diffx', 'pages_files_live', 'pages_diff_live', 'hxcore.approvals', 'hxcore.tokens', 'pages_approvals_live', 'pages_usage_live', 'pages_ocr_live', 'hxcore.compress', 'hxcore.sessions', 'hxcore.gitproxy', 'pages_sessions_live', 'pages_git_live', 'hxcore.cloudhub', 'hxcore.plugin_index', 'hxcore.gwbench', 'pages_cloudhub_live', 'hxcore', 'hxcore.chat_bubble', 'hxcore.paths', 'hxcore.md_render', 'hxcore.term_theme', 'hxcore.bubble', 'pages_approval_dialog', 'pages_terminal_live'],
+    # Headless gateway only: no Tk UI modules are imported by this entry point.
+    hiddenimports=['gateway_core', 'hxcore', 'hxcore.paths', 'hxcore.tokens', 'hxcore.logindex', 'hxcore.fstree', 'hxcore.tools', 'hxcore.approvals'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    # Hard guarantee: the shipped server payload must never contain Tk UI.
+    excludes=[
+        'tkinter', '_tkinter', 'ttk', 'tkinterdnd2',
+        'hymnix_main', 'hymnix_main.py',
+        'pages_modern', 'page_manager', 'pages_chat', 'pages_terminal',
+        'pages_monitor', 'pages_plugins_live', 'pages_settings',
+        'pages_history', 'pages_files', 'pages_diff', 'pages_approvals',
+        'pages_usage', 'pages_ocr', 'pages_sessions', 'pages_git',
+        'pages_cloud', 'ui_kit', 'update_ui', 'theme_dump',
+    ],
     noarchive=False,
     optimize=0,
 )
@@ -74,3 +88,5 @@ exe = EXE(
     icon=[_icon],
     manifest=os.path.join(_SPEC_DIR, 'hymnix.manifest'),
 )
+
+

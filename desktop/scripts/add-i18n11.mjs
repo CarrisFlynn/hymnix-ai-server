@@ -1,0 +1,12 @@
+import fs from "node:fs";
+const file="src/renderer/i18n.ts";
+const src=fs.readFileSync(file,"utf8");
+const start=src.indexOf("export const zh");
+const open=src.indexOf("{",start);
+const end=src.indexOf("\n};",open);
+const obj=eval("({" + src.slice(open+1,end) + "})");
+const extra={"MODEL":"模型","REASONING EFFORT":"推理强度","CONVERSATION":"对话","TELEMETRY":"遥测","Load":"加载","Unload":"卸载","Save":"保存","Export":"导出","Low":"低","Medium":"中","High":"高","Higher effort uses more tokens per reply.":"强度越高，单次回复消耗的 token 越多。","Conversation saved locally.":"对话已保存到本地。","No saved conversation yet.":"还没有保存的对话。"};
+for(const k of Object.keys(extra)) obj[k]=extra[k];
+const keys=Object.keys(obj).sort();
+fs.writeFileSync(file, src.slice(0,open+1)+"\n"+keys.map(k=>"  "+JSON.stringify(k)+": "+JSON.stringify(obj[k])).join(",\n")+src.slice(end));
+console.log("keys="+keys.length);

@@ -1,0 +1,12 @@
+import fs from "node:fs";
+const file="src/renderer/i18n.ts";
+const src=fs.readFileSync(file,"utf8");
+const start=src.indexOf("export const zh");
+const open=src.indexOf("{",start);
+const end=src.indexOf("\n};",open);
+const obj=eval("({" + src.slice(open+1,end) + "})");
+const extra={"Hymnix AI requires JavaScript.":"Hymnix Orbit 需要启用 JavaScript。","History may contain sensitive request metadata, user agents, IP addresses, prompts and responses. Keep the admin key private.":"历史可能包含敏感的请求元数据、用户代理、IP 地址、提示词与回复。请勿泄露管理员密钥。","Protected status is summarized only. Sensitive client details, recent requests, messages, IP addresses and user agents are never displayed.":"受保护状态仅提供摘要。敏感客户端详情、最近请求、消息、IP 地址与用户代理均不会显示。","Client data is sensitive. Only online/total counts and operational summaries are shown; IP addresses, user agents, prompts and replies are never displayed.":"客户端数据敏感，仅显示在线/总数与运行摘要；IP 地址、用户代理、提示词与回复均不会显示。","Load client summary":"加载客户端概览","Error logs can contain sensitive operational data. Only short summaries are shown; prompts, replies, stack traces and full payloads are never displayed.":"错误日志可能包含敏感运行数据，仅显示简短摘要；提示词、回复、堆栈与完整载荷均不会显示。"};
+for(const k of Object.keys(extra)) if(!obj[k]) obj[k]=extra[k];
+const keys=Object.keys(obj).sort();
+fs.writeFileSync(file, src.slice(0,open+1)+"\n"+keys.map(k=>"  "+JSON.stringify(k)+": "+JSON.stringify(obj[k])).join(",\n")+src.slice(end));
+console.log("keys="+keys.length);

@@ -1,0 +1,12 @@
+import fs from "node:fs";
+const file="src/renderer/i18n.ts";
+const src=fs.readFileSync(file,"utf8");
+const start=src.indexOf("export const zh");
+const open=src.indexOf("{",start);
+const end=src.indexOf("\n};",open);
+const obj=eval("({" + src.slice(open+1,end) + "})");
+const extra={"Startup and runtime":"启动与运行","Join client beta":"参与客户端测试","Pre-release builds, may be unstable":"预发布版本，可能不稳定","Run at system startup":"开机时运行","Start minimized in the tray":"开机后最小化到托盘","Start in fullscreen":"以全屏模式启动","Open the window fullscreen":"启动时直接全屏","Scale text and icons for this display (Beta)":"缩放文本与图标以匹配显示器设置（Beta）","Uses display scale factor":"按显示器缩放比例调整","Enable smooth scrolling":"启用平滑滚动","Animated scroll in long pages":"长页面滚动带动画","Enable GPU accelerated rendering":"启动 GPU 加速渲染","Disable only if you see flicker":"出现花屏时才需要关闭","Update automatically when a new version is available":"有新版本自动更新","Managed by the installer":"由安装器统一管理","GPU acceleration and the cache folder take effect after a restart.":"GPU 加速与缓存目录修改后需重启生效。","Cache and preview":"缓存与预览","Cache storage location":"缓存储存位置","Default location":"默认位置","Choose folder":"选择目录","Reset":"重置","How to open previews":"预览时使用的方式","In-app preview":"应用内预览","Default browser":"默认浏览器"};
+for(const k of Object.keys(extra)) obj[k]=extra[k];
+const keys=Object.keys(obj).sort();
+fs.writeFileSync(file, src.slice(0,open+1)+"\n"+keys.map(k=>"  "+JSON.stringify(k)+": "+JSON.stringify(obj[k])).join(",\n")+src.slice(end));
+console.log("keys="+keys.length);

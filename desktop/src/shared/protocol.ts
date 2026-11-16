@@ -1,0 +1,467 @@
+export const PROTOCOL_VERSION = 1 as const;
+
+export type GatewayHealth = {
+  ok?: boolean;
+  gateway?: string;
+  tunnel?: string;
+  ollama?: boolean;
+  models?: number;
+  uptime_s?: number;
+};
+
+export type GatewayModel = {
+  name?: string;
+  model?: string;
+};
+
+export type GatewayModelsResponse = {
+  models?: GatewayModel[];
+};
+
+export type AdminModel = { name: string; size: number; loaded: boolean };
+export type AdminModelsResponse = { models: AdminModel[] };
+export type AdminModelActionResponse = { ok: boolean; model: string; status?: string; result?: unknown };
+
+export type GatewayMessageRole = "system" | "user" | "assistant" | "tool";
+
+export type GatewayMessage = {
+  role: GatewayMessageRole;
+  content: string;
+};
+
+export type GatewayError = {
+  status?: number;
+  code?: string;
+  message?: string;
+};
+
+export type GatewayRequestError = GatewayError & {
+  requestId?: string;
+};
+
+export type ChatToolCallDelta = {
+  index?: number;
+  id?: string;
+  type?: string;
+  function?: {
+    name?: string;
+    arguments?: string;
+  };
+};
+
+export type ChatUsage = {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  prompt_tokens_details?: {
+    cached_tokens?: number;
+    audio_tokens?: number;
+  };
+  completion_tokens_details?: {
+    reasoning_tokens?: number;
+    audio_tokens?: number;
+    accepted_prediction_tokens?: number;
+    rejected_prediction_tokens?: number;
+  };
+};
+
+export type ChatDelta = {
+  id?: string;
+  model?: string;
+  choices?: Array<{
+    delta?: {
+      role?: GatewayMessageRole;
+      content?: string | null;
+      tool_calls?: ChatToolCallDelta[];
+    };
+    finish_reason?: string | null;
+  }>;
+  usage?: ChatUsage;
+  error?: Pick<GatewayError, "message" | "code">;
+};
+
+export type AdminHistoryQuery = {
+  limit?: number;
+  days?: number;
+};
+
+export type AdminHistoryRecord = {
+  t?: string;
+  ip?: string;
+  ua?: string;
+  model?: string;
+  model_requested?: string;
+  provider?: string;
+  path?: string;
+  stream?: boolean;
+  profile?: string;
+  compat?: boolean;
+  injected_notes?: string[];
+  tools?: string[];
+  tools_chars?: number;
+  num_ctx?: number;
+  options?: Record<string, unknown>;
+  messages?: GatewayMessage[];
+  message_count?: number;
+  thinking?: string;
+  reply?: string;
+  prompt_tokens?: number;
+  reply_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  elapsed_ms?: number;
+  estimated?: boolean;
+  status?: number;
+  success?: boolean;
+  error?: string;
+};
+
+export type AdminHistoryResponse = {
+  count?: number;
+  items?: AdminHistoryRecord[];
+};
+
+export type AdminStatusGateway = {
+  version?: string;
+  started?: string;
+  uptime_s?: number;
+  listen?: string;
+};
+
+export type AdminStatusOllama = {
+  online?: boolean;
+  version?: string;
+  models?: string[];
+  loaded?: string[];
+};
+
+export type AdminStatusClient = {
+  ip?: string;
+  ua?: string;
+  first_seen?: string;
+  last_seen?: string;
+  online?: boolean;
+  requests?: number;
+  conversations?: number;
+  last_model?: string;
+  last_prompt?: string;
+  last_reply?: string;
+};
+
+export type AdminStatusStats = {
+  requests?: number;
+  conversations?: number;
+  conversations_total?: number;
+  errors?: number;
+  auth_fail?: number;
+  started_at?: string;
+  last_error?: string;
+};
+
+export type AdminStatus = {
+  gateway?: AdminStatusGateway;
+  ollama?: AdminStatusOllama;
+  tunnel?: string;
+  clients?: AdminStatusClient[];
+  online?: number;
+  stats?: AdminStatusStats;
+  recent?: AdminHistoryRecord[];
+};
+
+export type AdminErrorRecord = {
+  ts?: string;
+  code?: string;
+  status?: number;
+  upstream_url?: string;
+  message?: string;
+};
+
+export type AdminClientRecord = {
+  ip?: string;
+  ua?: string;
+  first_seen?: string;
+  last_seen?: string;
+  online?: boolean;
+  requests?: number;
+  conversations?: number;
+  last_model?: string;
+  last_prompt?: string;
+  last_reply?: string;
+};
+
+export type AdminClientsResponse = {
+  clients?: AdminClientRecord[];
+};
+
+export type StreamChatInput = {
+  reasoningEffort?: string;
+  requestId: string;
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  messages: GatewayMessage[];
+  onDelta: (delta: ChatDelta) => void;
+};
+
+export type GatewayApi = {
+  health: () => Promise<GatewayHealth>;
+  models: (apiKey: string) => Promise<GatewayModelsResponse>;
+  streamChat: (input: StreamChatInput) => Promise<void>;
+  cancelChat: (requestId: string) => void;
+  adminStatus?: (adminKey: string) => Promise<AdminStatus>;
+  adminErrors?: (adminKey: string, limit?: number) => Promise<AdminErrorRecord[]>;
+  adminClients?: (adminKey: string) => Promise<AdminClientsResponse>;
+  modelsAdmin?: (adminKey: string) => Promise<AdminModelsResponse>;
+  pullModel?: (adminKey: string, model: string) => Promise<AdminModelActionResponse>;
+  deleteModel?: (adminKey: string, model: string) => Promise<AdminModelActionResponse>;
+  startModel?: (adminKey: string, model: string) => Promise<AdminModelActionResponse>;
+  stopModel?: (adminKey: string, model: string) => Promise<AdminModelActionResponse>;
+};
+
+export type WorkspaceRoot = {
+  selected: boolean;
+  path: string | null;
+};
+
+export type FileEntry = {
+  name: string;
+  rel: string;
+  isDir: boolean;
+  size: number;
+  mtime: number;
+  ext: string;
+};
+
+export type FileTreeRequest = {
+  path?: string;
+  depth?: number;
+  limit?: number;
+};
+
+export type FileSearchRequest = {
+  query: string;
+  path?: string;
+  include?: string;
+  limit?: number;
+};
+
+export type FileReadRequest = {
+  path: string;
+  start?: number;
+  lines?: number;
+};
+
+export type FileTreeResponse = {
+  ok: boolean;
+  results: FileEntry[];
+  count: number;
+};
+
+export type FileSearchResult = {
+  rel: string;
+  line: number;
+  text: string;
+};
+
+export type FileSearchResponse = {
+  ok: boolean;
+  results: FileSearchResult[];
+  count: number;
+};
+
+export type FileReadResponse = {
+  ok: boolean;
+  path: string;
+  start: number;
+  end: number;
+  total: number;
+  text: string;
+};
+
+export type WorkspaceApi = {
+  choose: () => Promise<WorkspaceRoot | null>;
+  current: () => Promise<WorkspaceRoot | null>;
+};
+
+export type FilesApi = {
+  tree: (request: FileTreeRequest) => Promise<FileTreeResponse>;
+  search: (request: FileSearchRequest) => Promise<FileSearchResponse>;
+  read: (request: FileReadRequest) => Promise<FileReadResponse>;
+};
+
+export type TerminalPolicy = "workspace" | "restricted";
+
+export type TerminalErrorCode =
+  | "invalid_request"
+  | "policy_denied"
+  | "not_found"
+  | "busy"
+  | "spawn_failed"
+  | "cancelled"
+  | "exit_failed"
+  | "unknown";
+
+export type TerminalCommandRequest = {
+  command: string;
+  cwd?: string;
+  policy?: TerminalPolicy;
+};
+
+export type TerminalCommandResult = {
+  id: string;
+};
+
+export type TerminalOutputEvent = {
+  id: string;
+  stream: "stdout" | "stderr";
+  text: string;
+};
+
+export type TerminalCompletion = {
+  id: string;
+  code: number | null;
+  signal?: string | null;
+  error?: { code: TerminalErrorCode; message: string };
+};
+
+export type TerminalApi = {
+  start: (request: TerminalCommandRequest) => Promise<TerminalCommandResult>;
+  cancel: (id: string) => void;
+  onOutput: (listener: (event: TerminalOutputEvent) => void) => () => void;
+  onComplete: (listener: (event: TerminalCompletion) => void) => () => void;
+  unsubscribe: (id: string) => void;
+};
+
+export type ToolDescriptor = {
+  name: string;
+  description: string;
+  schema: Record<string, unknown>;
+  danger: boolean;
+  permission: string | null;
+};
+
+export type ToolsResponse = {
+  ok: true;
+  tools: ToolDescriptor[];
+  count: number;
+};
+
+export type ToolCallRequest = {
+  requestId: string;
+  tool: string;
+  args: Record<string, unknown>;
+};
+
+export type ApprovalRecord = {
+  id: string;
+  requestId: string;
+  tool: string;
+  argsRedacted: Record<string, unknown>;
+  risk: string;
+  reasons: string[];
+  createdAt: string;
+  expiresAt: string;
+};
+
+export type ApprovalListResponse = {
+  ok: boolean;
+  approvals: ApprovalRecord[];
+  count: number;
+};
+
+export type ToolCallResponse = {
+  ok: boolean;
+  approval_required?: ApprovalRecord;
+  result?: unknown;
+  error?: { code?: string; message: string };
+};
+
+export type ApprovalDecisionResponse = {
+  ok: boolean;
+  id: string;
+  decision: "approved" | "denied";
+  error?: { code?: string; message: string };
+};
+
+export type ToolsApi = {
+  list: (apiKey?: string) => Promise<ToolsResponse>;
+  call: (request: ToolCallRequest) => Promise<ToolCallResponse>;
+  pending: () => Promise<ApprovalListResponse>;
+  approve: (id: string) => Promise<ApprovalDecisionResponse>;
+  deny: (id: string) => Promise<ApprovalDecisionResponse>;
+};
+
+export type LocalModel = { name: string; size?: number; loaded?: boolean };
+
+export type ModelsApi = {
+  list: () => Promise<{ models: LocalModel[] }>;
+  pull: (model: string) => Promise<Record<string, unknown>>;
+  remove: (model: string) => Promise<Record<string, unknown>>;
+  start: (model: string) => Promise<Record<string, unknown>>;
+  stop: (model: string) => Promise<Record<string, unknown>>;
+};
+
+export type SystemStats = { gpu: number | null; vramUsed: number | null; vramTotal: number | null; ramUsed: number; ramTotal: number; ai: number | null };
+
+export type WindowApi = { control: (action: "minimize" | "maximize" | "close") => Promise<{ ok: boolean; maximized?: boolean }> };
+
+export type AppSettings = {
+  betaChannel: boolean; runAtStartup: boolean; dpiScaling: boolean; startFullscreen: boolean;
+  autoUpdate: boolean; smoothScroll: boolean; gpuAcceleration: boolean; cacheDir: string;
+  previewMode: "inapp" | "browser";
+};
+
+export type SettingsApi = {
+  get: () => Promise<AppSettings>;
+  set: (patch: Partial<AppSettings>) => Promise<AppSettings>;
+};
+
+export type PreviewApi = {
+  open: (target: string) => Promise<{ ok: boolean; reused?: boolean }>;
+  close: () => Promise<{ ok: boolean }>;
+  resize: () => Promise<{ ok: boolean }>;
+};
+
+export type OllamaApi = { control: (action: "start" | "stop" | "status") => Promise<Record<string, unknown>> };
+
+export type ConfigApi = {
+  get: () => Promise<Record<string, unknown>>;
+  set: (values: Record<string, unknown>) => Promise<Record<string, unknown>>;
+};
+
+export type CloudApi = {
+  get: () => Promise<Record<string, unknown>>;
+  save: (payload: Record<string, unknown>) => Promise<Record<string, unknown>>;
+  test: () => Promise<Record<string, unknown>>;
+};
+
+export type SystemApi = { stats: () => Promise<SystemStats>; openExternal: (url: string) => Promise<{ ok: boolean }> };
+
+export type NetworkConnectResult = { ok: boolean; name?: string; token?: string; gateway?: string };
+
+export type NetworkApi = {
+  connect: (baseUrl: string, name: string, password: string) => Promise<NetworkConnectResult>;
+  info: () => Promise<Record<string, unknown>>;
+  tunnel: (action: "start" | "stop" | "restart") => Promise<Record<string, unknown>>;
+  tunnelStatus: () => Promise<Record<string, unknown>>;
+  saveIdentity: (payload: Record<string, unknown>) => Promise<Record<string, unknown>>;
+  get: (baseUrl: string, path: string, token?: string) => Promise<Record<string, unknown>>;
+};
+
+export type DesktopApi = {
+  gateway: GatewayApi;
+  workspace: WorkspaceApi;
+  files: FilesApi;
+  terminal: TerminalApi;
+  models: ModelsApi;
+  network: NetworkApi;
+  system: SystemApi;
+  github: { stars: () => Promise<{ ok: boolean; stars: number | null }> };
+  cloud: CloudApi;
+  config: ConfigApi;
+  settings: SettingsApi;
+  preview: PreviewApi;
+  ollama: OllamaApi;
+  window: WindowApi;
+  tools: ToolsApi;
+};
