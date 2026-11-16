@@ -13,7 +13,7 @@ Hymnix connects Ollama-compatible models to a practical desktop workflow: chat, 
 
 ## Screenshots
 
-![Hymnix Orbit overview](docs/images/orbit-hero.png)
+![Hymnix Orbit overview](docs/images/orbit-hero-en.png)
 
 | | |
 |---|---|
@@ -36,6 +36,41 @@ More captures (chat, gateway, models, terminal, monitor, history, changelog, sup
 - In-app Chromium preview pane, or open in the default browser.
 - Downloads: installer and portable builds are attached to the [v1.3.0 release](https://github.com/CarrisFlynn/hymnix-ai-server/releases/tag/v1.3.0).
 - Details: [CHANGELOG.md](CHANGELOG.md) - Guide: [docs/OPERATIONS.md](docs/OPERATIONS.md) - Architecture: [docs/PROJECT.md](docs/PROJECT.md).
+
+### Architecture refactor (under the hood)
+
+The 1.3.0 release is not a skin change. The whole delivery model was rebuilt:
+
+- **The Tk UI is gone.** The old Tkinter console pages are retired and quarantined under server/legacy; they are excluded from the packaged build, so no Tk, ttk or Notebook code ships.
+- **The gateway is headless.** server/gateway_core.py now runs as a standalone HTTP service with no UI import: OpenAI-compatible chat, model management, tunnel control, cloud configuration, admin endpoints and health.
+- **One process tree per app.** Electron main starts and supervises the packaged gateway, reuses an already healthy 1.3.0 gateway instead of failing, and owns a single-instance lock.
+- **IPC-only boundary.** The renderer never touches the filesystem, the network or secrets: every operation goes through main via a typed preload bridge. The renderer loads from a privileged app:// protocol, not file://, so ES modules and CSP work correctly.
+- **No keys on screen.** The app reads the local gateway key and admin key itself and injects them, so users no longer paste API keys by hand.
+- **Hosted features are first-class services.** Host identity, guest connection, public tunnel, cloud API, gateway configuration and Ollama control are real endpoints with admin authentication, not UI state.
+- **Fewer runtime requirements.** The target machine needs no Java, no Node.js and no WebView2; cloudflared is bundled.
+
+### UI refactor
+
+- **New design system.** Spacing scale, type scale, card and button primitives, five themes, and a consistent state palette replaced the ad-hoc styling.
+- **Re-cut information architecture.** Chat, History, Gateway, Models, Terminal, Monitor, Changelog, Support and Settings; empty placeholder pages were removed and the gateway moved out of settings into its own page.
+- **Chat rebuilt.** Bubble cards with avatars, markdown, code blocks with copy, and a collapsible thinking-process panel for reasoning models; Enter sends, Shift+Enter adds a line.
+- **Terminal rebuilt as a console.** Status strip, live tunnel log, command set for status, models, tunnel, hardware and gateway configuration.
+- **Control panel added.** Model picker, reasoning effort, conversation save/load/export, and GPU / VRAM / AI / RAM telemetry beside the chat.
+- **Custom window chrome.** Frameless window with a designed title bar and native menu removed.
+- **Bilingual by design.** English and Simplified Chinese with a dictionary-driven renderer, plus translated theme names and settings labels.
+
+### 底层重构与 UI 重构（中文）
+
+- **彻底去掉 Tk**：旧 Tkinter 页面退役并隔离在 server/legacy，打包产物中不再包含 tkinter / ttk / Notebook。
+- **网关变成无界面服务**：gateway_core.py 独立运行，负责 OpenAI 兼容对话、模型管理、隧道控制、云端配置、管理接口与健康检查。
+- **单进程树托管**：Electron 主进程启动并守护打包后的网关，已健康的 1.3.0 网关直接复用，配合单实例锁。
+- **只走 IPC**：渲染层不碰文件、网络和密钥，全部经 preload 桥；页面走特权 app:// 协议而不是 file://，模块与 CSP 才能正常工作。
+- **不再手填密钥**：应用自己读取并注入本机网关密钥。
+- **托管能力服务化**：主机身份、访客连接、公网隧道、云端 API、网关配置、Ollama 启停都是带鉴权的真实接口。
+- **依赖更少**：目标机器不需要 Java、Node.js、WebView2，cloudflared 随包。
+- **UI 重构**：新设计系统（间距、字号、卡片按钮、5 套主题）、重排信息架构、气泡对话 + Markdown + 代码复制 + 思考过程、终端控制台、右侧控制栏与遥测、自绘标题栏、中英双语。
+
+
 
 ## What's new in 1.2.1
 
