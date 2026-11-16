@@ -9,19 +9,52 @@ Hymnix 将 Ollama 兼容模型接入一套完整的桌面工作流：对话、�
 ![许可证](https://img.shields.io/badge/license-AGPL--3.0-blue)
 ![平台](https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey)
 ![Python](https://img.shields.io/badge/python-3.11%2B-3776AB)
+![发布](https://img.shields.io/badge/release-1.3.0-blueviolet)
 
 ## 截图
 
-![Hymnix AI 预览](docs/images/en/preview.png)
+![Hymnix Orbit 总览](docs/images/orbit-hero-en.png)
 
-![Hymnix AI 总览](docs/images/en/overview.png)
+| | |
+|---|---|
+| ![对话](docs/images/orbit-1.3.0/chat.png) | ![网关](docs/images/orbit-1.3.0/gateway.png) |
+| ![模型](docs/images/orbit-1.3.0/models.png) | ![终端](docs/images/orbit-1.3.0/terminal.png) |
+| ![设置](docs/images/orbit-1.3.0/settings.png) | ![监控](docs/images/orbit-1.3.0/monitor.png) |
 
-![对话](docs/images/en/01-chat.png)
-![终端](docs/images/en/02-terminal.png)
-![监控](docs/images/en/03-monitor.png)
-![API](docs/images/en/04-api.png)
-![Cloud Hub](docs/images/en/05-cloudhub.png)
-![插件](docs/images/en/06-plugins.png)
+更多截图（对话、网关、模型、终端、监控、历史、更新日志、赞助、设置）见 [docs/images/orbit-1.3.0](docs/images/orbit-1.3.0)；1.2 旧界面截图保留在 [docs/images/en](docs/images/en)。
+
+## 1.3.0 更新 - Hymnix Orbit
+
+- **一个应用两种角色**：1.0-1.2 分开的客户端/服务端包已合并，同一个应用既能给朋友当模型主机，也能连朋友的机器用他的硬件。
+- 主机模式：共享名称、共享密码、一键公网隧道，状态可见、日志实时。
+- 访客模式：地址、共享名称、连接密码；模型列表与对话来自主机。
+- 云端 API 作为第二种对话来源，与本地模型并存。
+- 模型清单带搜索，已安装与可下载分开显示。
+- 终端控制台：状态条、隧道实时日志、网关配置命令。
+- 对话支持 Markdown、代码复制、思考过程折叠面板。
+- 右侧控制栏：模型、推理强度、对话保存/加载/导出、GPU / VRAM / AI / RAM 遥测。
+- 应用内 Chromium 预览，也可交回默认浏览器。
+- 安装版与免安装版见 [v1.3.0 Release](https://github.com/CarrisFlynn/hymnix-ai-server/releases/tag/v1.3.0)。
+
+### 底层重构
+
+- **彻底去掉 Tk**：旧 Tkinter 页面退役并隔离在 server/legacy，打包产物不再包含 tkinter / ttk / Notebook。
+- **网关变成无界面服务**：gateway_core.py 独立运行，负责 OpenAI 兼容对话、模型管理、隧道控制、云端配置、管理接口与健康检查。
+- **单进程树托管**：Electron 主进程启动并守护打包后的网关，已健康的 1.3.0 网关直接复用，配合单实例锁。
+- **只走 IPC**：渲染层不碰文件、网络和密钥，全部经 preload 桥；页面走特权 app:// 协议而不是 file://，模块与 CSP 才能正常工作。
+- **不再手填密钥**：应用自己读取并注入本机网关密钥。
+- **托管能力服务化**：主机身份、访客连接、公网隧道、云端 API、网关配置、Ollama 启停都是带鉴权的真实接口。
+- **依赖更少**：目标机器不需要 Java、Node.js、WebView2，cloudflared 随包。
+
+### UI 重构
+
+- **新设计系统**：间距与字号体系、卡片与按钮基元、5 套主题、统一状态色，替换此前的临时样式。
+- **信息架构重排**：对话、历史、网关、模型、终端、监控、更新日志、赞助、设置；删掉空占位页，网关从设置里独立成页。
+- **对话重做**：气泡卡片 + 头像 + Markdown + 代码块复制 + 思考过程折叠；回车发送，Shift+回车换行。
+- **终端重做为控制台**：状态条、隧道实时日志、status/models/tunnel/hardware/config 等命令。
+- **新增右侧控制栏**：模型、推理强度、对话保存/加载/导出、GPU / VRAM / AI / RAM 遥测。
+- **自绘窗口**：无边框窗口 + 设计过的标题栏，去掉原生菜单。
+- **双语设计**：中英双语由词典驱动，主题名与设置标签也会跟随切换。
 
 ## 1.2.1 更新
 
@@ -120,38 +153,58 @@ Hymnix 将 Ollama 兼容模型接入一套完整的桌面工作流：对话、�
 
 ### 运行预构建版本
 
-1. 从项目 Releases 页面下载服务器可执行文件。
-2. 将其放入专用目录并启动。
-3. 在 Ollama 中安装或选择本地模型。
-4. 打开控制台，确认网关和模型状态，然后使用界面显示的端点与生成的 API key 配置 OpenAI 兼容客户端。
+1. 从 [v1.3.0 Release](https://github.com/CarrisFlynn/hymnix-ai-server/releases/tag/v1.3.0) 下载安装版或免安装版。
+2. 安装版按向导安装；免安装版直接双击运行。
+3. 首次出现欢迎弹层：选语言，选主题机或连接朋友，然后开始使用。
+4. 到模型页按提示启动 Ollama，选一个本地模型即可对话。
 
 ### 从源码运行
 
 ```powershell
 git clone https://github.com/CarrisFlynn/hymnix-ai-server.git
 cd hymnix-ai-server
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r client/requirements.txt
-python source/hymnix_main.py
+cd desktop
+pnpm install
+pnpm dev
 ```
 
 ## 从源码构建
 
-桌面构建使用 PyInstaller 与项目 spec 文件。在 `source` 目录中执行对应 spec，并使用干净的构建目录：
+构建分两步：server/ 下的 Python 网关与 desktop/ 下的 Electron 外壳。
 
 ```powershell
-python -m PyInstaller --noconfirm --clean --distpath . --workpath "$env:TEMP\hymnix-build" "Hymnix 1.1.0.spec"
+cd server
+python -m PyInstaller hymnix-server.spec --noconfirm --clean --distpath ..
 ```
 
-发布构建应核对生成的可执行文件，运行自检和测试套件，并与制品一同发布校验和。不要把可变配置、日志或凭据放入仓库。
+```powershell
+cd desktop
+pnpm install
+pnpm typecheck; pnpm test; pnpm build
+pnpm exec electron-builder --win --x64
+```
+
+产物：仓库根目录的 hymnix-server-<版本>-x64.exe，以及 release/ 下的 Hymnix-Orbit-<版本>-Setup.exe 与 -Portable.exe。
+
+## 仓库结构
+
+```
+desktop/     Electron + React 应用（main、preload、renderer、测试、脚本）
+server/      Python 网关（gateway_core.py、hxcore 模块、打包 spec）
+             server/legacy 存放已退役的 Tk 界面，不会被打包
+client/      1.0-1.2 的旧瘦客户端，仅作参考
+docs/        指南、截图、架构与签名说明
+config/      示例配置（不含密钥）
+packaging/   MSIX 打包资源
+release-1.3.0/  已发布的安装版、免安装版与发布文档
+```
 
 ## 安全说明
 
 - 网关默认本地优先；模型请求需要 API key，管理接口使用独立的管理 key。
 - 可选隧道会把网关暴露到本机之外；请主动启动，并仅向可信用户分享凭据。
 - 对话日志可能包含完整提示词、响应、文件路径和工具结果。请保护主机账户，并在需要时清理或归档记录。
-- 及时更新服务器、隧道客户端、OCR 引擎、模型运行时和依赖。
+- 及时更新应用、隧道组件、模型运行时和依赖。
 - 允许执行前，逐项审查工具、插件、diff 和审批请求。
 
 ## 路线图
