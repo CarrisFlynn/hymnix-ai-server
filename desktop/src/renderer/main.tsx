@@ -301,7 +301,10 @@ function App() {
   function changeTheme(next: string) { setThemeState(next); try { localStorage.setItem("hymnix.theme", next); } catch { /* ignore */ } }
 
   async function send() {
-    const text = draft.trim(); if (!text || !model) return;
+    const text = draft.trim(); if (!text) return;
+    const usingCloud = source === "cloud";
+    const ready = usingCloud ? !!cloudModel.trim() : !!model;
+    if (!ready) { setStartupNote(t("Pick a model, start Ollama, or switch to Cloud API.")); window.setTimeout(() => setStartupNote(""), 5000); return; }
     const next: Message[] = [...messages, { role: "user", content: text, at: stamp() }, { role: "assistant", content: "", at: stamp() }];
     setMessages(next); setDraft(""); setError("");
     const requestId = crypto.randomUUID(); requestRef.current = requestId;
@@ -609,7 +612,7 @@ function App() {
           </div>
           <div>
             <button type="button" className="btn" onClick={cancel}>{t("Stop")}</button>
-            <button type="submit" className="btn primary" disabled={!draft.trim() || !model}>{t("Send ↵")}</button>
+            <button type="submit" className="btn primary" disabled={!draft.trim()}>{t("Send ↵")}</button>
           </div>
         </footer>
       </form>

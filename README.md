@@ -169,6 +169,119 @@ The 1.3.0 release is not a skin change. The whole delivery model was rebuilt:
 
 ## Quick start
 
+There is no required model install. Pick whichever path fits you:
+
+| Path | What you need | When to use it |
+|---|---|---|
+| Local model (optional) | Ollama, plus any model you choose to download | Private, fully offline |
+| Cloud API | An OpenAI-compatible endpoint and key | No local GPU, no model download |
+| Friend host | Address, share name and password from a friend | Use someone else's hardware |
+
+### Local models, when you want them
+
+1. Open Models. If the card says the model service is offline, press Start Ollama.
+2. Pick something already installed, or search the catalog and download one. Downloading is optional and can be skipped.
+3. Return to Chat and type. Enter sends, Shift+Enter adds a line.
+
+### Cloud API instead of local models
+
+1. Open Gateway, then the Cloud API card.
+2. Choose Cloud API as the source, enter the endpoint, a model name and your key.
+3. Press Save, then Test. Chat now goes to that endpoint and no local model is needed.
+
+### Host for a friend
+
+1. Open Gateway then Host a server.
+2. Set a share name and a share password (the tunnel refuses to start without a password).
+3. Press Start tunnel, wait for Ready, copy the public address and send it with the name and password.
+
+### Connect to a friend
+
+1. Open Gateway then Connect to a friend.
+2. Enter the address, share name and connection password.
+3. Press Connect. The model list and chats switch to their machine.
+
+## Features
+
+### Local gateway and OpenAI-compatible API
+
+- Local HTTP gateway with OpenAI-compatible chat completions, streaming, usage data, and tool-call responses.
+- Ollama model passthrough, model aliases, configurable compatibility modes, and upstream error normalization.
+- Localhost-first defaults, separate model and administration credentials, and per-caller request serialization.
+
+### Models and hardware
+
+- Select any installed local model instead of being tied to a single default.
+- Model discovery and refresh inside the app.
+- Live hardware signals including GPU utilization, VRAM, power, latency, tokens, and estimated energy cost.
+- Idle unloading and agent-aware keep-alive settings to balance responsiveness and resource use.
+
+### Terminal console
+
+- Keyboard-driven terminal page with status chips, live logs, command history, completion, and confirmation for destructive actions.
+- Commands for service control, model selection, configuration, tunnel state, hardware, history, export, and log inspection.
+
+### Multiple sessions and context compression
+
+- Multiple conversation sessions with persistent local history, search, message browsing, statistics, and refresh.
+- Context trimming preserves system instructions and can compress long conversations before sending.
+- Session deletion creates a backup before removal.
+
+### Plugin kernel and permissions
+
+- Manifest-based plugins with permission declarations, allowlists, install/update/remove flows, and isolated lifecycle controls.
+- Package validation, timeout limits, enable/disable controls, and a recoverable trash area for removed plugins.
+
+### Tool calling and MCP
+
+- Built-in tools with schema validation, safe expression evaluation, root-directory boundaries, and a visible invocation timeline.
+- MCP stdio and HTTP transport support for compatible tool servers.
+- Tool access can be gated by approval rules before execution.
+
+### Files, repositories, and diffs
+
+- Read-only file trees, filename and text search, filtering, scan statistics, and bounded workspace access.
+- Diff preview with hunk-level review, apply, revert, backup, and rollback records.
+- Repository-aware workflows for inspecting project files without granting unrestricted filesystem access.
+
+### Approvals and security
+
+- Human confirmation for risky commands, tools, plugin operations, and other sensitive actions.
+- DNS and private-network checks, loopback and redirect protections, undeclared-argument rejection, and bounded roots.
+- Conversation and event records remain local by default; treat them as sensitive because prompts and responses may be stored.
+
+### Usage and cost
+
+- Request history with latency, token, GPU, VRAM, power, and estimated cost fields.
+- Usage summaries and exportable records for local operations and supported remote services.
+
+### Cloud Hub
+
+- Optional cloud endpoint configuration for compatible providers.
+- Cloud usage reconciliation, account-aware status, and offline-friendly local behavior when remote credentials are unavailable.
+
+### OCR
+
+- OCR page and tool integration using a locally installed Tesseract-compatible engine when available.
+- Clear availability reporting when no OCR engine is installed; OCR is optional and remains local.
+
+### Git acceleration
+
+- Local Git proxy settings and repository-focused inspection flows for development work.
+- Git-aware diff and status workflows complement the file tree and review pages.
+
+### Updates and publishing
+
+- One-click update checks with release notes, progress, SHA-256 verification, and restart into the downloaded build.
+- Update channels and publishing preparation are kept separate from the running executable.
+
+### Languages and high DPI
+
+- English, Simplified Chinese, French, Russian, and Spanish interface options.
+- Windows desktop UI with language selection; verify rendering on your display scaling before deployment.
+
+## Quick start
+
 ### Prerequisites
 
 - Windows 10 or 11, Python 3.11 or newer for source runs.

@@ -242,6 +242,7 @@ export const zh: Record<string, string> = {
   "Open sponsor page": "打开赞助页",
   "Open the window fullscreen": "启动时直接全屏",
   "Orange dark": "橙暗",
+  "Pick a model, start Ollama, or switch to Cloud API.": "选一个模型、启动 Ollama，或切换到云端 API。",
   "Plugins": "插件",
   "Pre-release builds, may be unstable": "预发布版本，可能不稳定",
   "Privacy": "隐私",
