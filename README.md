@@ -8,23 +8,34 @@ Hymnix connects Ollama-compatible models to a practical desktop workflow: chat, 
 
 ![License](https://img.shields.io/badge/license-AGPL--3.0-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey)
-![Release](https://img.shields.io/badge/release-1.2.1-blueviolet)
+![Release](https://img.shields.io/badge/release-1.3.0-blueviolet)
 ![Python](https://img.shields.io/badge/python-3.11%2B-3776AB)
 
 ## Screenshots
 
-![Hymnix AI preview](docs/images/en/preview.png)
+![Hymnix Orbit overview](docs/images/orbit-hero.png)
 
-![Hymnix AI overview](docs/images/en/overview.png)
+| | |
+|---|---|
+| ![Chat](docs/images/orbit-1.3.0/chat.png) | ![Gateway](docs/images/orbit-1.3.0/gateway.png) |
+| ![Models](docs/images/orbit-1.3.0/models.png) | ![Terminal](docs/images/orbit-1.3.0/terminal.png) |
+| ![Settings](docs/images/orbit-1.3.0/settings.png) | ![Monitor](docs/images/orbit-1.3.0/monitor.png) |
 
-![Chat](docs/images/en/01-chat.png)
-![Terminal](docs/images/en/02-terminal.png)
-![Monitor](docs/images/en/03-monitor.png)
-![API](docs/images/en/04-api.png)
-![Cloud Hub](docs/images/en/05-cloudhub.png)
-![Plugins](docs/images/en/06-plugins.png)
+More captures (chat, gateway, models, terminal, monitor, history, changelog, support, settings) are in [docs/images/orbit-1.3.0](docs/images/orbit-1.3.0). Screenshots of the previous 1.2 UI are kept in [docs/images/en](docs/images/en).
 
-All 17 pages are captured in [docs/images/en](docs/images/en) (chat, terminal, monitor, cloud API, cloud hub, plugins, tools, crash report, history, sessions, files, diff, support, approvals, usage, OCR, git).
+## What's new in 1.3.0 - Hymnix Orbit
+
+- **One app, two roles.** The separate client and server builds from 1.0-1.2 are merged: the same app hosts your models for friends, or connects to a friend and uses their hardware.
+- Host mode: share name, share password, and a one-click public tunnel with visible state and a live log.
+- Guest mode: address, share name and connection password; the model list and chats come from the host.
+- Cloud API as a second chat source, alongside local models.
+- Downloadable model catalog with search, next to the installed list.
+- Terminal console with a status strip, live tunnel log and gateway configuration commands.
+- Chat with markdown, code copy and a collapsible thinking-process panel.
+- Right control panel: model, reasoning effort, conversation save / load / export, GPU / VRAM / AI / RAM telemetry.
+- In-app Chromium preview pane, or open in the default browser.
+- Downloads: installer and portable builds are attached to the [v1.3.0 release](https://github.com/CarrisFlynn/hymnix-ai-server/releases/tag/v1.3.0).
+- Details: [CHANGELOG.md](CHANGELOG.md) - Guide: [docs/OPERATIONS.md](docs/OPERATIONS.md) - Architecture: [docs/PROJECT.md](docs/PROJECT.md).
 
 ## What's new in 1.2.1
 
@@ -48,12 +59,12 @@ All 17 pages are captured in [docs/images/en](docs/images/en) (chat, terminal, m
 
 - Local HTTP gateway with OpenAI-compatible chat completions, streaming, usage data, and tool-call responses.
 - Ollama model passthrough, model aliases, configurable compatibility modes, and upstream error normalization.
-- Localhost-first defaults, separate model and administration credentials, and per-client request serialization.
+- Localhost-first defaults, separate model and administration credentials, and per-caller request serialization.
 
 ### Models and hardware
 
 - Select any installed local model instead of being tied to a single default.
-- Model discovery and refresh from the desktop client.
+- Model discovery and refresh inside the app.
 - Live hardware signals including GPU utilization, VRAM, power, latency, tokens, and estimated energy cost.
 - Idle unloading and agent-aware keep-alive settings to balance responsiveness and resource use.
 
@@ -151,25 +162,35 @@ Set HYMNIX_LANG (en, zh, fr, ru, es) to force the interface language, for exampl
 
 ## Build from source
 
-Windows builds use PyInstaller and the specs in server/ and client/. From the repository root:
+The app has two build steps: the Electron desktop shell in desktop/ and the Python gateway in server/.
 
 ```powershell
-.\build.ps1 -Clean
+cd server
+python -m PyInstaller hymnix-server.spec --noconfirm --clean --distpath ..
 ```
 
-This produces dist\Hymnix 1.2.0.exe (server console) and dist\Hymnix Client 1.2.0.exe (thin client). Build one side with -ServerOnly or -ClientOnly.
+```powershell
+cd desktop
+pnpm install
+pnpm typecheck; pnpm test; pnpm build
+pnpm exec electron-builder --win --x64 --dir
+```
 
-Release checklist: clean build, launch the app, run the self-test, write SHA256SUMS.txt next to the artifacts, and never commit local configuration, logs or credentials.
+This produces hymnix-server-<version>-x64.exe in the repository root and Hymnix-Orbit-<version>-Setup.exe / -Portable.exe under release/.
+
+Release checklist: clean build, launch the app, run typecheck and tests, sign the artifacts, write SHA256SUMS.txt next to them, and never commit local configuration, logs or credentials.
 
 ## Repository layout
 
 ```
-server/      desktop server console (gateway, UI pages, hxcore modules, locales, assets)
-client/      thin client for people you share a gateway with
-docs/        screenshots, terminal command reference, architecture notes
+desktop/     Electron + React app (main, preload, renderer, tests, scripts)
+server/      Python gateway (gateway_core.py, hxcore modules, packaging spec)
+             server/legacy holds the retired Tk UI and is never packaged
+client/      legacy thin client from 1.0-1.2, kept for reference only
+docs/        guides, screenshots, architecture and signing notes
 config/      example configuration files (no secrets)
 packaging/   MSIX packaging assets
-build.ps1    PyInstaller build entry point
+release-1.3.0/  published installer, portable build and release documents
 ```
 
 ## Security notes
@@ -222,22 +243,3 @@ Full list: [CHANGELOG.md](CHANGELOG.md) · Guide: [docs/OPERATIONS.md](docs/OPER
 | Portable | [Hymnix-Orbit-1.3.0-Portable.exe](https://github.com/CarrisFlynn/hymnix-ai-server/releases/download/v1.3.0/Hymnix-Orbit-1.3.0-Portable.exe) |
 
 ![Gateway](docs/images/orbit-1.3.0/gateway.png)
-
----
-
-## 1.3.0 更新内容 — Hymnix Orbit
-
-**一个应用两种角色。** 1.0–1.2 分开的客户端/服务端包已经合并：同一个应用既能给朋友当模型主机，也能连朋友的机器用他的硬件。主机与连接都在同一个 **网关** 页。
-
-- 主机模式：共享名称、共享密码、一键公网隧道，状态可见、日志实时
-- 访客模式：地址、共享名称、连接密码；模型列表与对话来自主机
-- 本地模式：全部留在本机，不开隧道、不需要账号
-- 云端 API 作为第二种对话来源
-- 模型清单带搜索，已安装与可下载分开显示
-- 终端控制台：状态条、隧道实时日志、网关配置命令
-- 对话支持 Markdown、代码复制、思考过程折叠面板
-- 右侧控制栏：模型、推理强度、对话保存/加载/导出、GPU / VRAM / AI / RAM 遥测
-- 应用内 Chromium 预览，也可交回默认浏览器
-- 设置：启动、全屏、显示缩放、平滑滚动、GPU 加速、缓存目录、预览方式
-
-完整列表见 [CHANGELOG.md](CHANGELOG.md)，操作指南见 [docs/OPERATIONS.md](docs/OPERATIONS.md)。
