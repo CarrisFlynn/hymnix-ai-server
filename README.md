@@ -343,6 +343,9 @@ release-1.3.0/  published installer, portable build and release documents
 
 ## Security notes
 
+Windows builds are code signed through the [SignPath Foundation](https://signpath.org/).
+
+
 - The gateway is local-first and requires an API key for model requests and a separate administration key for administrative endpoints.
 - Optional tunnels expose the gateway beyond the local machine; start them deliberately and share credentials only with trusted users.
 - Conversation logs can contain full prompts, responses, file paths, and tool results. Protect the host account and clear or archive records when appropriate.
