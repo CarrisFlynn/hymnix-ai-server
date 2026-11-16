@@ -1,0 +1,20 @@
+const {app,BrowserWindow,net,protocol}=require("electron");
+const {join}=require("node:path");
+const {pathToFileURL}=require("node:url");
+protocol.registerSchemesAsPrivileged([{scheme:"app",privileges:{standard:true,secure:true,supportFetchAPI:true,corsEnabled:true}}]);
+const root=process.cwd();
+const rendererRoot=join(root,"dist/renderer");
+app.whenReady().then(async()=>{
+  protocol.handle("app",(request)=>{const url=new URL(request.url);const rel=decodeURIComponent(url.pathname).replace(/^\/+/,"")||"index.html";return net.fetch(pathToFileURL(join(rendererRoot,rel)).toString());});
+  const win=new BrowserWindow({show:false,width:1200,height:800,webPreferences:{preload:join(root,"dist/preload/preload.js"),contextIsolation:true,sandbox:true,nodeIntegration:false}});
+  await win.loadURL("app://hymnix/index.html");
+  await new Promise(r=>setTimeout(r,1500));
+  const en=await win.webContents.executeJavaScript("JSON.stringify({lang:navigator.language,text:(document.body.innerText||'').slice(0,80)})");
+  console.log("EN "+en);
+  await win.webContents.executeJavaScript("localStorage.setItem('hymnix.lang','zh')");
+  win.webContents.reload();
+  await new Promise(r=>setTimeout(r,1800));
+  const zh=await win.webContents.executeJavaScript("JSON.stringify({text:(document.body.innerText||'').slice(0,90),nav:document.querySelectorAll('.nav-group button').length})");
+  console.log("ZH "+zh);
+  app.exit(0);
+});

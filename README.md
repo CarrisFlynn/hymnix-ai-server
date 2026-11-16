@@ -195,3 +195,49 @@ Hymnix AI is licensed under the [GNU Affero General Public License v3.0](LICENSE
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and the documentation in `docs/` before opening an issue or pull request. Keep changes focused, document user-visible behavior, add regression coverage where practical, and never include credentials or private conversation data.
 
+---
+
+## What is new in 1.3.0 — Hymnix Orbit
+
+**One app, two roles.** The separate client and server builds from 1.0–1.2 are merged: the same app can host your models for friends, or connect to a friend and use their hardware. Hosting and connecting live on one **Gateway** page.
+
+- Host mode: share name, share password, one-click public tunnel with visible state and live log
+- Guest mode: address, share name and connection password; model list and chats come from the host
+- Local mode: everything stays on this machine, no tunnel and no account
+- Cloud API as a second chat source
+- Model catalog with search, separate installed and downloadable lists
+- Terminal console with status strip, live tunnel log and gateway config commands
+- Chat with markdown, code copy and a collapsible thinking-process panel
+- Right control panel: model, reasoning effort, conversation save/load/export, GPU / VRAM / AI / RAM telemetry
+- In-app Chromium preview pane, or open in the default browser
+- Settings for startup, fullscreen, display scaling, smooth scrolling, GPU acceleration, cache folder and preview mode
+
+Full list: [CHANGELOG.md](CHANGELOG.md) · Guide: [docs/OPERATIONS.md](docs/OPERATIONS.md) · Architecture: [docs/PROJECT.md](docs/PROJECT.md)
+
+### Downloads
+
+| Package | File |
+|---|---|
+| Installer | [Hymnix-Orbit-1.3.0-Setup.exe](https://github.com/CarrisFlynn/hymnix-ai-server/releases/download/v1.3.0/Hymnix-Orbit-1.3.0-Setup.exe) |
+| Portable | [Hymnix-Orbit-1.3.0-Portable.exe](https://github.com/CarrisFlynn/hymnix-ai-server/releases/download/v1.3.0/Hymnix-Orbit-1.3.0-Portable.exe) |
+
+![Gateway](docs/images/orbit-1.3.0/gateway.png)
+
+---
+
+## 1.3.0 更新内容 — Hymnix Orbit
+
+**一个应用两种角色。** 1.0–1.2 分开的客户端/服务端包已经合并：同一个应用既能给朋友当模型主机，也能连朋友的机器用他的硬件。主机与连接都在同一个 **网关** 页。
+
+- 主机模式：共享名称、共享密码、一键公网隧道，状态可见、日志实时
+- 访客模式：地址、共享名称、连接密码；模型列表与对话来自主机
+- 本地模式：全部留在本机，不开隧道、不需要账号
+- 云端 API 作为第二种对话来源
+- 模型清单带搜索，已安装与可下载分开显示
+- 终端控制台：状态条、隧道实时日志、网关配置命令
+- 对话支持 Markdown、代码复制、思考过程折叠面板
+- 右侧控制栏：模型、推理强度、对话保存/加载/导出、GPU / VRAM / AI / RAM 遥测
+- 应用内 Chromium 预览，也可交回默认浏览器
+- 设置：启动、全屏、显示缩放、平滑滚动、GPU 加速、缓存目录、预览方式
+
+完整列表见 [CHANGELOG.md](CHANGELOG.md)，操作指南见 [docs/OPERATIONS.md](docs/OPERATIONS.md)。

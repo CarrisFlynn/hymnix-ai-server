@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Schema-checked built-in tools for Hymnix."""
 from __future__ import annotations
-import ast, datetime, ipaddress, json, math, os, platform, socket, stat, time, urllib.error, urllib.parse, urllib.request
+import ast, datetime, hashlib, ipaddress, json, math, os, platform, socket, stat, time, urllib.error, urllib.parse, urllib.request
 from typing import Any
 import http.client
 import ssl
@@ -237,49 +237,138 @@ def builtin_tools() -> list[str]:
     except Exception: pass
     return ["time.now","calc","fs.list","fs.read","fs.stat","sysinfo","web.fetch","repo.tree","repo.search","repo.read"]
 
+def _json_size(value: Any) -> int:
+    try:
+        return len(json.dumps(value, ensure_ascii=False, default=str).encode("utf-8"))
+    except Exception:
+        return MAX_AUDIT_BYTES + 1
+
+
+MAX_CALL_ARGS_BYTES = 64 * 1024
+MAX_AUDIT_BYTES = 8 * 1024
+MAX_AUDIT_DEPTH = 8
+MAX_AUDIT_ITEMS = 100
+MAX_RESULT_BYTES = 256 * 1024
+_SENSITIVE_KEYS = {"api_key", "apikey", "authorization", "token", "secret", "password", "credential", "cookie"}
+
+
+def _redact(value: Any, depth: int = 0) -> Any:
+    if depth >= MAX_AUDIT_DEPTH:
+        return "[depth-limited]"
+    if isinstance(value, dict):
+        result = {}
+        for index, (key, child) in enumerate(value.items()):
+            if index >= MAX_AUDIT_ITEMS:
+                result["_truncated"] = True
+                break
+            name = str(key)[:128]
+            if any(marker == name.casefold().replace("-", "_") or name.casefold().replace("-", "_").endswith("_" + marker) for marker in _SENSITIVE_KEYS):
+                result[name] = "[redacted]"
+            else:
+                result[name] = _redact(child, depth + 1)
+        return result
+    if isinstance(value, (list, tuple)):
+        return [_redact(child, depth + 1) for child in value[:MAX_AUDIT_ITEMS]] + (["[truncated]"] if len(value) > MAX_AUDIT_ITEMS else [])
+    if isinstance(value, str):
+        return value[:2048]
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    return str(value)[:512]
+
+
+def _audit_value(value: Any) -> Any:
+    try:
+        encoded = json.dumps(_redact(value), ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+    except Exception:
+        encoded = repr(type(value).__name__).encode("utf-8")
+    return {"sha256": hashlib.sha256(encoded).hexdigest(), "bytes": len(encoded),
+            "truncated": len(encoded) > MAX_AUDIT_BYTES}
+
+
 def call(name: str, args: dict, *, approve=None) -> dict:
-    start=time.perf_counter(); cid=""
+    start = time.perf_counter()
+    safe_name = str(name)[:128]
+    toolcall = None
+    cid = ""
+    payload = None
+    audit_args = _audit_value(args if isinstance(args, dict) else {})
     try:
-        from hxcore import toolcall
-        cid=toolcall.begin(name,args if isinstance(args,dict) else {},origin="api")
-    except Exception: pass
-    try:
-        if _DISABLED: raise ToolError("tools_disabled")
-        item=_REGISTRY.get(name)
-        if not item: raise ToolError("unknown_tool")
-        invalid=_validate(item["schema"],args)
-        if invalid: raise ToolError(invalid)
         try:
-            from hxcore import approvals
-            command="tool:"+name+" "+json.dumps(args,ensure_ascii=False)
-            decision=approvals.check(command, origin="tool")
-            approvals.record(decision, command)
-            if decision.get("decision")=="deny":
-                payload={"ok":False,"result":None,"error":"denied","decision":decision,"ms":(time.perf_counter()-start)*1000,"id":cid}
-                return payload
-            if decision.get("risk")=="danger" and decision.get("decision")=="ask":
-                if not callable(approve):
-                    payload={"ok":False,"result":None,"error":"needs_approval","decision":decision,"ms":(time.perf_counter()-start)*1000,"id":cid}
-                    return payload
-                if not approve(name,args,decision):
-                    payload={"ok":False,"result":None,"error":"denied","decision":decision,"ms":(time.perf_counter()-start)*1000,"id":cid}
-                    return payload
-        except ImportError:
+            from hxcore import toolcall as _toolcall
+            toolcall = _toolcall
+            cid = toolcall.begin(safe_name, audit_args, origin="api")
+        except Exception:
+            toolcall = None
+        try:
+            if not isinstance(args, dict):
+                raise ToolError("invalid_arguments")
+            if _json_size(args) > MAX_CALL_ARGS_BYTES:
+                raise ToolError("arguments_too_large")
+            if _DISABLED:
+                raise ToolError("tools_disabled")
+            item = _REGISTRY.get(name)
+            if not item:
+                raise ToolError("unknown_tool")
+            invalid = _validate(item["schema"], args)
+            if invalid:
+                raise ToolError(invalid)
+            try:
+                from hxcore import approvals
+                command = "tool:" + safe_name + " " + json.dumps(_audit_value(args), ensure_ascii=False, sort_keys=True)
+                decision = approvals.check(command, origin="tool")
+                approvals.record(decision, command)
+                if decision.get("decision") == "deny":
+                    raise ToolError("denied")
+                if decision.get("risk") == "danger" and decision.get("decision") == "ask":
+                    if not callable(approve):
+                        raise ToolError("needs_approval")
+                    if not approve(name, args, decision):
+                        raise ToolError("denied")
+            except ImportError:
+                pass
+            if item["danger"] and (not callable(approve) or not approve(name, args, {})):
+                raise ToolError("approval_required")
+            result = item["handler"](args)
+            result_size = _json_size(result)
+            if result_size > MAX_RESULT_BYTES:
+                result_digest = hashlib.sha256(json.dumps(result, ensure_ascii=False, default=str).encode("utf-8")).hexdigest()
+                payload = {"ok": False, "result": None, "error": "result_too_large", "ms": (time.perf_counter() - start) * 1000, "id": cid}
+                audit_result = {"truncated": True, "sha256": result_digest, "bytes": result_size}
+            else:
+                payload = {"ok": True, "result": result, "error": "", "ms": (time.perf_counter() - start) * 1000, "id": cid}
+                audit_result = _audit_value(result)
+        except Exception as exc:
+            error = str(exc) if isinstance(exc, ToolError) else "tool_failed"
+            payload = {"ok": False, "result": None, "error": error[:256], "ms": (time.perf_counter() - start) * 1000, "id": cid}
+            audit_result = None
+        if toolcall is not None:
+            try:
+                toolcall.end(cid, payload["ok"], result=audit_result, error=payload["error"], ms=payload["ms"])
+            except Exception:
+                pass
+        try:
+            from hxcore import logindex
+            logindex.record("tools", "call", {"id": cid, "tool": safe_name, "args": audit_args,
+                              "ok": payload["ok"], "result": audit_result,
+                              "error": payload["error"], "ms": payload["ms"]})
+        except Exception:
             pass
-        if item["danger"] and (not callable(approve) or not approve(name,args,{})): raise ToolError("approval_required")
-        result=item["handler"](args)
-        payload={"ok":True,"result":result,"error":"","ms":(time.perf_counter()-start)*1000,"id":cid}
-    except Exception as exc:
-        payload={"ok":False,"result":None,"error":str(exc) or type(exc).__name__,"ms":(time.perf_counter()-start)*1000,"id":cid}
-    try:
-        from hxcore import toolcall
-        toolcall.end(cid,payload["ok"],result=payload["result"],error=payload["error"],ms=payload["ms"])
-    except Exception: pass
-    try:
-        from hxcore import logindex
-        logindex.record("tools","call",{"id":cid,"tool":name,"args":args,"ok":payload["ok"],"result":payload["result"],"error":payload["error"],"ms":payload["ms"]})
-    except Exception: pass
-    return payload
+        return payload
+    finally:
+        if payload is None:
+            payload = {"ok": False, "result": None, "error": "tool_failed", "ms": (time.perf_counter() - start) * 1000, "id": cid}
+        # The finalizer is a last resort for failures in audit or bookkeeping paths.
+        if toolcall is not None:
+            try:
+                events = toolcall.timeline(2000)
+                if not any(e.get("id") == cid and e.get("phase") == "end" for e in events):
+                    toolcall.end(cid, payload["ok"], result=None, error=payload["error"], ms=payload["ms"])
+            except Exception:
+                try:
+                    toolcall.end(cid, payload["ok"], result=None, error=payload["error"], ms=payload["ms"])
+                except Exception:
+                    pass
+
 
 def off() -> None:
     global _DISABLED

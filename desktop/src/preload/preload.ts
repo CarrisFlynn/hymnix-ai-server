@@ -1,0 +1,94 @@
+import { contextBridge, ipcRenderer } from "electron";
+import type { NetworkApi, AdminClientsResponse, AdminErrorRecord, AdminHistoryQuery, AdminHistoryResponse, AdminStatus, ChatDelta, DesktopApi, FileReadRequest, FileReadResponse, FileSearchRequest, FileSearchResponse, FileTreeRequest, FileTreeResponse, LocalModel, StreamChatInput, TerminalCommandRequest, TerminalCommandResult, TerminalCompletion, TerminalOutputEvent, ToolCallRequest, ToolCallResponse, ToolsResponse, ApprovalListResponse, ApprovalDecisionResponse, WorkspaceRoot } from "../shared/protocol";
+
+// Main owns AbortController, api/tags, v1/chat/completions, and Authorization handling; preload only forwards typed IPC events.
+const channels = { toolsList: "tools:list", toolsCall: "tools:call", toolsPending: "tools:pending", toolsApprove: "tools:approve", toolsDeny: "tools:deny", health: "gateway:health", models: "gateway:models", stream: "gateway:stream", cancel: "gateway:cancel", delta: "gateway:delta", complete: "gateway:complete", adminHistory: "gateway:admin-history", adminStatus: "gateway:admin-status", adminErrors: "gateway:admin-errors", adminClients: "gateway:admin-clients" } as const;
+const api: DesktopApi & { adminHistory: (adminKey: string, query?: AdminHistoryQuery) => Promise<AdminHistoryResponse>; gateway: DesktopApi["gateway"] & { adminErrors: (adminKey: string, limit?: number) => Promise<AdminErrorRecord[]>; adminClients: (adminKey: string) => Promise<AdminClientsResponse> } } = {
+  adminHistory: (adminKey, query) => ipcRenderer.invoke(channels.adminHistory, adminKey, query),
+  workspace: {
+    choose: (): Promise<WorkspaceRoot | null> => ipcRenderer.invoke("files:choose-root"),
+    current: (): Promise<WorkspaceRoot | null> => ipcRenderer.invoke("files:current"),
+  },
+  window: { control: (action: "minimize" | "maximize" | "close") => ipcRenderer.invoke("window:control", action) },
+  github: { stars: () => ipcRenderer.invoke("github:stars") },
+  settings: {
+    get: () => ipcRenderer.invoke("settings:get"),
+    set: (patch: Record<string, unknown>) => ipcRenderer.invoke("settings:set", patch),
+  },
+  preview: {
+    open: (target: string) => ipcRenderer.invoke("preview:open", { target }),
+    close: () => ipcRenderer.invoke("preview:close"),
+    resize: () => ipcRenderer.invoke("preview:resize"),
+  },
+  ollama: { control: (action: "start" | "stop" | "status") => ipcRenderer.invoke("ollama:control", action) },
+  config: {
+    get: () => ipcRenderer.invoke("config:get"),
+    set: (values: Record<string, unknown>) => ipcRenderer.invoke("config:set", values),
+  },
+  cloud: {
+    get: () => ipcRenderer.invoke("cloud:get"),
+    save: (payload: Record<string, unknown>) => ipcRenderer.invoke("cloud:save", payload),
+    test: () => ipcRenderer.invoke("cloud:test"),
+  },
+  system: { stats: () => ipcRenderer.invoke("system:stats"), openExternal: (url: string) => ipcRenderer.invoke("shell:open", url) },
+  network: {
+    connect: (baseUrl: string, name: string, password: string) => ipcRenderer.invoke("network:connect", { baseUrl, name, password }),
+    info: () => ipcRenderer.invoke("network:info"),
+    tunnel: (action: "start" | "stop" | "restart") => ipcRenderer.invoke("network:tunnel", action),
+    tunnelStatus: () => ipcRenderer.invoke("network:tunnelStatus"),
+    saveIdentity: (payload: Record<string, unknown>) => ipcRenderer.invoke("network:save", payload),
+    get: (baseUrl: string, path: string, token?: string) => ipcRenderer.invoke("network:get", { baseUrl, path, token }),
+  } as NetworkApi,
+  models: {
+    list: (): Promise<{ models: LocalModel[] }> => ipcRenderer.invoke("models:list"),
+    pull: (model: string) => ipcRenderer.invoke("models:pull", model),
+    remove: (model: string) => ipcRenderer.invoke("models:delete", model),
+    start: (model: string) => ipcRenderer.invoke("models:start", model),
+    stop: (model: string) => ipcRenderer.invoke("models:stop", model),
+  },
+  terminal: {
+    start: (request: TerminalCommandRequest): Promise<TerminalCommandResult> => ipcRenderer.invoke("terminal:start", request),
+    cancel: (id: string) => { ipcRenderer.send("terminal:cancel", id); },
+    unsubscribe: (id: string) => { ipcRenderer.send("terminal:cancel", id); },
+    onOutput: (listener: (event: TerminalOutputEvent) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, payload: TerminalOutputEvent) => listener(payload);
+      ipcRenderer.on("terminal:output", handler);
+      return () => { ipcRenderer.removeListener("terminal:output", handler); };
+    },
+    onComplete: (listener: (event: TerminalCompletion) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, payload: TerminalCompletion) => listener(payload);
+      ipcRenderer.on("terminal:complete", handler);
+      return () => { ipcRenderer.removeListener("terminal:complete", handler); };
+    },
+  },
+  tools: {
+    list: (apiKey?: string): Promise<ToolsResponse> => ipcRenderer.invoke(channels.toolsList, apiKey),
+    call: (request: ToolCallRequest): Promise<ToolCallResponse> => ipcRenderer.invoke(channels.toolsCall, request),
+    pending: (): Promise<ApprovalListResponse> => ipcRenderer.invoke(channels.toolsPending),
+    approve: (id: string): Promise<ApprovalDecisionResponse> => ipcRenderer.invoke(channels.toolsApprove, id),
+    deny: (id: string): Promise<ApprovalDecisionResponse> => ipcRenderer.invoke(channels.toolsDeny, id),
+  },
+  files: {
+    tree: (request: FileTreeRequest): Promise<FileTreeResponse> => ipcRenderer.invoke("files:tree", request),
+    search: (request: FileSearchRequest): Promise<FileSearchResponse> => ipcRenderer.invoke("files:search", request),
+    read: (request: FileReadRequest): Promise<FileReadResponse> => ipcRenderer.invoke("files:read", request),
+  },
+  gateway: {
+    adminStatus: (adminKey: string): Promise<AdminStatus> => ipcRenderer.invoke(channels.adminStatus, adminKey),
+    adminErrors: (adminKey: string, limit?: number): Promise<AdminErrorRecord[]> => ipcRenderer.invoke(channels.adminErrors, adminKey, limit),
+    adminClients: (adminKey: string): Promise<AdminClientsResponse> => ipcRenderer.invoke(channels.adminClients, adminKey),
+  health: () => ipcRenderer.invoke(channels.health),
+  models: (apiKey) => ipcRenderer.invoke(channels.models, apiKey),
+  cancelChat: (requestId) => { ipcRenderer.send(channels.cancel, requestId); },
+  streamChat(input: StreamChatInput) {
+    return new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const finish = (error?: Error) => { if (settled) return; settled = true; ipcRenderer.removeListener(channels.delta, onDelta); ipcRenderer.removeListener(channels.complete, onComplete); if (error) reject(error); else resolve(); };
+      const onDelta = (_event: Electron.IpcRendererEvent, message: { requestId: string; delta: ChatDelta }) => { if (message.requestId === input.requestId) input.onDelta(message.delta); };
+      const onComplete = (_event: Electron.IpcRendererEvent, message: { requestId: string; error?: {status?: number; code?: string; message: string} }) => { if (message.requestId === input.requestId) { if (message.error) { const error = new Error(message.error.message) as Error & {status?: number; code?: string}; error.status = message.error.status; error.code = message.error.code; finish(error); } else finish(); } };
+      ipcRenderer.on(channels.delta, onDelta); ipcRenderer.on(channels.complete, onComplete);
+      ipcRenderer.invoke(channels.stream, { requestId: input.requestId, baseUrl: input.baseUrl, apiKey: input.apiKey, model: input.model, messages: input.messages }).catch((reason: unknown) => finish(reason instanceof Error ? reason : new Error(String(reason))));
+    });
+  }
+} };
+contextBridge.exposeInMainWorld("hymnix", api);

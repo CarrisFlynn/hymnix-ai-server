@@ -1,0 +1,12 @@
+import fs from "node:fs";
+const file="src/renderer/i18n.ts";
+const src=fs.readFileSync(file,"utf8");
+const start=src.indexOf("export const zh");
+const open=src.indexOf("{",start);
+const end=src.indexOf("\n};",open);
+const obj=eval("({" + src.slice(open+1,end) + "})");
+const extra={"Support":"赞助","Sponsor":"赞助","Sponsor the project or send feedback.":"赞助项目或发送反馈。","Open sponsor page":"打开赞助页","Feedback":"反馈","Studio":"工作室","Private":"私人","Welcome":"欢迎","Welcome to Hymnix Orbit":"欢迎使用 Hymnix Orbit","Choose your language, then connect to the local gateway or a remote server.":"选择语言，然后连接本地网关或远程服务器。","Connection mode":"连接方式","Local gateway":"本地网关","Remote server":"远程服务器","Server address":"服务器地址","Access key":"访问密钥","Remote connection is experimental; the local gateway is still used for health and models.":"远程连接为实验性功能；健康检查与模型列表仍走本地网关。","Account":"账户","Sign in":"登录","Reserved":"预留","Reserved for a future release":"为后续版本预留","Start using Hymnix Orbit":"开始使用 Hymnix Orbit","Account & sign-in":"账户与登录","Local mode":"本地模式","Connection settings":"连接设置","Test connection":"检测连接","Data folder":"数据目录","Updates":"更新","Check for updates":"检查更新","About":"关于","Help & sponsor":"帮助与赞助","Start tunnel":"启动隧道","Copy address":"复制地址","Open monitor":"打开监控","You are running Hymnix Orbit 1.3.0.":"当前运行的是 Hymnix Orbit 1.3.0。","Gateway ready. Local models are listed on the Models page.":"网关已就绪，本地模型列表见“模型”页。","SUPPORT":"支持","This capability is not wired to a real workflow yet.":"该能力尚未接入真实工作流。"};
+for(const k of Object.keys(extra)) obj[k]=extra[k];
+const keys=Object.keys(obj).sort();
+fs.writeFileSync(file, src.slice(0,open+1)+"\n"+keys.map(k=>"  "+JSON.stringify(k)+": "+JSON.stringify(obj[k])).join(",\n")+src.slice(end));
+console.log("keys="+keys.length);

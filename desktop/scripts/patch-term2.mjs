@@ -1,0 +1,10 @@
+import fs from "node:fs";
+const file="src/renderer/main.tsx";
+let s=fs.readFileSync(file,"utf8");
+s=s.replace('const termId = useRef("");','const termId = useRef("");
+  const termHistory = useRef<string[]>([]);
+  const termCursor = useRef(0);');
+s=s.replace('push("sys", "$ " + command); setTermCmd("");','push("sys", "$ " + command); setTermCmd("");
+    termHistory.current = [...termHistory.current, command]; termCursor.current = termHistory.current.length;');
+fs.writeFileSync(file,s);
+console.log("refs="+s.includes("termHistory"));

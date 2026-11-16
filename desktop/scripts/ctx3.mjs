@@ -1,0 +1,11 @@
+import fs from "node:fs";
+const s=fs.readFileSync("src/renderer/i18n.ts","utf8");
+const start=s.indexOf("export const zh");
+const open=s.indexOf("{",start);
+const end=s.indexOf("\n};",open);
+const obj=eval("({" + s.slice(open+1,end) + "})");
+console.log("HAS_TEMPLATE=" + !!obj["Start with {workspace} or choose a prompt."]);
+console.log("START_KEYS=" + JSON.stringify(Object.keys(obj).filter(k=>k.indexOf("Start")>=0)));
+const m=fs.readFileSync("src/renderer/main.tsx","utf8");
+const i=m.indexOf("Gateway chat and model discovery");
+console.log("CTX=" + m.slice(i-160,i+260).replace(/\n/g," "));

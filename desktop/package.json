@@ -1,0 +1,102 @@
+{
+  "name": "hymnix-desktop",
+  "version": "1.3.0",
+  "private": true,
+  "description": "Hymnix Orbit - Hymnix scheduler with local gateway connectivity: orchestrate local models, serve a private OpenAI-compatible endpoint, keep every session on your machine.",
+  "author": {
+    "name": "Hymnix Studio"
+  },
+  "main": "dist/main/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && vite build && node scripts/fix-renderer-html.mjs dist/renderer/index.html",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node tests/protocol.test.mjs",
+    "check": "pnpm typecheck && pnpm test && pnpm build",
+    "dist": "pnpm build && electron-builder --win --x64",
+    "cert:selfsigned": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/make-self-signed-cert.ps1",
+    "dist:sign": "electron-builder --win --x64"
+  },
+  "dependencies": {
+    "react": "latest",
+    "react-dom": "latest"
+  },
+  "build": {
+    "appId": "com.hymnix.orbit",
+    "productName": "Hymnix Orbit",
+    "copyright": "Copyright Hymnix Studio",
+    "directories": {
+      "output": "../release",
+      "buildResources": "build-resources"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../cloudflared.exe",
+        "to": "cloudflared.exe"
+      },
+      {
+        "from": "../hymnix-server-1.3.0-x64.exe",
+        "to": "backend-gateway-headless.exe"
+      },
+      {
+        "from": "../assets/hymnix-red-white-star.png",
+        "to": "assets/hymnix-red-white-star.png"
+      },
+      {
+        "from": "../engine-java/build/hymnix-engine.jar",
+        "to": "engine-java/build/hymnix-engine.jar"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "../server/assets/hymnix-red-white-star.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Hymnix Orbit",
+      "artifactName": "Hymnix-Orbit-1.3.0-Setup.${ext}",
+      "multiLanguageInstaller": true,
+      "installerLanguages": [
+        "en_US",
+        "zh_CN"
+      ],
+      "displayLanguageSelector": true,
+      "uninstallDisplayName": "Hymnix Orbit 1.3.0"
+    },
+    "portable": {
+      "artifactName": "Hymnix-Orbit-1.3.0-Portable.${ext}"
+    }
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "latest",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "typescript": "latest",
+    "vite": "latest",
+    "electron": "latest",
+    "electron-builder": "latest"
+  }
+}

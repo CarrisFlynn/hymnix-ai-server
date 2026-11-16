@@ -1,0 +1,13 @@
+import fs from "node:fs";
+const file = "src/renderer/i18n.ts";
+const src = fs.readFileSync(file, "utf8");
+const start = src.indexOf("export const zh: Record<string, string> = {");
+const open = src.indexOf("{", start);
+const end = src.indexOf("\n};", open);
+const obj = eval("({" + src.slice(open + 1, end) + "})");
+const extra = {"Start with":"从","or choose a prompt.":"开始，或选择一个提示。","Choose a workspace to browse files.":"选择一个工作区以浏览文件。","Not selected":"未选择","DEFAULT WORKSPACE":"默认工作区","CAMELLIA UI SPRINT":"茶花界面冲刺","History may contain sensitive request metadata":"历史可能包含敏感的请求元数据","user agents":"用户代理","IP addresses":"IP 地址","prompts and responses. Keep the admin key private.":"提示词与回复。请勿泄露管理员密钥。","Protected status is summarized only. Sensitive client details":"受保护状态仅提供摘要。敏感客户端详情","recent requests":"最近请求","messages":"消息","Git":"Git","Connected":"已连接","Refresh":"刷新"};
+for (const k of Object.keys(extra)) if (!obj[k]) obj[k] = extra[k];
+const keys = Object.keys(obj).sort();
+const rendered = keys.map((k) => "  " + JSON.stringify(k) + ": " + JSON.stringify(obj[k])).join(",\n");
+fs.writeFileSync(file, src.slice(0, open + 1) + "\n" + rendered + src.slice(end));
+console.log("keys=" + keys.length);

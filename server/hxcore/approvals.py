@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
-import json, os, re, threading, time
+import hashlib, json, os, re, threading, time, uuid
 from hxcore.paths import data_dir, logs_dir, ensure_dir, append_jsonl
 MODES=("ask","readonly","auto")
 _RULES=[
@@ -62,6 +62,106 @@ def approve_retry(tool, args, origin="tool"):
    return {"ok":decision.get("decision")=="allow","decision":decision}
   except Exception as exc:
    return {"ok":False,"decision":{"decision":"deny","risk":"unknown","reasons":[str(exc)],"mode":get_mode(),"rule":"retry_error"}}
+
+
+
+# Pending approvals are process-local: a restart invalidates every grant.
+_PENDING_MAX = 256
+_PENDING_TTL = 60.0
+_PENDING = {}
+_SECRET_KEYS = {"api_key", "apikey", "authorization", "password", "secret", "token", "access_token", "refresh_token", "private_key", "admin_key"}
+
+def _canonical_args(args):
+    return json.dumps(args if isinstance(args, dict) else {}, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+
+def args_digest(args):
+    return hashlib.sha256(_canonical_args(args).encode("utf-8")).hexdigest()
+
+def _redact(value, key=""):
+    lowered = key.lower().replace("-", "_")
+    if lowered in _SECRET_KEYS or any(part in lowered for part in ("password", "token", "secret", "api_key", "authorization")):
+        return "[REDACTED]"
+    if isinstance(value, dict):
+        return {str(k): _redact(v, str(k)) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_redact(v, key) for v in value[:64]]
+    if isinstance(value, tuple):
+        return [_redact(v, key) for v in value[:64]]
+    if isinstance(value, str):
+        return value[:512]
+    return value
+
+def redacted_args(args):
+    return _redact(args if isinstance(args, dict) else {})
+
+def _purge_pending(now=None):
+    now = time.time() if now is None else float(now)
+    expired = [key for key, row in _PENDING.items() if row.get("expires_at", 0) <= now]
+    for key in expired:
+        del _PENDING[key]
+    if len(_PENDING) > _PENDING_MAX:
+        oldest = sorted(_PENDING, key=lambda key: _PENDING[key].get("created_at", 0))[:-_PENDING_MAX]
+        for key in oldest:
+            del _PENDING[key]
+
+def create_pending(request_id, tool, args, *, decision=None, ttl=_PENDING_TTL):
+    """Create a one-shot approval bound to request, tool, and exact args."""
+    request_id = str(request_id or "").strip()
+    tool = str(tool or "").strip()
+    if not request_id or len(request_id) > 128 or not tool or len(tool) > 128:
+        return {"ok": False, "error": "invalid_request"}
+    try:
+        ttl = float(ttl)
+    except (TypeError, ValueError):
+        ttl = _PENDING_TTL
+    ttl = max(1.0, min(ttl, _PENDING_TTL))
+    now = time.time()
+    digest = args_digest(args)
+    with _LOCK:
+        _purge_pending(now)
+        for row in _PENDING.values():
+            if row["request_id"] == request_id and row["tool"] == tool and row["args_digest"] == digest:
+                return {"ok": False, "error": "conflict", "approval_id": row["approval_id"]}
+        approval_id = uuid.uuid4().hex
+        row = {"approval_id": approval_id, "request_id": request_id, "tool": tool,
+               "args_digest": digest, "args_redacted": redacted_args(args),
+               "created_at": now, "expires_at": now + ttl, "state": "pending",
+               "decision": decision if isinstance(decision, dict) else None}
+        _PENDING[approval_id] = row
+        _purge_pending(now)
+        return {"ok": True, **row}
+
+def get_pending(approval_id):
+    """Return a redacted pending record, or a stable stale/unknown error."""
+    with _LOCK:
+        _purge_pending()
+        row = _PENDING.get(str(approval_id or ""))
+        if not row:
+            return {"ok": False, "error": "stale_or_unknown"}
+        return {"ok": True, **row}
+
+def consume_pending(approval_id, request_id, tool, args, decision):
+    """Atomically consume one approval after identity and policy checks."""
+    key = str(approval_id or "")
+    request_id = str(request_id or "")
+    tool = str(tool or "")
+    digest = args_digest(args)
+    with _LOCK:
+        row = _PENDING.get(key)
+        if not row:
+            return {"ok": False, "error": "stale_or_replayed"}
+        if row["expires_at"] <= time.time():
+            del _PENDING[key]
+            return {"ok": False, "error": "stale"}
+        if row["request_id"] != request_id or row["tool"] != tool or row["args_digest"] != digest:
+            return {"ok": False, "error": "conflict"}
+        if decision != "allow":
+            del _PENDING[key]
+            return {"ok": False, "error": "denied", "approval_id": key}
+        del _PENDING[key]
+        return {"ok": True, "approval_id": key, "request_id": request_id,
+                "tool": tool, "args_digest": digest, "state": "consumed"}
+
 
 def rules():
  return [{"id":i,"pattern":p,"risk":r,"note":n} for i,p,r,n in _RULES]

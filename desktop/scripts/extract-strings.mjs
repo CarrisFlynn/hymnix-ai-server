@@ -1,0 +1,10 @@
+import fs from "node:fs";
+const src = fs.readFileSync("src/renderer/main.tsx", "utf8");
+const found = new Set();
+const textRe = />\s*([A-Za-z][A-Za-z0-9 ,.:/?!+&'()-]{2,70})\s*</g;
+for (const m of src.matchAll(textRe)) found.add(m[1].trim());
+const attrRe = /(placeholder|title|aria-label)="([A-Za-z][^"]{2,60})"/g;
+for (const m of src.matchAll(attrRe)) found.add(m[2].trim());
+const labelRe = /<label[^>]*>([A-Za-z][^<{]{2,60})<\/label>/g;
+for (const m of src.matchAll(labelRe)) found.add(m[1].trim());
+console.log([...found].sort().join("\n"));

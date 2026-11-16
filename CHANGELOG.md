@@ -1,130 +1,94 @@
 # Changelog
 
-All notable changes to this project are documented here.
+Only user-visible changes are listed. Internal refactors, test scaffolding and machine-specific paths are intentionally omitted.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project follows [Semantic Versioning](https://semver.org/).
-
-**English** | [简体中文](CHANGELOG.zh-CN.md)
-
-## [1.2.1] - 2026-11-15
-
-### Fixed
-
-- **Client replies displayed as mojibake**: responses without a `charset` (notably `text/event-stream`) were decoded as ISO-8859-1. The client now forces UTF-8 for JSON and streamed replies, and every server-side `subprocess` call decodes output as UTF-8 with `errors="replace"`.
-- **Sidebar opening the wrong page**: the navigation list was missing the Models entry, shifting every page after it by one. Navigation is now keyed by page id instead of position, so a label can never open another page.
-- **Missing window and taskbar icon**: icon lookup now falls back to `assets/icon.ico` for both source runs and packaged builds.
-- **Oversized terminal typography**: removed a duplicated font scaling factor that multiplied every size a second time on high-DPI displays, and restored the compact 1.2.0 console metrics and toolbar layout.
-- **Truncated chat history**: history now streams the whole file, keeps chronological order, and supports search plus JSON/Markdown export.
-- **Lost tool and reply trails**: terminal traces are persisted and de-duplicated across restarts.
-- **Updater race on channel switch**: a download started for one channel can no longer be applied after the channel changes; every package is verified before install.
-- **Split data directory**: server data now resolves through a single data root instead of drifting between the bundle and the user profile.
+## 1.3.0 — 2026-11-17
 
 ### Added
 
-- Terminal themes (neon / matrix / amber) with ANSI SGR rendering and per-level log filtering.
-- ARM64-aware build matrix with per-architecture guards and automatic `cloudflared` acquisition.
-- Approval-gated tool execution with grant validation, trusted plugin installation and plugin provenance.
-- Request metrics, batch rollback and resilient downloads in the usage and update views.
-- Full five-language coverage across the nine redesigned pages.
+- Integrated host/guest mode: one app can host a model server for friends or connect to a friend’s machine.
+- Share identity: host name, share password, and a public tunnel with a one-click start, restart and ready state.
+- Connection screen: address, share name and connection password; model list and chat follow the connected machine.
+- Cloud API as a second chat source, with saved endpoint, model and key (key is masked after saving).
+- Downloadable model catalog (30+ entries) with search, next to the installed model list.
+- Terminal console: status strip, live tunnel log, and commands for status, models, loading, tunnel control, hardware info and gateway config.
+- Chat: markdown rendering, code blocks with copy, and a collapsible thinking-process panel for reasoning models.
+- Right control panel: model picker, reasoning effort, conversation save/load/export, GPU, VRAM, AI and RAM telemetry.
+- In-app preview pane (Chromium) for local files and URLs, or open in the default browser instead.
+- Settings: beta channel flag, run at startup, fullscreen start, display scaling, smooth scrolling, GPU acceleration, cache location and preview mode.
+- Star banner linking to the repository.
 
 ### Changed
 
-- Packaging artefacts are versioned and architecture-tagged: `hymnix-client-1.2.1-x64.exe`, `hymnix-server-1.2.1-x64.exe`.
-
-## [1.2.0] - 2026-11-06
-
-### Added
-
-- OCR integration with local engine availability detection, plus file-tree browsing, repository search, and hunk-based diff preview, apply, and rollback.
-- A plugin kernel with manifests, permission allowlists, package validation, lifecycle controls, and bounded execution.
-- Built-in tools with schema validation, safer filesystem boundaries, and MCP stdio/HTTP transports.
-- Multi-session history, context compression, conversation search, and backup-before-delete behavior.
-- Approval workflows for sensitive commands, tools, and plugin actions.
-- Usage views for tokens, latency, hardware signals, and estimated cost, with cloud usage reconciliation.
-- Git proxy configuration, update channels, and release-preparation workflows.
-- Improved chat cards, terminal console, and long-list rendering.
-
-### Changed
-
-- Expanded the desktop workflow with dedicated pages for files, diffs, OCR, tools, approvals, usage, and session history.
-- Added upstream error normalization and clearer offline behavior for optional cloud integrations.
-- Strengthened tool and repository access boundaries, network checks, and plugin package handling.
-- Full English coverage across every page, dialog and status line; all screenshots and docs are English-first with a Chinese mirror.
+- Window uses a custom title bar; the native menu bar is removed.
+- Gateway tab is now a first-class page instead of being buried in settings.
+- History shows saved conversations rather than gateway request logs.
+- The “Logs” page was replaced by this changelog.
+- Language switching now also covers theme names and settings labels.
 
 ### Fixed
 
-- Preserved system instructions while compressing long contexts.
-- Prevented unsafe or undeclared tool arguments and blocked private-network/loopback destinations in guarded tool requests.
-- Improved session cleanup safety by backing up data before deletion.
+- Enter sends the message; Shift+Enter inserts a newline.
+- The model no longer receives an injected timestamp, so a plain greeting is answered as a greeting.
+- The tunnel cannot start without a share password, and its state stays consistent with the buttons.
+- Ollama can be started from the UI when the model service is offline.
+- Status dots render at the intended size.
+- Sponsor and mail links open correctly, and e-mail addresses copy to the clipboard.
 
-## [1.1.0] - 2026-11-05
+### Removed
 
-### Added
+- Empty placeholder pages (projects, files, tools, approvals, plugins) are no longer in the navigation.
+- The unused settings tab strip was removed.
 
-- **Terminal console** - a dark, dashboard-style terminal tab: live clock, signal
-  waveform, LINK / TUN / PROC status chips, a colour-coded log stream, a telemetry
-  bar and a working command line with history, tab completion and a confirmation
-  step for destructive operations.
-- **19 terminal commands** - `help`, `status`, `version`, `models`, `model <name>`,
-  `sharemodel <name>`, `config get|set`, `path`, `tunnel on|off|restart|status`,
-  `quota <n>`, `billing on|off`, `lang <code>`, `service start|stop|restart`,
-  `hardware`, `export [file]`, `history`, `logtail`, `clear`, `ps`.
-  Full reference in `docs/terminal-commands.md` and `help` inside the app.
-- **Tunnel details in the terminal tab** - status, public URL, copy / open
-  buttons, QR code for phones, tunnel engine switch, custom ngrok domain and the
-  latest tunnel log lines, collapsible.
-- **One-click updates** - checks the release, shows the notes, downloads with a
-  progress bar, verifies SHA-256 and restarts into the new build without
-  overwriting the running executable.
-- **Five-language interface** - 简体中文, English, Français, Русский, Español, with a
-  language grid on the welcome screen and a language command in the terminal.
-- **DPI-aware window** - the window follows the monitor scale and stays inside the
-  usable desktop area, with clean text at 125% / 150% / 200%.
+## 1.2.0
 
-### Changed
+- 17 pages in a single window, bubble chat with avatars, code copy, terminal console with status strips.
+- Five languages, 418 translation keys.
 
-- Flat visual system: consistent radii and 1 px borders, no raised default controls.
-- Page transitions: smooth 280 ms ease-out; the first paint of a page skips the
-  animation so nothing jumps on entry.
-- Smaller text uses a single UI font family on Windows.
-- Sidebar: brand icon, group headings and a three-line status block with state dots.
-- Faster cold start (about 2.0 s -> 0.7 s).
+## 1.1.0
 
-### Fixed
+- First public build with the local gateway and local model support.
 
-- Plugins and sponsor pages no longer reflow on first paint.
-- Terminal output stays inside its own tab instead of overflowing the window.
-- The window no longer opens maximised by default; the welcome screen keeps its
-  buttons visible in every language.
-- Update checks pick the server build automatically.
+---
 
-## [1.0.0] - 2026-11-05
+# 更新日志（中文）
 
-### Added
+只列用户能感知的改动；内部重构、测试脚手架和本机路径不在此列出。
 
-- Local AI gateway with an OpenAI-compatible API (`/v1/chat/completions`)
-- Ollama passthrough endpoints (`/api/chat`, `/api/tags`)
-- On-demand Cloudflare Tunnel and ngrok support
-- Desktop server console with terminal trace and request monitor
-- Idle model unloading after 60 seconds (configurable) to free VRAM
-- Client compatibility modes: `auto`, `openai`, `text_tools`, `plain`, `json_only`
-- Tool-calling support for OpenAI-style clients
-- Desktop client with configurable endpoint, API key and model
-- Language switch for the client and the server console
-- Data stored in `%LOCALAPPDATA%\Hymnix` (Microsoft Store ready)
-- On-demand `cloudflared.exe` download instead of bundling the binary
-- MSIX manifest, Store assets and a privacy policy
+## 1.3.0 — 2026-11-17
 
-### Security
+### 新增
 
-- Random API and admin keys generated on first run
-- Admin endpoints protected by a separate key
-- Structured error codes for 401, 429 and 5xx responses
+- 主机 / 访客一体化：同一个应用既能给朋友当模型服务端，也能连朋友的机器。
+- 共享身份：共享名称、共享密码，以及一键启动、重启、显示就绪状态的公网隧道。
+- 连接界面：地址、共享名称、连接密码；连上后模型列表和对话都跟着对方机器走。
+- 云端 API 作为第二种对话来源，可保存地址、模型和密钥（保存后密钥打码）。
+- 可下载模型清单（30+ 条）带搜索，与已安装列表分开显示。
+- 终端控制台：状态条、隧道实时日志，以及 status、models、加载、隧道控制、硬件信息、网关配置等命令。
+- 对话：Markdown 渲染、代码块复制、推理模型的思考过程折叠面板。
+- 右侧控制栏：模型选择、推理强度、对话保存/加载/导出、GPU / VRAM / AI / RAM 遥测。
+- 应用内预览（Chromium）可打开本地文件与网址，也可以改为默认浏览器打开。
+- 设置：客户端测试标志、开机启动、全屏启动、显示缩放、平滑滚动、GPU 加速、缓存位置、预览方式。
+- 指向仓库的 Star 横幅。
 
-[Unreleased]: https://github.com/CarrisFlynn/hymnix-ai-server/compare/v1.2.1...HEAD
-[1.2.1]: https://github.com/CarrisFlynn/hymnix-ai-server/releases/tag/v1.2.1
-[1.2.0]: https://github.com/CarrisFlynn/hymnix-ai-server/releases/tag/v1.2.0
-[1.1.0]: https://github.com/CarrisFlynn/hymnix-ai-server/releases/tag/v1.1.0
-[1.0.0]: https://github.com/CarrisFlynn/hymnix-ai-server/releases/tag/v1.0.0
+### 改进
 
+- 窗口改为自绘标题栏，去掉原生菜单栏。
+- 网关连接从设置里独立出来，成为一级页面。
+- 历史页改为保存的对话记录，不再是网关请求日志。
+- 原来的“日志”页替换为本更新日志。
+- 切换语言时，主题名称与设置标签也会跟着切换。
+
+### 修复
+
+- 回车发送，Shift+回车换行。
+- 不再给模型注入时间戳，问“你好”就只是打招呼。
+- 没有共享密码时隧道拒绝启动，按钮状态与实际状态一致。
+- 模型服务未启动时可从界面一键启动 Ollama。
+- 状态圆点尺寸恢复正常。
+- 赞助与邮件链接可正常打开，邮箱地址点击复制。
+
+### 移除
+
+- 导航里删掉空占位页（项目、文件、工具、审批、插件）。
+- 删掉没有实际作用的设置标签条。
