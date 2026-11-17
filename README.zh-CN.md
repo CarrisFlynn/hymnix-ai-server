@@ -1,4 +1,4 @@
-# Hymnix AI
+# Hymnix Orbit
 
 [English](README.md) | **简体中文**
 
@@ -9,7 +9,7 @@ Hymnix 将 Ollama 兼容模型接入一套完整的桌面工作流：对话、�
 ![许可证](https://img.shields.io/badge/license-AGPL--3.0-blue)
 ![平台](https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey)
 ![Python](https://img.shields.io/badge/python-3.11%2B-3776AB)
-![发布](https://img.shields.io/badge/release-1.3.0-blueviolet)
+![发布](https://img.shields.io/badge/release-1.3.1-blueviolet)
 
 ## 截图
 

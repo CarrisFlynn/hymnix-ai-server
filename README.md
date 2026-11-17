@@ -1,4 +1,4 @@
-# Hymnix AI
+# Hymnix Orbit
 
 **English** | [简体中文](README.zh-CN.md)
 
@@ -8,7 +8,7 @@ Hymnix connects Ollama-compatible models to a practical desktop workflow: chat, 
 
 ![License](https://img.shields.io/badge/license-AGPL--3.0-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey)
-![Release](https://img.shields.io/badge/release-1.3.0-blueviolet)
+![Release](https://img.shields.io/badge/release-1.3.1-blueviolet)
 ![Python](https://img.shields.io/badge/python-3.11%2B-3776AB)
 
 ## Screenshots
