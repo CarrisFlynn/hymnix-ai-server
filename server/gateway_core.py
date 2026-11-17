@@ -1112,7 +1112,16 @@ class Handler(BaseHTTPRequestHandler):
         if action == "start":
             if not upstream_status().get("online"):
                 try:
-                    exe = "ollama"
+                    exe = None
+                    for cand in (os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Ollama", "ollama.exe"),
+                                 os.path.join(os.environ.get("ProgramFiles", ""), "Ollama", "ollama.exe"),
+                                 os.path.join(os.environ.get("ProgramFiles(x86)", ""), "Ollama", "ollama.exe")):
+                        if cand and os.path.exists(cand):
+                            exe = cand
+                            break
+                    if not exe:
+                        return self._json(200, {"ok": False, "online": False, "error": "ollama_not_installed",
+                                                "detail": "Ollama is not installed in a standard location."})
                     proc = subprocess.Popen([exe, "serve"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
                     OLLAMA_STATE["proc"] = proc

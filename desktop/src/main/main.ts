@@ -255,7 +255,7 @@ function registerGatewayIpc(): void {
     let completed=false; let doneSeen=false;
     const sendComplete=(error?:GatewayError) => { if (completed || (!error && !doneSeen)) return; completed=true; event.sender.send(channels.complete,{requestId,error}); };
     try {
-      const response = await fetch(gatewayUrl(base,"v1/chat/completions"), {method:"POST",signal:controller.signal,headers:{Accept:"text/event-stream","Content-Type":"application/json",Authorization:"Bearer "+apiKey},body:JSON.stringify({model,messages:messages as GatewayMessage[],stream:true,...(typeof value.reasoningEffort==="string"&&value.reasoningEffort?{reasoning_effort:value.reasoningEffort}:{})})});
+      const response = await fetch(gatewayUrl(base,"v1/chat/completions"), {method:"POST",signal:controller.signal,headers:{Accept:"text/event-stream","Content-Type":"application/json",Authorization:"Bearer "+(String(apiKey||"").trim()||localApiKey())},body:JSON.stringify({model,messages:messages as GatewayMessage[],stream:true,...(typeof value.reasoningEffort==="string"&&value.reasoningEffort?{reasoning_effort:value.reasoningEffort}:{})})});
       if (!response.ok) { const body=await response.json().catch(()=>null); throw new Error(JSON.stringify(errorPayload(response.status,body,"Gateway chat HTTP "+response.status))); }
       if (!response.body) throw new Error(JSON.stringify({status:response.status,message:"Gateway chat response has no body"}));
       reader=response.body.getReader();
