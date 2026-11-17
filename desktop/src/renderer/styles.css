@@ -703,3 +703,32 @@ select.btn { padding-right: var(--s2); max-width: 260px; }
 .catalog-search-row { display: flex; gap: 8px; margin: 0 0 var(--s2); }
 .catalog-search-row .catalog-search { flex: 1 1 auto; width: auto; }
 .catalog-scroll { max-height: 300px; }
+header { flex-wrap: nowrap; align-items: center; }
+header > div:first-child { min-width: 0; }
+header h1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.connbar { flex-wrap: nowrap; overflow: hidden; gap: 6px; }
+.conn-chip { height: 24px; padding: 0 8px; font-size: 10.5px; white-space: nowrap; }
+.connbar .btn { height: 26px; padding: 0 9px; font-size: 11px; white-space: nowrap; }
+/* header alignment: single row, no clipping */
+main > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: nowrap;
+}
+main > header > div:first-child { min-width: 0; flex: 1 1 auto; }
+main > header h1 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.connbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+}
+.connbar .conn-chip { height: 24px; padding: 0 9px; font-size: 11px; white-space: nowrap; }
+.connbar .btn { height: 26px; padding: 0 10px; font-size: 11px; white-space: nowrap; }
+@media (max-width: 1180px) {
+  .connbar .conn-chip { padding: 0 7px; font-size: 10.5px; }
+  .connbar .btn { padding: 0 8px; font-size: 10.5px; }
+}

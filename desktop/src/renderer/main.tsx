@@ -1013,7 +1013,7 @@ function App() {
     <main className={terminalView ? "main terminal-main" : "main"}>
       {!terminalView && <header>
         <div><label>{t(workspace)} / {t(active)}</label><h1>{t(active)}</h1><p className="subtitle">{t("A focused server workspace for building with Hymnix")}</p></div>
-        <div className="connbar">
+        {(active === "Chat" || active === "Gateway") && <div className="connbar">
           <span className={"conn-chip " + state}><span className="dot" data-state={state} aria-hidden="true" />{t(state)}</span>
           <span className="conn-chip">{t("Gateway")} <b>{health?.gateway || "-"}</b></span>
           <span className={"conn-chip " + (tunnelState === "up" ? "ready" : "")}>{t("Tunnel")} <b>{t({ off: "Not started", starting: "Starting", up: "Ready", lost: "Disconnected", failed: "Failed" }[tunnelState] || "Not started")}</b></span>
@@ -1021,7 +1021,7 @@ function App() {
           <button className="btn" onClick={() => void toggleTunnel(tunnelState === "up" || tunnelState === "starting" ? "stop" : "start")}>{tunnelState === "up" || tunnelState === "starting" ? t("Stop tunnel") : t("Start tunnel")}</button>
           <button className="btn" onClick={() => { void navigator.clipboard?.writeText(tunnelUrl || "http://127.0.0.1:11435"); }} disabled={!tunnelUrl}>{t("Copy address")}</button>
           <button className="btn" onClick={() => setActive("Monitor")}>{t("Open monitor")}</button>
-        </div>
+        </div>}
       </header>}
       {renderView()}
       {startupNote && !terminalView && <div className="notice" role="status">{startupNote}</div>}
@@ -1055,6 +1055,7 @@ function App() {
           <button className="btn" onClick={() => void modelAction("start", model)} disabled={!model}>{t("Load")}</button>
           <button className="btn" onClick={() => void modelAction("stop", model)} disabled={!model}>{t("Unload")}</button>
           <button className="btn" onClick={() => void loadModels()}>{t("Refresh")}</button>
+          <button className="btn" onClick={() => void toggleTunnel(tunnelState === "up" || tunnelState === "starting" ? "stop" : "start")}>{tunnelState === "up" || tunnelState === "starting" ? t("Stop tunnel") : t("Share this host")}</button>
         </div>
         <div className="panel-pull">
           <input value={pullName} onChange={(event) => setPullName(event.target.value)} placeholder="qwen3:8b" />

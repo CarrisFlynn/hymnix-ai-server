@@ -122,6 +122,7 @@ DEFAULT_CONFIG = {
 os.makedirs(LOG_DIR, exist_ok=True)
 
 
+HEALTH_CACHE = {"payload": None, "at": 0.0}
 LAST_ACTIVITY = [time.time()]
 CLIENT_LOCKS = {}
 CLIENT_LOCK_LAST_USED = {}
@@ -1360,6 +1361,9 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/admin/tunnel" and method == "GET":
                 return self._admin_tunnel_status()
             if path == "/health":
+                _now = time.time()
+                if HEALTH_CACHE["payload"] and _now - HEALTH_CACHE["at"] < 5:
+                    return self._json(200, HEALTH_CACHE["payload"])
                 st = upstream_status()
                 return self._json(200, {"ok": True, "gateway": VERSION,
                                         "tunnel": read_tunnel_url(),
@@ -1367,6 +1371,12 @@ class Handler(BaseHTTPRequestHandler):
                                         "models": len(st["models"]),
                                         "clients_online": sum(1 for c in clients_snapshot() if c["online"]),
                                         "uptime_s": int(time.time() - START_TS)})
+                HEALTH_CACHE["payload"] = {"ok": True, "gateway": VERSION, "tunnel": read_tunnel_url(),
+                                           "ollama": st["online"], "models": len(st["models"]),
+                                           "clients_online": sum(1 for c in clients_snapshot() if c["online"]),
+                                           "uptime_s": int(time.time() - START_TS)}
+                HEALTH_CACHE["at"] = time.time()
+                return self._json(200, HEALTH_CACHE["payload"])
             if path == "/admin" or path == "/admin/":
                 return self._serve_dashboard()
             if path.startswith("/admin/"):
