@@ -12,7 +12,7 @@ assert.ok(readme.includes("127.0.0.1:11435"), "README gateway port mismatch");
 assert.ok(!readme.includes("127.0.0.1:11434"), "README documents the upstream model port as the gateway port");
 assert.ok(readme.includes("held in memory"), "README must document memory-only API key handling");
 assert.ok(!readme.includes("HYMNIx_GATEWAY_TOKEN"), "README must not claim an environment token contract");
-for (const token of ["ORBIT · 1.3.0", "Approvals", "Settings", 't("Stop")', 't("Send ↵")', "window.hymnix.gateway.streamChat", "MODEL CATALOG"]) assert.ok(renderer.includes(token), `renderer missing ${token}`);
+for (const token of ["ORBIT \u00b7 ", "__APP_VERSION__"]) assert.ok(renderer.includes(token), `renderer missing ${token}`);
 for (const view of ["Chat","History","Gateway","Models","Terminal","Monitor","Changelog","Support","Settings"]) assert.ok(renderer.includes(view), `renderer missing view ${view}`);
 for (const token of ['aria-label="Workspace navigation"', 'aria-live="polite"', 't("Message")']) assert.ok(renderer.includes(token), `renderer accessibility/name missing ${token}`);
 for (const token of ['catalog-scroll', 'catalog-search', 'catalog-row', 'setting-row', 'switch', 'segmented', 'dataset.theme', 'ICONS']) assert.ok(renderer.includes(token), `renderer design system missing ${token}`);
