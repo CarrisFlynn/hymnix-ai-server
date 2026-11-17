@@ -411,6 +411,8 @@ export type AppSettings = {
   previewMode: "inapp" | "browser";
 };
 
+export type AppBootstrap = { base: string; port: number; external: boolean; error?: string };
+
 export type SettingsApi = {
   get: () => Promise<AppSettings>;
   set: (patch: Partial<AppSettings>) => Promise<AppSettings>;
@@ -459,6 +461,8 @@ export type DesktopApi = {
   github: { stars: () => Promise<{ ok: boolean; stars: number | null }> };
   cloud: CloudApi;
   config: ConfigApi;
+  bootstrap: () => Promise<AppBootstrap>;
+  restartGateway: () => Promise<{ ok: boolean; base: string; port: number; error?: string }>;
   settings: SettingsApi;
   preview: PreviewApi;
   ollama: OllamaApi;

@@ -131,6 +131,7 @@ export const zh: Record<string, string> = {
   "Gateway": "网关",
   "Gateway API key": "网关 API 密钥",
   "Gateway API key (optional)": "网关 API 密钥（可选）",
+  "Gateway address": "网关地址",
   "Gateway chat and model discovery are connected. History, files, tools, approvals, plugins, terminal, monitoring, settings and logs remain on the React migration path.": "对话与模型发现已接入真实网关。历史、文件、工具、审批、插件、终端、监控、设置与日志仍在迁移到新界面的过程中。",
   "Gateway health": "网关健康",
   "Gateway health response": "网关健康响应",

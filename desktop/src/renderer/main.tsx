@@ -111,6 +111,7 @@ function App() {
   const [startupNote, setStartupNote] = useState("");
   const [role, setRole] = useState<"host" | "guest">("host");
   const [serverBase, setServerBase] = useState("http://127.0.0.1:11435");
+  const [gatewayBase, setGatewayBase] = useState("http://127.0.0.1:11435");
   const [hostName, setHostName] = useState("");
   const [hostPassword, setHostPassword] = useState("");
   const [tunnelUrl, setTunnelUrl] = useState("");
@@ -265,6 +266,7 @@ function App() {
       setModel((current) => current || list[0]?.name || "");
     } catch (reason) { setModelNote(reason instanceof Error ? reason.message : String(reason)); }
   }
+  useEffect(() => { void window.hymnix.bootstrap().then((info) => { setGatewayBase(info.base); setServerBase((current) => current === "http://127.0.0.1:11435" ? info.base : current); }).catch(() => undefined); }, []);
   useEffect(() => { void loadHealth(); void loadModels(); void loadCloud(); void window.hymnix.settings.get().then((value) => setUiSettings({ ...DEFAULT_UI_SETTINGS, ...value })).catch(() => undefined); }, []);
   useEffect(() => { void window.hymnix.github.stars().then((value) => setStars(value?.stars ?? null)).catch(() => undefined); }, []);
   useEffect(() => { document.documentElement.style.scrollBehavior = uiSettings.smoothScroll ? "smooth" : "auto"; }, [uiSettings.smoothScroll]);
@@ -786,6 +788,7 @@ function App() {
       <div className="card">
         <div className="panel-row"><span>{t("Status")}</span><strong>{t(state)}</strong></div>
         <div className="panel-row"><span>{t("Version")}</span><strong>{health?.gateway || "-"}</strong></div>
+        <div className="panel-row"><span>{t("Gateway address")}</span><strong className="small">{gatewayBase.replace("http://", "")}</strong></div>
         <div className="panel-row"><span>{t("Model service")}</span><strong>{health?.ollama ? t("Online") : t("Offline")}</strong></div>
         <div className="panel-row"><span>{t("Models")}</span><strong>{health?.models ?? models.length}</strong></div>
         <div className="panel-row"><span>{t("Clients online")}</span><strong>{health?.clients_online ?? "-"}</strong></div>

@@ -1,6 +1,7 @@
 import {app,BrowserWindow,Menu,WebContentsView,dialog,ipcMain,net,protocol,screen,session,shell} from "electron";
 import {basename,extname,join,relative,resolve,sep} from "node:path";
 import {pathToFileURL} from "node:url";
+import http from "node:http";
 import {existsSync,realpathSync,statSync,readdirSync,readFileSync,writeFileSync,mkdirSync} from "node:fs";
 import {spawn,execFile,ChildProcess} from "node:child_process";
 import os from "node:os";
@@ -41,6 +42,44 @@ function applyStartupSideEffects(settings: AppSettings): void {
   }
 }
 
+let gatewayBase = "http://local.gateway";
+let gatewaySocket = "";
+function gatewayFetch(input: string | URL, init?: any): Promise<any> {
+  const raw = typeof input === "string" ? input : String(input);
+  const target = raw.startsWith("http") ? new URL(raw) : new URL("http://local.gateway/" + raw.replace(/^\/+/, ""));
+  const isLocal = target.hostname === "local.gateway" || target.hostname === "127.0.0.1";
+  const body = init?.body === undefined || init?.body === null ? undefined : String(init.body);
+  const options: any = { method: init?.method || "GET", headers: { ...(init?.headers || {}), Host: "local.gateway" }, timeout: init?.timeoutMs ?? 30000 };
+  if (body) { options.headers["Content-Length"] = Buffer.byteLength(body); }
+  if (isLocal && gatewaySocket) { options.socketPath = gatewaySocket; options.path = target.pathname + target.search; }
+  else { options.hostname = target.hostname; options.port = target.port || 80; options.path = target.pathname + target.search; }
+  return new Promise((resolve, reject) => {
+    const req = http.request(options, (res: any) => {
+      const chunks: Buffer[] = [];
+      let ended = false; let waiter: (() => void) | null = null;
+      const pump = () => { if (waiter) { const w = waiter; waiter = null; w(); } };
+      res.on("data", (chunk: Buffer) => { chunks.push(chunk); pump(); });
+      res.on("end", () => { ended = true; pump(); });
+      const readAll = () => Buffer.concat(chunks).toString("utf8");
+      const bodyStream = { getReader: () => ({ read: async () => { while (!chunks.length && !ended) { await new Promise<void>((r) => { waiter = r; }); } if (chunks.length) return { value: new Uint8Array(chunks.shift() as Buffer), done: false }; return { value: undefined, done: true }; } }) };
+      resolve({ ok: (res.statusCode || 0) >= 200 && (res.statusCode || 0) < 300, status: res.statusCode || 0, body: bodyStream, text: async () => readAll(), json: async () => JSON.parse(readAll() || "{}") });
+    });
+    req.on("timeout", () => req.destroy(new Error("gateway timeout")));
+    req.on("error", reject);
+    if (init?.signal) { init.signal.addEventListener("abort", () => req.destroy(new Error("aborted"))); }
+    if (body) req.write(body);
+    req.end();
+  });
+}
+
+let gatewayPort = 11435;
+let startupError = "";
+function bootLog(message: string): void {
+  try {
+    const line = new Date().toISOString() + " " + message + "\n";
+    writeFileSync(join(app.getPath("userData"), "startup.log"), line, { flag: "a" });
+  } catch { /* ignore */ }
+}
 let backend: ChildProcess | null = null;
 let backendExited = false;
 let backendReady = false;
@@ -158,7 +197,7 @@ function registerFilesIpc(): void {
   ipcMain.handle("files:read", (event, raw: unknown) => { assertSender(event); if(!raw||typeof raw!=="object")throw filesError("invalid_request","Read request must be an object"); const v=raw as Record<string,unknown>; const path=validateFilePath(v.path); const start=parseFileLimit(v.start,1,Number.MAX_SAFE_INTEGER,"start"); const lines=parseFileLimit(v.lines,100,fileLimits.readLines,"lines"); const text=readUtf8Bounded(path); const all=text.split(/\r?\n/); const end=Math.min(all.length,start+lines-1); return {ok:true,path:relative(filesRootOrThrow(),path).replaceAll(sep,"/"),start,end,total:all.length,text:all.slice(start-1,end).join("\n")}; });
 }
 function registerGatewayIpc(): void {
-  ipcMain.handle(channels.health, async (event): Promise<GatewayHealth> => { assertSender(event); const response = await fetch(gatewayUrl("http://127.0.0.1:11435","health"), {signal:AbortSignal.timeout(5000),headers:{Accept:"application/json"}}); if (!response.ok) { const body=await response.json().catch(() => null); throw new Error(JSON.stringify(errorPayload(response.status,body,"Gateway health HTTP " + response.status))); } let payload: unknown; try { payload=await response.json(); } catch { throw healthSchemaError("Gateway health response must be valid JSON"); } return parseGatewayHealth(payload); });
+  ipcMain.handle(channels.health, async (event): Promise<GatewayHealth> => { assertSender(event); const response = await fetch(gatewayUrl(gatewayBase,"health"), {signal:AbortSignal.timeout(5000),headers:{Accept:"application/json"}}); if (!response.ok) { const body=await response.json().catch(() => null); throw new Error(JSON.stringify(errorPayload(response.status,body,"Gateway health HTTP " + response.status))); } let payload: unknown; try { payload=await response.json(); } catch { throw healthSchemaError("Gateway health response must be valid JSON"); } return parseGatewayHealth(payload); });
   ipcMain.handle(channels.adminHistory, async (event, rawAdminKey: unknown, rawQuery: unknown): Promise<AdminHistoryResponse> => {
     assertSender(event);
     const adminKey=resolveAdminKey(rawAdminKey);
@@ -166,18 +205,18 @@ function registerGatewayIpc(): void {
     const query=(rawQuery || {}) as AdminHistoryQuery;
     const limit=boundedInteger(query.limit,"limit",1000,1,5000);
     const days=boundedInteger(query.days,"days",7,1,365);
-    const url=gatewayUrl("http://127.0.0.1:11435","admin/history");
+    const url=gatewayUrl(gatewayBase,"admin/history");
     url.searchParams.set("limit",String(limit));
     url.searchParams.set("days",String(days));
     const response=await fetch(url,{signal:AbortSignal.timeout(5000),headers:{Accept:"application/json","X-Admin-Key":adminKey}});
     if (!response.ok) { const body=await response.json().catch(() => null); throw new Error(JSON.stringify(errorPayload(response.status,body,"Gateway admin history HTTP " + response.status))); }
     try { return await response.json(); } catch { throw new Error(JSON.stringify({code:"admin_history_schema_error",message:"Gateway admin history response must be valid JSON"})); }
   });
-  ipcMain.handle(channels.models, async (event, apiKey: unknown): Promise<GatewayModelsResponse> => { assertSender(event); const response = await fetch(gatewayUrl("http://127.0.0.1:11435","api/tags"), {headers:{Accept:"application/json","X-API-Key":localApiKey()}}); if (!response.ok) throw new Error(JSON.stringify(errorPayload(response.status, await response.json().catch(() => null), "Gateway models HTTP " + response.status))); return response.json() as Promise<GatewayModelsResponse>; });
+  ipcMain.handle(channels.models, async (event, apiKey: unknown): Promise<GatewayModelsResponse> => { assertSender(event); const response = await fetch(gatewayUrl(gatewayBase,"api/tags"), {headers:{Accept:"application/json","X-API-Key":localApiKey()}}); if (!response.ok) throw new Error(JSON.stringify(errorPayload(response.status, await response.json().catch(() => null), "Gateway models HTTP " + response.status))); return response.json() as Promise<GatewayModelsResponse>; });
   ipcMain.handle(channels.adminStatus, async (event, rawAdminKey: unknown): Promise<AdminStatus> => {
     assertSender(event);
     const adminKey=resolveAdminKey(rawAdminKey);
-    const response=await fetch(gatewayUrl("http://127.0.0.1:11435","admin/status"),{signal:AbortSignal.timeout(5000),headers:{Accept:"application/json","X-Admin-Key":adminKey}});
+    const response=await fetch(gatewayUrl(gatewayBase,"admin/status"),{signal:AbortSignal.timeout(5000),headers:{Accept:"application/json","X-Admin-Key":adminKey}});
     if (!response.ok) { const body=await response.json().catch(() => null); throw new Error(JSON.stringify(errorPayload(response.status,body,"Gateway admin status HTTP " + response.status))); }
     let payload: unknown;
     try { payload=await response.json(); } catch { throw adminStatusSchemaError("Gateway admin status response must be valid JSON"); }
@@ -187,7 +226,7 @@ function registerGatewayIpc(): void {
     assertSender(event);
     const adminKey=resolveAdminKey(rawAdminKey);
     const limit=boundedInteger(rawLimit,"limit",50,1,200);
-    const url=gatewayUrl("http://127.0.0.1:11435","admin/errors");
+    const url=gatewayUrl(gatewayBase,"admin/errors");
     url.searchParams.set("limit",String(limit));
     const response=await fetch(url,{signal:AbortSignal.timeout(5000),headers:{Accept:"application/json","X-Admin-Key":adminKey}});
     if (!response.ok) { const body=await response.json().catch(() => null); throw new Error(JSON.stringify(errorPayload(response.status,body,"Gateway admin errors HTTP " + response.status))); }
@@ -199,7 +238,7 @@ function registerGatewayIpc(): void {
   ipcMain.handle(channels.adminClients, async (event, rawAdminKey: unknown): Promise<AdminClientsResponse> => {
     assertSender(event);
     const adminKey=resolveAdminKey(rawAdminKey);
-    const response=await fetch(gatewayUrl("http://127.0.0.1:11435","admin/clients"),{signal:AbortSignal.timeout(5000),headers:{Accept:"application/json","X-Admin-Key":adminKey}});
+    const response=await fetch(gatewayUrl(gatewayBase,"admin/clients"),{signal:AbortSignal.timeout(5000),headers:{Accept:"application/json","X-Admin-Key":adminKey}});
     if (!response.ok) { const body=await response.json().catch(() => null); throw new Error(JSON.stringify(errorPayload(response.status,body,"Gateway admin clients HTTP " + response.status))); }
     let payload: unknown;
     try { payload=await response.json(); } catch { throw new Error(JSON.stringify({code:"admin_clients_schema_error",message:"Gateway admin clients response must be valid JSON"})); }
@@ -227,8 +266,28 @@ function registerGatewayIpc(): void {
     } catch (reason) { let error:GatewayError; if (controller.signal.aborted) error={code:"aborted",message:"Gateway stream aborted"}; else { const message=reason instanceof Error?reason.message:String(reason); try { error=JSON.parse(message) as GatewayError; } catch { error={message}; } } sendComplete(error); } finally { if (reader) { await reader.cancel().catch(() => undefined); reader.releaseLock(); reader=null; } chatControllers.delete(requestId); }
   });
 }
-async function waitForGateway(timeoutMs=30000): Promise<void> { const deadline=Date.now()+timeoutMs; while (Date.now()<deadline) { if (backendFailure) throw backendFailure; if (backendExited) throw new Error("Headless Hymnix gateway exited before becoming healthy"); try { const response=await fetch("http://127.0.0.1:11435/health",{signal:AbortSignal.timeout(1000)}); const payload=await response.json() as {ok?:boolean;gateway?:string}; if (response.ok && payload.ok===true && payload.gateway === "1.3.0") { if (backendFailure || backendExited) throw backendFailure || new Error("Headless Hymnix gateway exited before becoming healthy"); backendReady=true; return; } } catch (error) { if (backendFailure) throw backendFailure; if (backendExited) throw new Error("Headless Hymnix gateway exited before becoming healthy"); if (error instanceof Error && error.name !== "TimeoutError" && error.name !== "AbortError") { /* Retry transient gateway startup failures. */ } } await new Promise((resolve)=>setTimeout(resolve,200)); } throw new Error("Headless Hymnix gateway did not become healthy"); }
-async function startGateway(): Promise<void> { if (!existsSync(backendPath)) throw new Error("Missing server gateway: "+backendPath); const existing=await fetch("http://127.0.0.1:11435/health",{signal:AbortSignal.timeout(800)}).catch(() => null); if (existing && existing.ok) { const payload=await existing.json().catch(() => null) as {ok?:boolean;gateway?:string}|null; if (payload?.ok===true && payload.gateway==="1.3.0") { externalGateway=true; backendReady=true; return; } throw new Error("Port 11435 is occupied by an incompatible service. Close it and start Hymnix AI again."); } externalGateway=false; backendFailure=null; backendExited=false; backendReady=false; const child=spawn(backendPath,[],{cwd:productRoot,windowsHide:true,stdio:"ignore",env:{...process.env,HYMNIX_LISTEN_HOST:"127.0.0.1",HYMNIX_LISTEN_PORT:"11435"}}); backend=child; child.once("error",(error)=>{ backendFailure=error instanceof Error?error:new Error(String(error)); backendExited=true; }); child.once("exit",(code,signal)=>{ backendExited=true; if (!backendReady && !backendFailure) backendFailure=new Error(`Gateway exited before becoming healthy (code=${code ?? "null"}, signal=${signal ?? "none"})`); if (code!==0&&!quitting) console.error("Gateway exited: "+(code ?? signal ?? "unknown")); }); await waitForGateway(); }
+async function waitForGateway(timeoutMs=30000): Promise<void> { const deadline=Date.now()+timeoutMs; while (Date.now()<deadline) { if (backendFailure) throw backendFailure; if (backendExited) throw new Error("Headless Hymnix gateway exited before becoming healthy"); try { const response=await fetch(gatewayBase+"/health",{signal:AbortSignal.timeout(8000)}); const payload=await response.json() as {ok?:boolean;gateway?:string}; if (response.ok && payload.ok===true && String(payload.gateway||"").startsWith("1.3")) { if (backendFailure || backendExited) throw backendFailure || new Error("Headless Hymnix gateway exited before becoming healthy"); backendReady=true; return; } } catch (error) { if (backendFailure) throw backendFailure; if (backendExited) throw new Error("Headless Hymnix gateway exited before becoming healthy"); if (error instanceof Error && error.name !== "TimeoutError" && error.name !== "AbortError") { /* Retry transient gateway startup failures. */ } } await new Promise((resolve)=>setTimeout(resolve,200)); } throw new Error("Headless Hymnix gateway did not become healthy"); }
+async function pickFreePort(): Promise<number> {
+  const netmod = await import("node:net");
+  return await new Promise<number>((resolve, reject) => {
+    const srv = netmod.createServer();
+    srv.once("error", reject);
+    srv.listen(0, "127.0.0.1", () => {
+      const addr = srv.address();
+      const port = typeof addr === "object" && addr ? addr.port : 0;
+      srv.close(() => resolve(port));
+    });
+  });
+}
+
+async function startGateway(): Promise<void> { if (!existsSync(backendPath)) throw new Error("Missing server gateway: "+backendPath); let existing: Response | null = null;
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    existing = await fetch(gatewayBase+"/health",{signal:AbortSignal.timeout(6000)}).catch(() => null);
+    if (existing) break;
+    await new Promise((r) => setTimeout(r, 400));
+  } if (existing && existing.ok) { const payload=await existing.json().catch(() => null) as {ok?:boolean;gateway?:string}|null; if (payload?.ok===true && String(payload.gateway||"").startsWith("1.3")) { externalGateway=true; backendReady=true; return; } /* an incompatible service owns 11435: fall through and take a free port */ } externalGateway=false; backendFailure=null; backendExited=false; backendReady=false; gatewayPort=await pickFreePort(); gatewayBase="http://127.0.0.1:"+gatewayPort; gatewaySocket=""; bootLog("spawn backend port=" + gatewayPort + " exe=" + backendPath); const child=spawn(backendPath,[],{cwd:productRoot,windowsHide:true,stdio:["ignore","pipe","pipe"],env:{...process.env,HYMNIX_LISTEN_HOST:"127.0.0.1",HYMNIX_LISTEN_PORT:String(gatewayPort)}});
+  child.stdout?.on("data",(d:Buffer)=>bootLog("backend out: "+d.toString("utf8").trim().slice(0,300)));
+  child.stderr?.on("data",(d:Buffer)=>bootLog("backend err: "+d.toString("utf8").trim().slice(0,300))); backend=child; child.once("error",(error)=>{ backendFailure=error instanceof Error?error:new Error(String(error)); backendExited=true; }); child.once("exit",(code,signal)=>{ bootLog("backend exited code=" + String(code) + " signal=" + String(signal)); backendExited=true; if (!backendReady && !backendFailure) backendFailure=new Error(`Gateway exited before becoming healthy (code=${code ?? "null"}, signal=${signal ?? "none"})`); if (code!==0&&!quitting) console.error("Gateway exited: "+(code ?? signal ?? "unknown")); }); try { await waitForGateway(60000); bootLog("gateway ready port=" + gatewayPort); } catch (error) { bootLog("gateway failed: " + (error instanceof Error ? error.message : String(error))); throw error; } }
 function stopGateway(): void { quitting=true; for (const controller of chatControllers.values()) controller.abort(); chatControllers.clear(); if (externalGateway) { backendReady=false; return; } if (backendStopPromise) return; const child=backend; backend=null; backendReady=false; if (!child) return; backendStopPromise=new Promise<void>((resolve)=>{ let settled=false; const finish=()=>{ if (settled) return; settled=true; clearTimeout(timer); child.removeListener("exit",finish); child.removeListener("error",finish); resolve(); }; const timer=setTimeout(finish,1500); child.once("exit",finish); child.once("error",finish); if (child.exitCode!==null||child.signalCode!==null) finish(); else { try { child.kill(); } catch { finish(); } } }).finally(()=>{ backendStopPromise=null; }); }
 registerFilesIpc();
 
@@ -259,7 +318,7 @@ function registerTerminalIpc(): void {
 const modelChannels = { list:"models:list", pull:"models:pull", remove:"models:delete", start:"models:start", stop:"models:stop" } as const;
 function adminHeaders(): Record<string,string> { return { Accept:"application/json", "X-Admin-Key": resolveAdminKey(undefined) }; }
 async function adminJson(path: string, init?: RequestInit): Promise<unknown> {
-  const response = await fetch(gatewayUrl("http://127.0.0.1:11435", path), { ...init, signal: AbortSignal.timeout(120000), headers: { ...adminHeaders(), ...(init?.headers as Record<string,string> | undefined) } });
+  const response = await fetch(gatewayUrl(gatewayBase, path), { ...init, signal: AbortSignal.timeout(120000), headers: { ...adminHeaders(), ...(init?.headers as Record<string,string> | undefined) } });
   if (!response.ok) { const body = await response.json().catch(() => null); throw new Error(JSON.stringify(errorPayload(response.status, body, "Gateway " + path + " HTTP " + response.status))); }
   return response.json().catch(() => ({}));
 }
@@ -291,10 +350,10 @@ function parseApprovalDecisionResponse(payload: unknown): unknown {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new Error(JSON.stringify({code:"approval_schema_error",message:"Approval decision response must be an object"})); const value=payload as Record<string,unknown>; if(typeof value.ok!=="boolean"||typeof value.id!=="string"||!value.id||value.decision!=="approved"&&value.decision!=="denied") throw new Error(JSON.stringify({code:"approval_schema_error",message:"Invalid approval decision response"})); if(value.error!==undefined&&(!value.error||typeof value.error!=="object"||Array.isArray(value.error)||typeof (value.error as Record<string,unknown>).message!=="string")) throw new Error(JSON.stringify({code:"approval_schema_error",message:"Invalid approval decision error"})); return value;
 }
 async function toolsJson(path: string, init: RequestInit, keyHeader: "X-API-Key" | "X-Admin-Key", fallback: string): Promise<unknown> {
-  const response=await fetch(gatewayUrl("http://127.0.0.1:11435",path),{...init,signal:AbortSignal.timeout(5000),headers:{Accept:"application/json",...(init.headers as Record<string,string>||{}),[keyHeader]:keyHeader==="X-API-Key"?localApiKey():resolveAdminKey(undefined)}}); const body=await response.json().catch(()=>null); if(!response.ok) throw new Error(JSON.stringify(errorPayload(response.status,body,fallback+" HTTP "+response.status))); return body;
+  const response=await fetch(gatewayUrl(gatewayBase,path),{...init,signal:AbortSignal.timeout(5000),headers:{Accept:"application/json",...(init.headers as Record<string,string>||{}),[keyHeader]:keyHeader==="X-API-Key"?localApiKey():resolveAdminKey(undefined)}}); const body=await response.json().catch(()=>null); if(!response.ok) throw new Error(JSON.stringify(errorPayload(response.status,body,fallback+" HTTP "+response.status))); return body;
 }
 function registerToolsIpc(): void {
-  ipcMain.handle("tools:list", async (event): Promise<ReturnType<typeof parseToolsResponse>> => { assertSender(event); const url=gatewayUrl("http://127.0.0.1:11435","api/tools"); const response=await fetch(url,{method:"GET",signal:AbortSignal.timeout(5000),headers:{Accept:"application/json","X-API-Key":localApiKey()}}); if (!response.ok) { const body=await response.json().catch(() => null); throw new Error(JSON.stringify(errorPayload(response.status,body,"Gateway tools HTTP "+response.status))); } let payload: unknown; try { payload=await response.json(); } catch { throw new Error(JSON.stringify({code:"tools_schema_error",message:"Tools response must be valid JSON"})); } return parseToolsResponse(payload); });
+  ipcMain.handle("tools:list", async (event): Promise<ReturnType<typeof parseToolsResponse>> => { assertSender(event); const url=gatewayUrl(gatewayBase,"api/tools"); const response=await fetch(url,{method:"GET",signal:AbortSignal.timeout(5000),headers:{Accept:"application/json","X-API-Key":localApiKey()}}); if (!response.ok) { const body=await response.json().catch(() => null); throw new Error(JSON.stringify(errorPayload(response.status,body,"Gateway tools HTTP "+response.status))); } let payload: unknown; try { payload=await response.json(); } catch { throw new Error(JSON.stringify({code:"tools_schema_error",message:"Tools response must be valid JSON"})); } return parseToolsResponse(payload); });
   ipcMain.handle("tools:call", async (event, raw: unknown) => { assertSender(event); if(!raw||typeof raw!=="object"||Array.isArray(raw)) throw new Error(JSON.stringify({code:"invalid_request",message:"Tool call request must be an object"})); const value=raw as Record<string,unknown>; if(typeof value.requestId!=="string"||!value.requestId.trim()||typeof value.tool!=="string"||!value.tool.trim()||!value.args||typeof value.args!=="object"||Array.isArray(value.args)) throw new Error(JSON.stringify({code:"invalid_request",message:"Invalid tool call request"})); const payload=await toolsJson("api/tools/call",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({requestId:value.requestId,tool:value.tool,args:value.args})},"X-API-Key","Tool call"); return parseToolCallResponse(payload); });
   ipcMain.handle("tools:pending", async (event) => { assertSender(event); return parseApprovalListResponse(await toolsJson("admin/approvals",{method:"GET"},"X-Admin-Key","Approval list")); });
   for(const decision of ["approve","deny"] as const) ipcMain.handle("tools:"+decision, async (event, rawId: unknown) => { assertSender(event); if(typeof rawId!=="string"||!rawId.trim()||rawId.length>256||/[\/\0]/.test(rawId)) throw new Error(JSON.stringify({code:"invalid_request",message:"Invalid approval id"})); const payload=await toolsJson("admin/approvals/"+encodeURIComponent(rawId),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({decision})},"X-Admin-Key","Approval decision"); return parseApprovalDecisionResponse(payload); });
@@ -394,7 +453,9 @@ function registerSettingsIpc(): void {
       return { ok: true, stars: typeof data.stargazers_count === "number" ? data.stargazers_count : null };
     } catch { return { ok: false, stars: null }; }
   });
-  ipcMain.handle("settings:get", async (event) => { assertSender(event); return readSettings(); });
+  ipcMain.handle("gateway:restart", async (event) => { assertSender(event); try { if (backend && !externalGateway) { try { backend.kill(); } catch { /* ignore */ } backend = null; } backendReady = false; startupError = ""; await startGateway(); return { ok: true, base: gatewayBase, port: gatewayPort }; } catch (error) { startupError = error instanceof Error ? error.message : String(error); return { ok: false, base: gatewayBase, port: gatewayPort, error: startupError }; } });
+ipcMain.handle("app:bootstrap", async (event) => { assertSender(event); return { base: gatewayBase, port: gatewayPort, external: externalGateway, error: startupError || (backendReady ? "" : "gateway not ready") }; });
+ipcMain.handle("settings:get", async (event) => { assertSender(event); return readSettings(); });
   ipcMain.handle("settings:set", async (event, raw: unknown) => { assertSender(event); return writeSettings(raw && typeof raw === "object" ? raw as Record<string, unknown> : {}); });
   ipcMain.handle("preview:open", async (event, raw: unknown) => {
     assertSender(event);
@@ -439,6 +500,6 @@ if (!app.requestSingleInstanceLock()) { app.quit(); } else { app.on("second-inst
 const bootSettings = readSettings();
 if (!bootSettings.gpuAcceleration) { try { app.disableHardwareAcceleration(); } catch { /* ignore */ } }
 if (bootSettings.cacheDir) { try { mkdirSync(bootSettings.cacheDir, { recursive: true }); app.setPath("cache", bootSettings.cacheDir); } catch { /* ignore */ } }
-app.whenReady().then(async()=>{Menu.setApplicationMenu(null);protocol.handle("app",(request)=>{ const url=new URL(request.url); const relative=decodeURIComponent(url.pathname).replace(/^\/+/, "")||"index.html"; const target=join(rendererRoot,relative); if(!target.startsWith(rendererRoot)) return new Response("Forbidden",{status:403}); return net.fetch(pathToFileURL(target).toString()); });session.defaultSession.webRequest.onHeadersReceived((details,callback)=>callback({responseHeaders:{...details.responseHeaders,"Content-Security-Policy":["default-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:*; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'"]}}));try{await startGateway();createWindow();}catch(error){const message=error instanceof Error?error.message:String(error);console.error(message);dialog.showErrorBox("Hymnix AI could not start the local gateway",message+"\n\nPort 11435 must be free, or held by a healthy Hymnix 1.3.0 gateway.");app.quit();return;}app.on("activate",()=>{if(BrowserWindow.getAllWindows().length===0)createWindow();});}).catch((error)=>{console.error(error);app.quit();});
+app.whenReady().then(async()=>{Menu.setApplicationMenu(null);protocol.handle("app",(request)=>{ const url=new URL(request.url); const relative=decodeURIComponent(url.pathname).replace(/^\/+/, "")||"index.html"; const target=join(rendererRoot,relative); if(!target.startsWith(rendererRoot)) return new Response("Forbidden",{status:403}); return net.fetch(pathToFileURL(target).toString()); });session.defaultSession.webRequest.onHeadersReceived((details,callback)=>callback({responseHeaders:{...details.responseHeaders,"Content-Security-Policy":["default-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:*; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'"]}}));try{await startGateway();createWindow();}catch(error){const message=error instanceof Error?error.message:String(error);console.error("gateway startup failed:",message);startupError=message;createWindow();}app.on("activate",()=>{if(BrowserWindow.getAllWindows().length===0)createWindow();});}).catch((error)=>{console.error(error);app.quit();});
 app.on("before-quit",stopGateway);
 app.on("window-all-closed",()=>{if(process.platform!=="darwin")app.quit();});

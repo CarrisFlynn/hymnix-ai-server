@@ -23,6 +23,7 @@ import re
 import urllib.parse
 from collections import deque
 from datetime import datetime
+import socketserver
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 def _files_int(raw, minimum, maximum, name):
@@ -425,6 +426,12 @@ def load_config():
 
 
 CFG = load_config()
+_env_host = str(os.environ.get("HYMNIX_LISTEN_HOST") or "").strip()
+_env_port = str(os.environ.get("HYMNIX_LISTEN_PORT") or "").strip()
+if _env_host:
+    CFG["listen_host"] = _env_host
+if _env_port.isdigit():
+    CFG["listen_port"] = int(_env_port)
 if not str(CFG.get("host_name") or "").strip():
     CFG["host_name"] = "Hymnix Orbit"
 if not str(CFG.get("host_password") or "").strip():
@@ -2570,12 +2577,41 @@ class _FastHTTPServer(ThreadingHTTPServer):
         self.server_port = port
 
 
+if hasattr(socketserver, "ThreadingUnixStreamServer"):
+    class _FastUnixHTTPServer(socketserver.ThreadingUnixStreamServer):  # type: ignore[misc]
+        """HTTP over a local Unix-domain socket: no TCP port is bound at all."""
+
+        daemon_threads = True
+
+        def server_bind(self):
+            socketserver.UnixStreamServer.server_bind(self)
+            self.server_name = "localhost"
+            self.server_port = 0
+else:
+    _FastUnixHTTPServer = None
+
+
 def start_server():
     try:
         threading.Thread(target=_idle_unloader, daemon=True).start()
     except Exception:
         pass
     """在当前线程中启动 HTTP 服务（供 GUI 调用）"""
+    sock_path = str(os.environ.get("HYMNIX_SOCKET") or "").strip()
+    if sock_path and _FastUnixHTTPServer is not None:
+        parent = os.path.dirname(sock_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        try:
+            os.unlink(sock_path)
+        except FileNotFoundError:
+            pass
+        except Exception:
+            pass
+        srv = _FastUnixHTTPServer(sock_path, Handler)
+        srv.daemon_threads = True
+        log_event("gateway_start", socket=sock_path, version=VERSION)
+        return srv
     host = CFG["listen_host"]
     port = int(CFG["listen_port"])
     srv = _FastHTTPServer((host, port), Handler)
@@ -2587,7 +2623,10 @@ def start_server():
 def main():
     load_recent_history()
     srv = start_server()
-    print("Hymnix Gateway v%s listening on %s:%s" % (VERSION, CFG["listen_host"], CFG["listen_port"]))
+    if str(os.environ.get("HYMNIX_SOCKET") or "").strip():
+        print("Hymnix Gateway v%s listening on socket %s" % (VERSION, os.environ.get("HYMNIX_SOCKET")))
+    else:
+        print("Hymnix Gateway v%s listening on %s:%s" % (VERSION, CFG["listen_host"], CFG["listen_port"]))
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
