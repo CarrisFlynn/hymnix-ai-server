@@ -4,7 +4,7 @@ const main = read("../src/main/main.ts"), preload = read("../src/preload/preload
 const readme = read("../README.md");
 for (const token of ["contextIsolation:true", "sandbox:true", "nodeIntegration:false", "setWindowOpenHandler", "will-navigate", "Content-Security-Policy"]) assert.ok(main.includes(token), `main missing ${token}`);
 for (const token of ["join(productRoot,\"backend-gateway-headless.exe\""]) assert.ok(main.includes(token), `main supervisor missing ${token}`);
-for (const token of ["payload.gateway", "payload.gateway === \"1.3.0\""]) assert.ok(main.includes(token), `main supervisor missing ${token}`);
+for (const token of ["payload.gateway", "startsWith(\"1.3\")"]) assert.ok(main.includes(token), `main supervisor missing ${token}`);
 for (const token of ["contextBridge.exposeInMainWorld", "AbortController"]) assert.ok(preload.includes(token) || main.includes(token), `IPC shell missing ${token}`);
 for (const token of ["api/tags", "v1/chat/completions", "Authorization", "127.0.0.1:11435"]) assert.ok(main.includes(token), `main gateway contract missing ${token}`);
 assert.ok(renderer.includes("127.0.0.1:11435"), "renderer gateway port mismatch");
