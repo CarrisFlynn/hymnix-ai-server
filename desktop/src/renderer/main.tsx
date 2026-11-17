@@ -1025,7 +1025,7 @@ function App() {
     <main className={terminalView ? "main terminal-main" : "main"}>
       {!terminalView && <header style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:"16px",flexWrap:"nowrap"}}>
         <div style={{minWidth:0,flex:"1 1 auto"}}><label>{t(workspace)} / {t(active)}</label><h1>{t(active)}</h1><p className="subtitle">{t("A focused server workspace for building with Hymnix")}</p></div>
-        {(active === "Chat" || active === "Gateway") && <div className="connbar" style={{display:"flex",alignItems:"center",gap:"6px",flex:"0 0 auto",flexWrap:"nowrap"}}>
+        {(active === "Chat" || active === "Gateway") && <div className="connbar" style={{display:"flex",alignItems:"center",gap:"4px",flex:"0 1 auto",flexWrap:"nowrap",overflow:"hidden"}}>
           <span className={"conn-chip " + state}><span className="dot" data-state={state} aria-hidden="true" />{t(state)}</span>
           <span className="conn-chip">{t("Gateway")} <b>{health?.gateway || "-"}</b></span>
           <span className={"conn-chip " + (tunnelState === "up" ? "ready" : "")}>{t("Tunnel")} <b>{t({ off: "Not started", starting: "Starting", up: "Ready", lost: "Disconnected", failed: "Failed" }[tunnelState] || "Not started")}</b></span>

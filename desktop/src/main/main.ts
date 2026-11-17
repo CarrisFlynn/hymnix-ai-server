@@ -42,7 +42,7 @@ function applyStartupSideEffects(settings: AppSettings): void {
   }
 }
 
-let gatewayBase = "http://local.gateway";
+let gatewayBase = "http://127.0.0.1:11435";
 let gatewaySocket = "";
 function gatewayFetch(input: string | URL, init?: any): Promise<any> {
   const raw = typeof input === "string" ? input : String(input);
@@ -148,7 +148,7 @@ function isAllowedRendererUrl(rawUrl: string): boolean {
 function assertSender(event: Electron.IpcMainInvokeEvent | Electron.IpcMainEvent): void {
   if (!isAllowedRendererUrl(event.sender.getURL())) throw new Error("Unauthorized IPC sender");
 }
-function gatewayUrl(base: string, path: string): URL { const url = new URL(base); if (url.protocol !== "http:" || (url.hostname !== "127.0.0.1" && url.hostname !== "localhost") || url.port !== "11435" || url.username || url.password) throw new Error("Gateway URL must target the local gateway"); return new URL(path, url.href.endsWith("/") ? url.href : url.href + "/"); }
+function gatewayUrl(base: string, path: string): URL { const url = new URL(base); if (url.protocol !== "http:" || (url.hostname !== "127.0.0.1" && url.hostname !== "localhost") || !url.port || url.username || url.password) throw new Error("Gateway URL must target the local gateway"); return new URL(path, url.href.endsWith("/") ? url.href : url.href + "/"); }
 type GatewayError = {status?: number; code?: string; message: string};
 function errorPayload(status: number, payload: unknown, fallback: string): GatewayError { const root = payload && typeof payload === "object" ? payload as Record<string,unknown> : {}; const nested = root.error && typeof root.error === "object" ? root.error as Record<string,unknown> : root; return {status, code: typeof nested.code === "string" ? nested.code : undefined, message: typeof nested.message === "string" ? nested.message : fallback}; }
 function required(value: unknown, name: string): string { if (typeof value !== "string" || !value.trim()) throw new Error("Invalid " + name); return value; }
