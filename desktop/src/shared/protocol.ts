@@ -462,6 +462,7 @@ export type DesktopApi = {
   cloud: CloudApi;
   config: ConfigApi;
   bootstrap: () => Promise<AppBootstrap>;
+  log: (message: string) => Promise<boolean>;
   restartGateway: () => Promise<{ ok: boolean; base: string; port: number; error?: string }>;
   settings: SettingsApi;
   preview: PreviewApi;

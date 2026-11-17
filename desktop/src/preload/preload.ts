@@ -12,6 +12,7 @@ const api: DesktopApi & { adminHistory: (adminKey: string, query?: AdminHistoryQ
   window: { control: (action: "minimize" | "maximize" | "close") => ipcRenderer.invoke("window:control", action) },
   github: { stars: () => ipcRenderer.invoke("github:stars") },
   bootstrap: () => ipcRenderer.invoke("app:bootstrap"),
+  log: (message: string) => ipcRenderer.invoke("app:log", message),
   restartGateway: () => ipcRenderer.invoke("gateway:restart"),
   settings: {
     get: () => ipcRenderer.invoke("settings:get"),

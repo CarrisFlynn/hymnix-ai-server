@@ -243,13 +243,24 @@ function App() {
     } catch (reason) { setApprovalsError(reason instanceof Error ? reason.message : String(reason)); }
     finally { setApprovalsBusy(false); }
   }
-  async function loadHealth() {
+  async function loadHealth(attempt = 1) {
     try {
       const h: any = remoteActive()
         ? await window.hymnix.network.get(serverBase.trim(), "/health", apiKey)
         : await window.hymnix.gateway.health();
-      setHealth(h); setState(h?.ok ? "ready" : "degraded");
-    } catch (reason) { setState("error"); setError(reason instanceof Error ? reason.message : String(reason)); }
+      setHealth(h); setState(h?.ok ? "ready" : "degraded"); setError("");
+      if (h?.ok) void loadModels();
+    } catch (reason) {
+      if (attempt < 20 && !remoteActive()) {
+        setState("starting");
+        window.setTimeout(() => void loadHealth(attempt + 1), 500);
+        return;
+      }
+      setState("error");
+      const message = reason instanceof Error ? reason.message : String(reason);
+      void window.hymnix.log("health failed: " + message);
+      setError(message);
+    }
   }
   async function loadModels() {
     try {
@@ -419,7 +430,7 @@ function App() {
           termOut("sys", "tunnel=" + tunnelState + " url=" + (tunnelUrl || "-"));
           return;
         case "version":
-          termOut("sys", "Hymnix Orbit 1.3.0 · gateway " + (health?.gateway || "-"));
+          termOut("sys", "Hymnix Orbit " + __APP_VERSION__ + " · gateway " + (health?.gateway || "-"));
           return;
         case "models":
           termOut("sys", models.length ? models.map((item) => item.name + (item.loaded ? "*" : "")).join("  ") : "没有已安装模型");
@@ -749,7 +760,8 @@ function App() {
 
   function renderChangelog() {
     const entries = [
-      { version: "1.3.0", items: [t("Product renamed to Hymnix Orbit."), t("New client-style UI with bubbles, terminal console and control panel."), t("Host mode with share password and public tunnel."), t("Guest mode: chats and models run on the host's hardware."), t("Cloud API source alongside local models.")] },
+      { version: "1.3.1", items: [t("Local mode always sends the local gateway key; the model list and chat now work without a manual key."), t("The Ollama button resolves the real executable instead of failing silently."), t("Startup: the window appears in ~40ms and the 9.7s port preflight loop is gone."), t("The connection bar only appears on Chat and Gateway, on a single aligned row.")] },
+            { version: "1.3.0", items: [t("Product renamed to Hymnix Orbit."), t("New client-style UI with bubbles, terminal console and control panel."), t("Host mode with share password and public tunnel."), t("Guest mode: chats and models run on the host's hardware."), t("Cloud API source alongside local models.")] },
       { version: "1.2.0", items: [t("17 pages in one window."), t("Bubble cards with avatars and code copy."), t("Terminal console with status strips."), t("Five languages, 418 keys.")] },
       { version: "1.1.0", items: [t("First public build with gateway and local models.")] }
     ];
@@ -833,7 +845,7 @@ function App() {
     const finish = async () => { if (role === "guest") { const ok = await guestConnect(); if (!ok) return; window.setTimeout(() => { void loadHealth(); void loadModels(); }, 80); } finishWelcome(); };
     return <div className="welcome-mask" role="dialog" aria-modal="true" aria-label={t("Welcome")}>
       <div className="welcome-card">
-        <div className="welcome-brand"><img src={brandIcon} alt="" /><div><strong>Hymnix Orbit</strong><small>1.3.0</small></div></div>
+        <div className="welcome-brand"><img src={brandIcon} alt="" /><div><strong>Hymnix Orbit</strong><small>{__APP_VERSION__}</small></div></div>
         <h2>{t("Welcome to Hymnix Orbit")}</h2>
         <p>{t("Share this machine's models with friends, or connect to a friend's machine.")}</p>
         <div className="setting-row"><label>{t("Language")}</label><div className="controls segmented"><button className={lang === "en" ? "active" : ""} onClick={() => changeLang("en")}>English</button><button className={lang === "zh" ? "active" : ""} onClick={() => changeLang("zh")}>中文</button></div></div>
@@ -963,7 +975,7 @@ function App() {
         <h3 className="card-title">{t("About")}</h3>
         <div className="setting-row"><label>{t("Data folder")}</label><div className="controls"><input readOnly value={filesRoot || "%LOCALAPPDATA%\\Hymnix"} /><button className="btn" onClick={() => void chooseWorkspace()}>{t("Choose workspace")}</button></div></div>
         <div className="setting-row"><label>{t("Updates")}</label><div className="controls"><button className="btn" onClick={() => setStartupNote(t("You are running Hymnix Orbit 1.3.0."))}>{t("Check for updates")}</button></div></div>
-        <div className="setting-row"><label>{t("Version")}</label><div className="controls"><span className="hint">Hymnix Orbit 1.3.0 · Hymnix Studio</span><button className="btn" onClick={() => setActive("Support")}>{t("Help & sponsor")}</button></div></div>
+        <div className="setting-row"><label>{t("Version")}</label><div className="controls"><span className="hint">Hymnix Orbit {__APP_VERSION__} · Hymnix Studio</span><button className="btn" onClick={() => setActive("Support")}>{t("Help & sponsor")}</button></div></div>
       </div>
       <StarBanner />
     </section>;
@@ -987,7 +999,7 @@ function App() {
   const chatView = active === "Chat";
   return <div className={(terminalView ? "shell terminal-mode" : chatView ? "shell chat-mode" : "shell plain-mode") + (previewOpen ? " preview-open" : "")} data-lang={lang}>
     <div className="titlebar">
-      <span className="titlebar-brand"><img src={brandIcon} alt="" /><strong>Hymnix Orbit</strong><small>1.3.0</small></span>
+      <span className="titlebar-brand"><img src={brandIcon} alt="" /><strong>Hymnix Orbit</strong><small>{__APP_VERSION__}</small></span>
       <span className="titlebar-drag" />
       <div className="titlebar-actions">
         {previewOpen && <button type="button" className="preview-close" onClick={() => void closePreview()}>{t("Close preview")}</button>}
@@ -997,7 +1009,7 @@ function App() {
       </div>
     </div>
     <aside className="side">
-      <div className="brand"><img src={brandIcon} alt="" /><span>Hymnix Orbit<small>ORBIT · 1.3.0</small></span></div>
+      <div className="brand"><img src={brandIcon} alt="" /><span>Hymnix Orbit<small>ORBIT · {__APP_VERSION__}</small></span></div>
       <button className="new" onClick={() => { setActive("Chat"); setMessages([]); setSessionName("Untitled session"); }}>{t("+ New session")}</button>
       <div className="side-section"><span className="side-label">{t("WORKSPACE")}</span><button className="workspace active" onClick={() => setWorkspace("Default workspace")}><span className="dot" />{t(workspace)}</button></div>
       <div className="side-section"><span className="side-label">{t("RECENT SESSIONS")}</span>
@@ -1011,9 +1023,9 @@ function App() {
       <div className="side-status"><span className="dot" data-state={state} aria-hidden="true" />{t(state)}</div>
     </aside>
     <main className={terminalView ? "main terminal-main" : "main"}>
-      {!terminalView && <header>
-        <div><label>{t(workspace)} / {t(active)}</label><h1>{t(active)}</h1><p className="subtitle">{t("A focused server workspace for building with Hymnix")}</p></div>
-        {(active === "Chat" || active === "Gateway") && <div className="connbar">
+      {!terminalView && <header style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:"16px",flexWrap:"nowrap"}}>
+        <div style={{minWidth:0,flex:"1 1 auto"}}><label>{t(workspace)} / {t(active)}</label><h1>{t(active)}</h1><p className="subtitle">{t("A focused server workspace for building with Hymnix")}</p></div>
+        {(active === "Chat" || active === "Gateway") && <div className="connbar" style={{display:"flex",alignItems:"center",gap:"6px",flex:"0 0 auto",flexWrap:"nowrap"}}>
           <span className={"conn-chip " + state}><span className="dot" data-state={state} aria-hidden="true" />{t(state)}</span>
           <span className="conn-chip">{t("Gateway")} <b>{health?.gateway || "-"}</b></span>
           <span className={"conn-chip " + (tunnelState === "up" ? "ready" : "")}>{t("Tunnel")} <b>{t({ off: "Not started", starting: "Starting", up: "Ready", lost: "Disconnected", failed: "Failed" }[tunnelState] || "Not started")}</b></span>

@@ -449,6 +449,7 @@ function registerSettingsIpc(): void {
     } catch { return { ok: false, stars: null }; }
   });
   ipcMain.handle("gateway:restart", async (event) => { assertSender(event); try { if (backend && !externalGateway) { try { backend.kill(); } catch { /* ignore */ } backend = null; } backendReady = false; startupError = ""; await startGateway(); return { ok: true, base: gatewayBase, port: gatewayPort }; } catch (error) { startupError = error instanceof Error ? error.message : String(error); return { ok: false, base: gatewayBase, port: gatewayPort, error: startupError }; } });
+ipcMain.handle("app:log", async (event, message: unknown) => { assertSender(event); bootLog("renderer: " + String(message).slice(0, 400)); return true; });
 ipcMain.handle("app:bootstrap", async (event) => { assertSender(event); return { base: gatewayBase, port: gatewayPort, external: externalGateway, error: startupError || (backendReady ? "" : "gateway not ready") }; });
 ipcMain.handle("settings:get", async (event) => { assertSender(event); return readSettings(); });
   ipcMain.handle("settings:set", async (event, raw: unknown) => { assertSender(event); return writeSettings(raw && typeof raw === "object" ? raw as Record<string, unknown> : {}); });
