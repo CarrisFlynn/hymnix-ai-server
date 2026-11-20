@@ -1,0 +1,21 @@
+diff --git a/templates/nsis/installSection.nsh b/templates/nsis/installSection.nsh
+index 053772f55ca6ece52f0a34c4fa0f05c9a5f07bd2..ae91a5fbea0287aa0429e4cc628188e154af42d5 100644
+--- a/templates/nsis/installSection.nsh
++++ b/templates/nsis/installSection.nsh
+@@ -32,9 +32,14 @@ StrCpy $appExe "$INSTDIR\${APP_EXECUTABLE_FILENAME}"
+   ${endif}
+   !insertmacro CHECK_APP_RUNNING
+ !else
+-  ${ifNot} ${UAC_IsInnerInstance}
++  !ifmacrodef customCheckAppRunning
++    # Custom checks may need to release installation files in the elevated process.
+     !insertmacro CHECK_APP_RUNNING
+-  ${endif}
++  !else
++    ${ifNot} ${UAC_IsInnerInstance}
++      !insertmacro CHECK_APP_RUNNING
++    ${endif}
++  !endif
+ !endif
+ 
+ Var /GLOBAL keepShortcuts

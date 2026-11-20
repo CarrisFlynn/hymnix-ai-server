@@ -52,9 +52,9 @@ export function Markdown({ text }: { text: string }) {
   return <>{blocks}</>;
 }
 
-export function Bubble({ message }: { message: ChatMessage }) {
+export function Bubble({ message, turnIndex }: { message: ChatMessage; turnIndex?: number }) {
   const user = message.role === "user";
-  return <article className={user ? "bubble user" : "bubble assistant"}>
+  return <article className={user ? "bubble user" : "bubble assistant"} data-chat-turn={turnIndex}>
     <span className="bubble-avatar" aria-hidden="true">{user ? "U" : "H"}</span>
     <div className="bubble-card">
       <div className="bubble-meta"><strong>{user ? t("You") : "Hymnix Orbit"}</strong><span>{message.at || ""}</span></div>

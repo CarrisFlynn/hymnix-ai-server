@@ -9,7 +9,7 @@ Hymnix 将 Ollama 兼容模型接入一套完整的桌面工作流：对话、�
 ![许可证](https://img.shields.io/badge/license-AGPL--3.0-blue)
 ![平台](https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey)
 ![Python](https://img.shields.io/badge/python-3.11%2B-3776AB)
-![发布](https://img.shields.io/badge/release-1.3.1-blueviolet)
+![发布](https://img.shields.io/badge/release-1.3.2-blueviolet)
 
 ## 截图
 
@@ -29,7 +29,7 @@ Hymnix 将 Ollama 兼容模型接入一套完整的桌面工作流：对话、�
 - 主机模式：共享名称、共享密码、一键公网隧道，状态可见、日志实时。
 - 访客模式：地址、共享名称、连接密码；模型列表与对话来自主机。
 - 云端 API 作为第二种对话来源，与本地模型并存。
-- 模型清单带搜索，已安装与可下载分开显示。
+- 可下载的 Ollama 模型支持按名称或发布方搜索，并可按许可证、下载大小和估算显存筛选。
 - 终端控制台：状态条、隧道实时日志、网关配置命令。
 - 对话支持 Markdown、代码复制、思考过程折叠面板。
 - 右侧控制栏：模型、推理强度、对话保存/加载/导出、GPU / VRAM / AI / RAM 遥测。

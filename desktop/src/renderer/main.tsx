@@ -1,10 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import type { ApprovalRecord, DesktopApi, ToolDescriptor } from "../shared/protocol";
+import type { ApprovalRecord, DesktopApi, GatewayHealth, TerminalBridgeReply, ToolDescriptor } from "../shared/protocol";
 import "./styles.css";
 import brandIcon from "./assets/hymnix-red-white-star.png";
 import { t, tf, getLang, setLang, translateDom, installAutoTranslate, type Lang } from "./i18n";
-import { Bubble, type ChatMessage } from "./chat";
+import type { ChatMessage } from "./chat";
+import { ChatViewport } from "./chat-navigation";
+import { pullErrorMessage, trackDownloadProgress } from "./model-download";
+import { ModelCatalog } from "./ModelCatalog";
+import { DEFAULT_CATALOG_FILTERS, type CatalogFilters } from "./model-catalog";
 
 declare global { interface Window { hymnix: DesktopApi } }
 
@@ -52,42 +56,6 @@ const navGroups = [
 
 const DEFAULT_UI_SETTINGS = { betaChannel: false, runAtStartup: false, dpiScaling: false, startFullscreen: false, autoUpdate: true, smoothScroll: true, gpuAcceleration: true, cacheDir: "", previewMode: "inapp" as "inapp" | "browser" };
 
-const RECOMMENDED = [
-  { name: "qwen3:0.6b", size: "0.5 GB", tag: "Tiny general" },
-  { name: "qwen3:1.7b", size: "1.4 GB", tag: "Small general" },
-  { name: "qwen3:4b", size: "2.6 GB", tag: "Fast general" },
-  { name: "qwen3:8b", size: "5.2 GB", tag: "Balanced general chat" },
-  { name: "qwen3:14b", size: "9.3 GB", tag: "Strong general chat" },
-  { name: "qwen3:32b", size: "20 GB", tag: "Large general chat" },
-  { name: "qwen2.5:3b", size: "1.9 GB", tag: "Fast Chinese chat" },
-  { name: "qwen2.5:7b", size: "4.7 GB", tag: "Fast Chinese chat" },
-  { name: "qwen2.5:14b", size: "9.0 GB", tag: "Strong Chinese chat" },
-  { name: "qwen2.5-coder:1.5b", size: "1.0 GB", tag: "Lightweight coding" },
-  { name: "qwen2.5-coder:7b", size: "4.7 GB", tag: "Coding" },
-  { name: "qwen2.5-coder:14b", size: "9.0 GB", tag: "Strong coding" },
-  { name: "deepseek-r1:1.5b", size: "1.1 GB", tag: "Reasoning" },
-  { name: "deepseek-r1:7b", size: "4.7 GB", tag: "Reasoning" },
-  { name: "deepseek-r1:8b", size: "5.2 GB", tag: "Reasoning" },
-  { name: "deepseek-r1:14b", size: "9.0 GB", tag: "Strong reasoning" },
-  { name: "deepseek-coder:1.3b", size: "0.8 GB", tag: "Lightweight coding" },
-  { name: "deepseek-coder:6.7b", size: "3.8 GB", tag: "Coding" },
-  { name: "llama3.1:8b", size: "4.9 GB", tag: "General English" },
-  { name: "llama3.2:1b", size: "1.3 GB", tag: "Tiny general" },
-  { name: "llama3.2:3b", size: "2.0 GB", tag: "Small general" },
-  { name: "gemma3:1b", size: "0.8 GB", tag: "Tiny general" },
-  { name: "gemma3:4b", size: "3.3 GB", tag: "Small and fast" },
-  { name: "gemma3:12b", size: "8.1 GB", tag: "Strong general" },
-  { name: "mistral:7b", size: "4.4 GB", tag: "General English" },
-  { name: "phi4:14b", size: "9.1 GB", tag: "Reasoning" },
-  { name: "phi3.5:3.8b", size: "2.2 GB", tag: "Small general" },
-  { name: "codellama:7b", size: "3.8 GB", tag: "Coding" },
-  { name: "starcoder2:3b", size: "1.7 GB", tag: "Coding" },
-  { name: "nomic-embed-text:latest", size: "274 MB", tag: "Embeddings" },
-  { name: "mxbai-embed-large:latest", size: "670 MB", tag: "Embeddings" },
-  { name: "all-minilm:latest", size: "46 MB", tag: "Embeddings" }
-];
-
-
 const capabilityCopy: Record<string, string> = {
   Tools: "Inspect registered tools and recent tool calls.",
   Approvals: "Review and resolve pending permission requests.",
@@ -96,11 +64,85 @@ const capabilityCopy: Record<string, string> = {
 
 function stamp(): string { return new Date().toLocaleTimeString("zh-CN", { hour12: false }); }
 
+type ModelDownload = {
+  requestId: string;
+  model: string;
+  phase: "downloading" | "pausing" | "paused" | "cancelling" | "complete" | "cancelled" | "failed";
+  status?: string;
+  completed?: number;
+  total?: number;
+  bytesPerSecond?: number;
+  error?: string;
+};
+
+function downloadBytes(bytes: number, lang: Lang): string {
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let unit = 0;
+  while (bytes >= 1000 && unit < units.length - 1) { bytes /= 1000; unit++; }
+  return new Intl.NumberFormat(lang, { maximumFractionDigits: unit === 0 ? 0 : 1 }).format(bytes) + " " + units[unit];
+}
+
+function downloadStage(status?: string): string {
+  if (status?.startsWith("verifying")) return t("Verifying download");
+  if (status?.startsWith("writing") || status?.startsWith("removing") || status === "success") return t("Finalizing download");
+  if (status?.startsWith("pulling") && status !== "pulling manifest") return t("Downloading model layers");
+  return t("Preparing download");
+}
+
+function ModelDownloadFooter({ download, lang, remote, onPause, onResume, onCancel, onDismiss }: {
+  download: ModelDownload; lang: Lang; remote: boolean;
+  onPause: () => void; onResume: () => void; onCancel: () => void; onDismiss: () => void;
+}) {
+  const paused = download.phase === "paused";
+  const active = download.phase === "downloading" || download.phase === "pausing" || download.phase === "cancelling";
+  const title = tf({
+    downloading: "Downloading {model}", cancelling: "Cancelling download: {model}",
+    pausing: "Pausing download: {model}", paused: "Download paused: {model}",
+    complete: "Download complete: {model}", cancelled: "Download cancelled: {model}", failed: "Download failed: {model}",
+  }[download.phase], { model: download.model });
+  const total = download.total;
+  const completed = download.completed;
+  const percent = completed != null && total != null && total > 0 ? Math.floor(100 * completed / total) : undefined;
+  const rate = download.bytesPerSecond;
+  return <footer className="model-download" data-phase={download.phase}>
+    <div className="model-download-heading">
+      <strong role="status">{title}</strong>
+      {download.phase === "downloading" && <button type="button" className="btn" onClick={onPause}>{t("Pause download")}</button>}
+      {paused && <button type="button" className="btn primary" onClick={onResume} disabled={remote}>{t("Resume download")}</button>}
+      {active || paused
+        ? <button type="button" className="btn" onClick={onCancel} disabled={active && download.phase !== "downloading"}>{t("Cancel download")}</button>
+        : <button type="button" className="btn" onClick={onDismiss} aria-label={t("Dismiss download notice")}>{t("Close")}</button>}
+    </div>
+    {(active || paused) && <>
+      <progress className="model-download-meter" aria-label={t("Model layer download progress")} max={100} value={percent} />
+      <div className="model-download-details">
+        <span>{paused ? t(remote ? "Switch to local mode to download models." : "Resume uses available cached layers.") : downloadStage(download.status)}</span>
+        <span className="model-download-metrics">
+          {percent != null && total != null && completed != null && <>{percent}% · {downloadBytes(completed, lang)} / {downloadBytes(total, lang)}</>}
+          {download.phase === "downloading" && rate != null && <>{percent != null && " · "}{tf("{size}/s", { size: downloadBytes(rate, lang) })}</>}
+        </span>
+      </div>
+    </>}
+    {download.error && <p className="model-download-error" role="alert">{download.error}</p>}
+  </footer>;
+}
+
+// Theme presets shipped with the app. Deep sea blue replaced the retired Daylight theme;
+// neon black is the green-on-black preset. Unknown saved values fall back to the default.
+const THEME_PRESETS = ["camellia-white", "deep-sea-blue", "cyan-dark", "orange-dark", "rog-red-black", "neon-black"];
+
+function readTheme(): string {
+  try {
+    const saved = localStorage.getItem("hymnix.theme") || "";
+    return THEME_PRESETS.includes(saved) ? saved : "camellia-white";
+  } catch { return "camellia-white"; }
+}
+
 function App() {
   const [state, setState] = useState("connecting");
   const [active, setActive] = useState("Chat");
   const [lang, setLangState] = useState<Lang>(getLang());
-  const [theme, setThemeState] = useState<string>(() => { try { return localStorage.getItem("hymnix.theme") || "camellia-white"; } catch { return "camellia-white"; } });
+  const [theme, setThemeState] = useState<string>(readTheme);
   const [workspace, setWorkspace] = useState("Default workspace");
   const [sessionName, setSessionName] = useState("Untitled session");
   const [inspectorOpen, setInspectorOpen] = useState(true);
@@ -141,9 +183,14 @@ function App() {
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [model, setModel] = useState("");
   const [modelBusy, setModelBusy] = useState("");
+  const [download, setDownload] = useState<ModelDownload | null>(null);
+  const downloadRequest = useRef<string | null>(null);
+  const downloadStop = useRef<"pause" | "cancel" | null>(null);
+  const pausedModel = useRef<string | null>(null);
+  const downloadOccupied = download != null && ["downloading", "pausing", "paused", "cancelling"].includes(download.phase);
   const [pullName, setPullName] = useState("");
   const [modelNote, setModelNote] = useState("");
-  const [modelQuery, setModelQuery] = useState("");
+  const [catalogFilters, setCatalogFilters] = useState<CatalogFilters>(DEFAULT_CATALOG_FILTERS);
 
   const [draft, setDraft] = useState("");
   const [messages, setMessages] = useState<Message[]>(() => {
@@ -164,8 +211,15 @@ function App() {
   });
   const [error, setError] = useState("");
   const requestRef = useRef<string | null>(null);
+  const [followSignal, setFollowSignal] = useState(0);
 
-  const [health, setHealth] = useState<any>(null);
+  const [health, setHealth] = useState<GatewayHealth | null>(null);
+  const [connectionError, setConnectionError] = useState("");
+  const [ollamaBusy, setOllamaBusy] = useState(false);
+  const [ollamaError, setOllamaError] = useState("");
+  const healthRequest = useRef(0);
+  const modelRequest = useRef(0);
+  const lastHealth = useRef<GatewayHealth | null>(null);
   const [filesRoot, setFilesRoot] = useState("");
   const [fileEntries, setFileEntries] = useState<any[]>([]);
   const [fileQuery, setFileQuery] = useState("");
@@ -192,6 +246,9 @@ function App() {
 
   const [termCmd, setTermCmd] = useState("");
   const [termEntries, setTermEntries] = useState<Entry[]>([]);
+  const [bridgeConnection, setBridgeConnection] = useState<{ endpoint: string; token: string } | null>(null);
+  const [bridgeReplies, setBridgeReplies] = useState<TerminalBridgeReply[]>([]);
+  const bridgeBusy = useRef(false);
   const [termBusy, setTermBusy] = useState(false);
   const termId = useRef("");
   const termHistory = useRef<string[]>([]);
@@ -243,42 +300,101 @@ function App() {
     } catch (reason) { setApprovalsError(reason instanceof Error ? reason.message : String(reason)); }
     finally { setApprovalsBusy(false); }
   }
-  async function loadHealth(attempt = 1) {
+  async function loadHealth(forceModels = false) {
+    const id = ++healthRequest.current;
+    const remote = remoteActive();
     try {
-      const h: any = remoteActive()
-        ? await window.hymnix.network.get(serverBase.trim(), "/health", apiKey)
+      const h = remote
+        ? await window.hymnix.network.get(serverBase.trim(), "/health", apiKey) as GatewayHealth
         : await window.hymnix.gateway.health();
-      setHealth(h); setState(h?.ok ? "ready" : "degraded"); setError("");
-      if (h?.ok) void loadModels();
-    } catch (reason) {
-      if (attempt < 20 && !remoteActive()) {
-        setState("starting");
-        window.setTimeout(() => void loadHealth(attempt + 1), 500);
-        return;
+      const info = remote ? null : await window.hymnix.bootstrap();
+      if (id !== healthRequest.current) return;
+      if (info) setGatewayBase(info.base);
+      const previous = lastHealth.current;
+      lastHealth.current = h;
+      setHealth(h);
+      setState(h.ok && h.ollama !== false ? "ready" : "degraded");
+      setConnectionError("");
+      if (h.ollama === true && previous?.ollama !== true) {
+        setOllamaError("");
+        if (previous?.ollama === false && !remote) setError("");
       }
+      if (h.ok && h.ollama !== false && (forceModels || !previous?.ok || previous.ollama !== h.ollama || previous.models !== h.models)) {
+        await loadModels();
+      } else if (h.ollama === false && previous?.ollama !== false) {
+        ++modelRequest.current;
+        setModels([]);
+      }
+    } catch (reason) {
+      if (id !== healthRequest.current) return;
+      lastHealth.current = null;
+      setHealth(null);
       setState("error");
-      const message = reason instanceof Error ? reason.message : String(reason);
-      void window.hymnix.log("health failed: " + message);
-      setError(message);
+      setConnectionError(reason instanceof Error ? reason.message : String(reason));
     }
   }
   async function loadModels() {
+    const id = ++modelRequest.current;
+    const remote = remoteActive();
     try {
-      if (remoteActive()) {
-        const remote: any = await window.hymnix.network.get(serverBase.trim(), "/api/tags", apiKey);
-        const remoteList: ModelInfo[] = (remote?.models || []).map((item: any) => ({ name: String(item.name || item.model || ""), loaded: false })).filter((item: ModelInfo) => item.name);
-        setModels(remoteList);
-        setModel((current) => current || remoteList[0]?.name || "");
-        return;
-      }
-      const result: any = await window.hymnix.models.list();
-      const list: ModelInfo[] = (result?.models || []).map((item: any) => ({ name: String(item.name || item.model || ""), loaded: !!item.loaded })).filter((item: ModelInfo) => item.name);
+      const result = remote
+        ? await window.hymnix.network.get(serverBase.trim(), "/api/tags", apiKey) as { models?: Array<{ name?: string; model?: string; loaded?: boolean }> }
+        : await window.hymnix.models.list();
+      if (id !== modelRequest.current) return;
+      const list: ModelInfo[] = (result?.models ?? []).map((item) => ({
+        name: item.name || ("model" in item ? String(item.model || "") : ""), loaded: !!item.loaded,
+      })).filter((item) => item.name);
       setModels(list);
-      setModel((current) => current || list[0]?.name || "");
-    } catch (reason) { setModelNote(reason instanceof Error ? reason.message : String(reason)); }
+      setModel((current) => list.some((item) => item.name === current) ? current : list[0]?.name || "");
+    } catch (reason) {
+      if (id === modelRequest.current) setModelNote(reason instanceof Error ? reason.message : String(reason));
+    }
   }
-  useEffect(() => { void window.hymnix.bootstrap().then((info) => { setGatewayBase(info.base); setServerBase((current) => current === "http://127.0.0.1:11435" ? info.base : current); }).catch(() => undefined); }, []);
-  useEffect(() => { void loadHealth(); void loadModels(); void loadCloud(); void window.hymnix.settings.get().then((value) => setUiSettings({ ...DEFAULT_UI_SETTINGS, ...value })).catch(() => undefined); }, []);
+  async function startOllama() {
+    if (ollamaBusy) return;
+    setOllamaBusy(true);
+    setOllamaError("");
+    try {
+      const result = await window.hymnix.ollama.control("start");
+      if (result.ok !== true || (result.ready !== true && result.online !== true)) {
+        const messages: Record<string, string> = {
+          ollama_not_installed: t("Ollama was not found. Install Ollama and retry."),
+          ollama_not_local: t("The configured Ollama endpoint is remote."),
+          ollama_start_timeout: t("Ollama did not become ready before the startup deadline."),
+          gateway_stopping: t("Gateway is stopping."),
+        };
+        throw new Error(messages[result.code ?? result.error ?? ""] || result.detail || result.error || t("Ollama did not become ready."));
+      }
+      await loadHealth(true);
+    } catch (reason) {
+      setOllamaError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setOllamaBusy(false);
+    }
+  }
+  const remoteBase = mode === "remote" ? serverBase.trim() : "";
+  const remoteToken = mode === "remote" ? apiKey : "";
+  useEffect(() => {
+    lastHealth.current = null;
+    setHealth(null);
+    setModels([]);
+    setConnectionError("");
+    setState("starting");
+    let stopped = false;
+    let timer: number;
+    const tick = async () => {
+      await loadHealth();
+      if (!stopped) timer = window.setTimeout(tick, lastHealth.current?.ollama === true ? 5000 : 1500);
+    };
+    void tick();
+    return () => {
+      stopped = true;
+      ++healthRequest.current;
+      ++modelRequest.current;
+      window.clearTimeout(timer);
+    };
+  }, [mode, remoteBase, remoteToken]);
+  useEffect(() => { void loadCloud(); void window.hymnix.settings.get().then((value) => setUiSettings({ ...DEFAULT_UI_SETTINGS, ...value })).catch(() => undefined); }, []);
   useEffect(() => { void window.hymnix.github.stars().then((value) => setStars(value?.stars ?? null)).catch(() => undefined); }, []);
   useEffect(() => { document.documentElement.style.scrollBehavior = uiSettings.smoothScroll ? "smooth" : "auto"; }, [uiSettings.smoothScroll]);
   useEffect(() => {
@@ -314,22 +430,23 @@ function App() {
   function changeTheme(next: string) { setThemeState(next); try { localStorage.setItem("hymnix.theme", next); } catch { /* ignore */ } }
 
   async function send() {
-    const text = draft.trim(); if (!text) return;
+    const text = draft.trim(); if (!text || requestRef.current) return;
     const usingCloud = source === "cloud";
     const ready = usingCloud ? !!cloudModel.trim() : !!model;
     if (!ready) { setStartupNote(t("Pick a model, start Ollama, or switch to Cloud API.")); window.setTimeout(() => setStartupNote(""), 5000); return; }
     const next: Message[] = [...messages, { role: "user", content: text, at: stamp() }, { role: "assistant", content: "", at: stamp() }];
     setMessages(next); setDraft(""); setError("");
+    setFollowSignal((current) => current + 1);
     const requestId = crypto.randomUUID(); requestRef.current = requestId;
     try {
       const cloudMode = source === "cloud";
-      const chatBase = cloudMode ? cloudBase.trim().replace(/\/+$/, "").replace(/\/v1$/, "") : serverBase;
-      const chatKey = cloudMode ? cloudKey.trim() : apiKey.trim();
+      const chatBase = cloudMode ? cloudBase.trim().replace(/\/+$/, "").replace(/\/v1$/, "") : (remoteActive() ? serverBase.trim() : gatewayBase);
+      const chatKey = cloudMode ? cloudKey.trim() : (remoteActive() ? apiKey.trim() : "");
       const chatModel = cloudMode ? (cloudModel.trim() || model) : model;
       await window.hymnix.gateway.streamChat({ requestId, baseUrl: chatBase, apiKey: chatKey, model: chatModel, reasoningEffort: effort, messages: next.slice(0, -1), onDelta: (part: any) => {
         const payload = part?.choices?.[0]?.delta || {};
         const content = payload.content || ""; const thinking = payload.reasoning_content || payload.reasoning || "";
-        if (!content && !thinking) return;
+        if (requestRef.current !== requestId || (!content && !thinking)) return;
         setMessages((current) => current.map((item, index) => index === current.length - 1 ? { ...item, content: item.content + content, reasoning: (item.reasoning || "") + thinking } : item));
       } });
     } catch (reason) {
@@ -346,18 +463,81 @@ function App() {
     catch (reason) { setModelNote(reason instanceof Error ? reason.message : String(reason)); }
     finally { setModelBusy(""); }
   }
-  async function pullModelByName(name: string) {
-    setModelBusy(name); setModelNote(t("Pulling") + " " + name);
-    try { await window.hymnix.models.pull(name); setModelNote(t("Pull complete") + ": " + name); await loadModels(); }
-    catch (reason) { setModelNote(reason instanceof Error ? reason.message : String(reason)); }
-    finally { setModelBusy(""); }
+  async function pullModelByName(name: string, resume = false): Promise<"complete" | "paused" | "cancelled" | "failed" | "busy" | "remote"> {
+    if (remoteActive()) return "remote";
+    if (downloadRequest.current || (pausedModel.current && (!resume || pausedModel.current !== name))) return "busy";
+    const requestId = crypto.randomUUID();
+    downloadRequest.current = requestId;
+    downloadStop.current = null;
+    pausedModel.current = null;
+    setModelNote("");
+    setDownload({ requestId, model: name, phase: "downloading" });
+    const trackProgress = trackDownloadProgress();
+    try {
+      const result = await window.hymnix.models.pullStream({ requestId, model: name, onProgress: (progress) => {
+        if (downloadRequest.current !== requestId || downloadStop.current) return;
+        const metrics = trackProgress(progress);
+        setDownload((current) => current?.requestId === requestId && current.phase === "downloading" ? {
+          ...current, ...metrics,
+        } : current);
+      } });
+      if (result.cancelled && downloadStop.current === "pause") {
+        pausedModel.current = name;
+        setDownload((current) => current?.requestId === requestId
+          ? { ...current, phase: "paused", bytesPerSecond: undefined } : current);
+        return "paused";
+      }
+      if (result.cancelled) {
+        setDownload({ requestId, model: name, phase: "cancelled" });
+        return "cancelled";
+      }
+    } catch (reason) {
+      if (resume) pausedModel.current = name;
+      setDownload({ requestId, model: name, phase: resume ? "paused" : "failed", error: pullErrorMessage(reason) });
+      return "failed";
+    } finally {
+      downloadRequest.current = null;
+      downloadStop.current = null;
+    }
+    setDownload({ requestId, model: name, phase: "complete" });
+    void loadModels();
+    return "complete";
   }
+
+  function stopModelDownload(action: "pause" | "cancel") {
+    if (action === "cancel" && pausedModel.current) {
+      pausedModel.current = null;
+      setDownload((current) => current?.phase === "paused" ? { ...current, phase: "cancelled", error: undefined } : current);
+      return;
+    }
+    const requestId = downloadRequest.current;
+    if (!requestId || downloadStop.current) return;
+    downloadStop.current = action;
+    setDownload((current) => current?.requestId === requestId && current.phase === "downloading"
+      ? { ...current, phase: action === "pause" ? "pausing" : "cancelling", error: undefined } : current);
+    try {
+      window.hymnix.models.cancelPull(requestId);
+    } catch (reason) {
+      downloadStop.current = null;
+      setDownload((current) => current?.requestId === requestId
+        ? { ...current, phase: "downloading", error: pullErrorMessage(reason) } : current);
+    }
+  }
+
+  function resumeModelDownload() {
+    const name = pausedModel.current;
+    if (!name) return;
+    void pullModelByName(name, true).then((result) => {
+      if (result === "complete") setPullName((current) => current.trim() === name ? "" : current);
+    });
+  }
+
   async function pullModel() {
-    const name = pullName.trim(); if (!name) return;
-    setModelBusy(name); setModelNote(t("Pulling") + " " + name);
-    try { await window.hymnix.models.pull(name); setModelNote(t("Pull complete") + ": " + name); setPullName(""); await loadModels(); }
-    catch (reason) { setModelNote(reason instanceof Error ? reason.message : String(reason)); }
-    finally { setModelBusy(""); }
+    const name = pullName.trim();
+    if (!name) return;
+    if (await pullModelByName(name) === "complete") {
+      setPullName((current) => current.trim() === name ? "" : current);
+    }
   }
 
   async function chooseWorkspace() {
@@ -405,25 +585,64 @@ function App() {
     setTermEntries((current) => [...current, { time: stamp(), tag, text }]);
   }
 
+  async function runTerminalBridge(args: string[]) {
+    const action = args[0]?.toLowerCase();
+    if (args.length !== 1 || (action !== "on" && action !== "off" && action !== "status" && action !== "inbox")) {
+      termOut("err", "bridge on | bridge status | bridge inbox | bridge off");
+      return;
+    }
+    if (bridgeBusy.current) return;
+    bridgeBusy.current = true;
+    termOut("sys", "> bridge " + action);
+    try {
+      const result = await window.hymnix.terminal.bridge(action);
+      if (!result.enabled) {
+        setBridgeConnection(null);
+        setBridgeReplies([]);
+        termOut("sys", t("Local reply bridge is off."));
+        return;
+      }
+      if (action === "on" && result.endpoint && result.token) {
+        setBridgeConnection({ endpoint: result.endpoint, token: result.token });
+        termOut("sys", t("Local reply bridge is on. Run bridge inbox to read replies."));
+      } else if (action === "status") {
+        termOut("sys", tf("Local reply bridge is on. Pending replies: {count}", { count: String(result.pending ?? 0) }));
+      } else if (action === "inbox") {
+        if (result.replies?.length) setBridgeReplies(result.replies);
+        else termOut("sys", t("No new bridge replies."));
+      }
+    } catch (reason) {
+      termOut("err", reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      bridgeBusy.current = false;
+    }
+  }
+
   async function runTerm() {
     const raw = termCmd.trim();
     if (!raw || termBusy) return;
-    termOut("sys", "> " + raw);
-    setTermCmd("");
-    termHistory.current = [...termHistory.current, raw];
-    termCursor.current = termHistory.current.length;
     const [cmd, ...args] = raw.split(/\s+/);
     const name = cmd.toLowerCase();
+    setTermCmd("");
+    if (name === "bridge") {
+      await runTerminalBridge(args);
+      return;
+    }
+    termOut("sys", "> " + raw);
+    termHistory.current = [...termHistory.current, raw];
+    termCursor.current = termHistory.current.length;
     try {
       switch (name) {
         case "help":
           termOut("sys", "help · status · version · models · model <name> · start <name> · stop <name> · pull <name>");
           termOut("sys", "tunnel on|off|restart|status · hardware · ps · dir · logtail · export · open <url>");
           termOut("sys", "config · get <key> · set <key> <value> · quota <n> · billing on|off · lang en|zh · clear");
+          termOut("sys", "bridge on | bridge status | bridge inbox | bridge off");
           termOut("sys", "其它命令交给工作区 shell 执行");
           return;
         case "clear":
           setTermEntries([]);
+          setBridgeReplies([]);
           return;
         case "status":
           termOut("sys", "gateway=" + state + " models=" + models.length + " model=" + (model || "-") + " cwd=" + (filesRoot || "-"));
@@ -450,9 +669,13 @@ function App() {
         }
         case "pull": {
           if (!args[0]) { termOut("err", "usage: pull <name>"); return; }
-          setPullName(args[0]);
-          await pullModel();
-          termOut("sys", "pull " + args[0] + " -> requested");
+          const result = await pullModelByName(args[0]);
+          const outcome = {
+            complete: "Download complete: {model}", cancelled: "Download cancelled: {model}", paused: "Download paused: {model}",
+            failed: "Download failed: {model}", busy: "Resume or cancel the current model download first.",
+            remote: "Switch to local mode to download models.",
+          }[result];
+          termOut(result === "complete" || result === "cancelled" || result === "paused" ? "sys" : "err", tf(outcome, { model: args[0] }));
           return;
         }
         case "tunnel": {
@@ -591,16 +814,26 @@ function App() {
       <span className="star-count">{stars == null ? "★" : stars >= 1000 ? (stars / 1000).toFixed(1) + "k" : String(stars)}</span>
     </button>;
   }
+  function renderOllamaNotice() {
+    if (remoteActive() || health?.ollama !== false) return null;
+    return <div className="card offline-card">
+      <div><strong>{t("Model service is offline")}</strong><span>{t("Start Ollama to list and run local models.")}</span>
+        {ollamaError && <span role="alert">{ollamaError}</span>}</div>
+      <button type="button" className="btn primary" onClick={() => void startOllama()} disabled={ollamaBusy}>
+        {t(ollamaBusy ? "Starting Ollama..." : "Start Ollama")}
+      </button>
+    </div>;
+  }
+
   function renderChat() {
     return <>
-      <section className="canvas" aria-live="polite">
-        {messages.length === 0 ? <div className="empty">
+      <ChatViewport messages={messages} followSignal={followSignal} empty={<div className="empty">
           <div className="star"><img src={brandIcon} alt="" /></div>
           <h2>{t("What are you working on?")}</h2>
           <p>{tf("Start with {workspace} or choose a prompt.", { workspace: t(workspace) })}</p>
           <div className="chips"><button className="btn" onClick={() => setDraft(t("Summarize the current workspace"))}>{t("Summarize workspace")}</button><button className="btn" onClick={() => setDraft(t("Help me inspect a model"))}>{t("Inspect a model")}</button></div>
-        </div> : messages.map((message, index) => <Bubble key={index} message={message} />)}
-      </section>
+        </div>} />
+      {source === "local" && renderOllamaNotice()}
       <div className="telemetry-bar">
         <span>GPU {stats?.gpu != null ? stats.gpu + "%" : "-"}</span>
         <span>VRAM {stats?.vramUsed != null && stats?.vramTotal != null ? stats.vramUsed + "/" + stats.vramTotal + "G" : "-"}</span>
@@ -609,7 +842,7 @@ function App() {
       </div>
       {messages.length > 0 && <div className="chat-tools">
         <button className="btn" onClick={() => void copyLastReply()}>{t("Copy last reply")}</button>
-        <button className="btn" onClick={() => setMessages([])}>{t("Clear")}</button>
+        <button className="btn" onClick={() => { cancel(); setMessages([]); }}>{t("Clear")}</button>
         <button className="btn" onClick={exportChat}>{t("Export chat")}</button>
         <span className="chat-stat">{model || "-"} · {messages.length} {t("messages")}</span>
       </div>}
@@ -633,12 +866,9 @@ function App() {
   }
 
   function renderModels() {
-    const installedNames = new Set(models.map((item) => item.name));
-    const query = modelQuery.trim().toLowerCase();
-    const catalogAvailable = RECOMMENDED.filter((entry) => !installedNames.has(entry.name)).filter((entry) => !query || entry.name.toLowerCase().includes(query) || t(entry.tag).toLowerCase().includes(query));
     return <section className="view-page">
       <div className="view-heading"><div><label>{t("MODEL CATALOG")}</label><h2>{t("Models")}</h2><p>{t("Discover models served by the local gateway.")}</p></div><button className="btn primary" onClick={() => void loadModels()}>{t("Refresh models")}</button></div>
-      {!health?.ollama && <div className="card offline-card"><div><strong>{t("Model service is offline")}</strong><span>{t("Start Ollama to list and run local models.")}</span></div><button className="btn primary" onClick={() => { setModelNote(t("Starting Ollama...")); void window.hymnix.ollama.control("start").then(() => { void loadHealth(); void loadModels(); }).catch((reason) => setModelNote(reason instanceof Error ? reason.message : String(reason))); }}>{t("Start Ollama")}</button></div>}
+      {renderOllamaNotice()}
       <div className="card">
         <h3 className="card-title">{t("Installed models")} · {models.length}</h3>
         {models.length === 0 ? <p className="subtitle">{t("No model installed yet.")}</p> : <div className="catalog">{models.map((item) => <div className="catalog-row" key={item.name}>
@@ -649,16 +879,18 @@ function App() {
           <button className="btn" onClick={() => void modelAction("delete", item.name)} disabled={modelBusy === item.name}>{t("Delete")}</button>
         </div>)}</div>}
       </div>
-      <div className="card">
-        <h3 className="card-title">{t("Downloadable models")} · {catalogAvailable.length}</h3>
-        <div className="catalog-search-row"><input className="catalog-search" value={modelQuery} onChange={(event) => setModelQuery(event.target.value)} placeholder={t("Search models…")} /><button className="btn" onClick={() => setModelQuery("")} disabled={!modelQuery}>{t("Clear")}</button></div>
-        {catalogAvailable.length === 0 ? <p className="subtitle">{t("Everything in the catalog is already installed.")}</p> : <div className="catalog-scroll">{catalogAvailable.map((entry) => <div className="catalog-row" key={entry.name}>
-          <span className="model-mark">AI</span>
-          <span className="catalog-main"><strong>{entry.name}</strong><small>{entry.size} · {t(entry.tag)}</small></span>
-          <button className="btn" disabled={!!modelBusy} onClick={() => void pullModelByName(entry.name)}>{modelBusy === entry.name ? t("Working...") : t("Download")}</button>
-        </div>)}</div>}
-        {modelNote && <p className="subtitle">{modelNote}</p>}
-      </div>
+      <ModelCatalog
+        installedNames={models.map((item) => item.name)}
+        filters={catalogFilters}
+        onFiltersChange={setCatalogFilters}
+        lang={lang}
+        remote={remoteActive()}
+        downloadDisabled={!!modelBusy}
+        activeDownload={downloadOccupied ? download?.model : undefined}
+        downloadPaused={download?.phase === "paused"}
+        onDownload={(name) => void pullModelByName(name)}
+        note={modelNote}
+      />
     </section>;
   }
   function renderTerminal() {
@@ -684,10 +916,22 @@ function App() {
         <span className="term-dim">QUOTA {models.length}</span>
         <button className="term-btn" onClick={() => void loadModels()}>SAVE</button>
       </div>
-      <div className="term-logbar"><span>SYS.LOG</span><span className="term-logactions"><button className="term-link" onClick={() => void navigator.clipboard?.writeText(termEntries.map((item) => item.time + "  " + item.tag.toUpperCase() + "  " + item.text).join("\n"))}>{t("Copy")}</button><button className="term-link" onClick={() => setTermEntries([])}>{t("Clear")}</button></span></div>
+      {bridgeConnection && <details className="term-bridge-connection">
+        <summary>{t("Local reply bridge connection")}</summary>
+        <label>{t("Endpoint")} <input aria-label={t("Endpoint")} readOnly value={bridgeConnection.endpoint} /></label>
+        <label>{t("Bridge token")} <input aria-label={t("Bridge token")} readOnly value={bridgeConnection.token} /></label>
+      </details>}
+      <div className="term-logbar"><span>SYS.LOG</span><span className="term-logactions"><button className="term-link" onClick={() => void navigator.clipboard?.writeText(termEntries.map((item) => item.time + "  " + item.tag.toUpperCase() + "  " + item.text).join("\n"))}>{t("Copy")}</button><button className="term-link" onClick={() => { setTermEntries([]); setBridgeReplies([]); }}>{t("Clear")}</button></span></div>
       <div className="term-body">
         {termEntries.length === 0 ? <div className="term-line"><span className="term-time">--:--:--.---</span><span className="term-tag sys">SYS</span><span className="term-text dim">{t("No output yet")}</span></div>
           : termEntries.map((item, index) => <div className="term-line" key={index}><span className="term-time">{item.time}</span><span className={"term-tag " + item.tag}>{item.tag.toUpperCase()}</span><span className="term-text">{item.text}</span></div>)}
+        {bridgeReplies.length > 0 && <section className="term-bridge-replies" aria-label={t("External replies")}>
+          {bridgeReplies.map((reply, index) => <div key={index} className="term-line">
+            <span className="term-time">{new Date(reply.receivedAt).toLocaleTimeString()}</span>
+            <span className="term-tag out">{reply.provider.toUpperCase()}</span>
+            <span className="term-text" data-no-translate dir="auto">{reply.text}</span>
+          </div>)}
+        </section>}
       </div>
       <form className="term-input" onSubmit={(event) => { event.preventDefault(); void runTerm(); }}>
         <span className="term-caret">&gt;</span>
@@ -695,12 +939,12 @@ function App() {
           onKeyDown={(event) => {
             if (event.key === "ArrowUp" && termHistory.current.length) { event.preventDefault(); const next = Math.max(0, termCursor.current - 1); termCursor.current = next; setTermCmd(termHistory.current[next] || ""); }
             if (event.key === "ArrowDown" && termHistory.current.length) { event.preventDefault(); const next = Math.min(termHistory.current.length, termCursor.current + 1); termCursor.current = next; setTermCmd(termHistory.current[next] || ""); }
-            if (event.key === "Tab") { event.preventDefault(); const builtins = ["help", "status", "models", "clear"]; const typed = termCmd.trim(); const match = typed ? builtins.find((name) => name.startsWith(typed)) : undefined; if (match) setTermCmd(match); }
+            if (event.key === "Tab") { event.preventDefault(); const builtins = ["help", "status", "models", "clear", "bridge on", "bridge status", "bridge inbox", "bridge off"]; const typed = termCmd.trim(); const match = typed ? builtins.find((name) => name.startsWith(typed)) : undefined; if (match) setTermCmd(match); }
           }} />
         <button className="term-exec" type="submit" disabled={termBusy}>EXEC</button>
       </form>
       <div className="term-foot"><span>UPTIME {health?.uptime_s ? health.uptime_s + "s" : "-"}   LOG N {termEntries.length}</span></div>
-      <div className="term-hint">{t("Commands")}: status · models · model [name] · start/stop [name] · pull [name] · tunnel on|off · hardware · config · set [key] [value] · logtail · export · {hints}</div>
+      <div className="term-hint">{t("Commands")}: status · models · model [name] · start/stop [name] · pull [name] · tunnel on|off · hardware · config · set [key] [value] · logtail · export · bridge on|status|inbox|off · {hints}</div>
     </section>;
   }
 
@@ -720,7 +964,7 @@ function App() {
       {sessions.length === 0 ? <div className="card empty-state"><strong>{t("No saved conversations")}</strong><span>{t("Use Save in the chat panel to keep a conversation.")}</span></div> : <div className="list">{sessions.map((item) => <div className="list-row" key={item.id}>
         <span className="model-mark">C</span>
         <span><strong>{item.name}</strong><small>{item.model || "-"} · {item.count} {t("messages")} · {item.at.slice(0, 16).replace("T", " ")}</small></span>
-        <span className="controls"><button className="btn" onClick={() => { try { const raw = localStorage.getItem("hymnix.chat.saved"); if (!raw) return; const parsed = JSON.parse(raw); if (Array.isArray(parsed?.messages)) { setMessages(parsed.messages as Message[]); setActive("Chat"); } } catch { /* ignore */ } }}>{t("Open")}</button></span>
+        <span className="controls"><button className="btn" onClick={() => { try { const raw = localStorage.getItem("hymnix.chat.saved"); if (!raw) return; const parsed = JSON.parse(raw); if (Array.isArray(parsed?.messages)) { cancel(); setMessages(parsed.messages as Message[]); setFollowSignal((current) => current + 1); setActive("Chat"); } } catch { /* ignore */ } }}>{t("Open")}</button></span>
       </div>)}</div>}
     </section>;
   }
@@ -742,7 +986,7 @@ function App() {
         <h3 className="card-title">{t("Connect to a friend")}</h3>
         <div className="setting-row"><label>{t("Server address")}<span className="hint">{t("host shares this")}</span></label><div className="controls"><input value={serverBase} onChange={(event) => setServerBase(event.target.value)} placeholder="https://xxxx.trycloudflare.com" /></div></div>
         <div className="setting-row"><label>{t("Share name")}<span className="hint">{t("host name")}</span></label><div className="controls"><input value={guestName} onChange={(event) => setGuestName(event.target.value)} placeholder="Hymnix Orbit" /></div></div>
-        <div className="setting-row"><label>{t("Connection password")}<span className="hint">{t("given by the host")}</span></label><div className="controls"><input type="password" value={guestPassword} onChange={(event) => setGuestPassword(event.target.value)} /><button className="btn primary" onClick={() => void guestConnect().then((ok) => { if (ok) { setMode("remote"); void loadHealth(); void loadModels(); } })} disabled={netBusy}>{netBusy ? t("Working...") : t("Connect")}</button></div></div>
+        <div className="setting-row"><label>{t("Connection password")}<span className="hint">{t("given by the host")}</span></label><div className="controls"><input type="password" value={guestPassword} onChange={(event) => setGuestPassword(event.target.value)} /><button className="btn primary" onClick={() => void guestConnect()} disabled={netBusy}>{netBusy ? t("Working...") : t("Connect")}</button></div></div>
         <p className="subtitle">{mode === "remote" ? t("Connected: chats run on the friend's hardware.") : t("Not connected. Chats run locally.")}</p>
       </div>
 
@@ -760,6 +1004,15 @@ function App() {
 
   function renderChangelog() {
     const entries = [
+      { version: __APP_VERSION__, items: [
+        t("Two new themes: Deep sea blue replaces Daylight, and Neon black pairs electric green with true black."),
+        t("Closing Hymnix also stops its background gateway and services."),
+        t("Start Ollama from the app or reconnect automatically after starting it yourself."),
+        t("Chat follows streaming replies, with side markers to jump between turns."),
+        t("Pause and resume local Ollama downloads with live progress."),
+        t("The built-in terminal can receive replies from a local script via an experimental bridge."),
+        t("The expanded Ollama catalog adds publisher, license, download size, and GPU memory filters."),
+      ] },
       { version: "1.3.1", items: [t("Local mode always sends the local gateway key; the model list and chat now work without a manual key."), t("The Ollama button resolves the real executable instead of failing silently."), t("Startup: the window appears in ~40ms and the 9.7s port preflight loop is gone."), t("The connection bar only appears on Chat and Gateway, on a single aligned row.")] },
             { version: "1.3.0", items: [t("Product renamed to Hymnix Orbit."), t("New client-style UI with bubbles, terminal console and control panel."), t("Host mode with share password and public tunnel."), t("Guest mode: chats and models run on the host's hardware."), t("Cloud API source alongside local models.")] },
       { version: "1.2.0", items: [t("17 pages in one window."), t("Bubble cards with avatars and code copy."), t("Terminal console with status strips."), t("Five languages, 418 keys.")] },
@@ -842,7 +1095,7 @@ function App() {
     </section>;
   }
   function renderWelcome() {
-    const finish = async () => { if (role === "guest") { const ok = await guestConnect(); if (!ok) return; window.setTimeout(() => { void loadHealth(); void loadModels(); }, 80); } finishWelcome(); };
+    const finish = async () => { if (role === "guest" && !(await guestConnect())) return; finishWelcome(); };
     return <div className="welcome-mask" role="dialog" aria-modal="true" aria-label={t("Welcome")}>
       <div className="welcome-card">
         <div className="welcome-brand"><img src={brandIcon} alt="" /><div><strong>Hymnix Orbit</strong><small>{__APP_VERSION__}</small></div></div>
@@ -952,7 +1205,7 @@ function App() {
       <div className="card">
         <h3 className="card-title">{t("General")}</h3>
         <div className="setting-row"><label>{t("Language")}<span className="hint">English / 中文</span></label><div className="controls segmented"><button className={lang === "en" ? "active" : ""} onClick={() => changeLang("en")}>English</button><button className={lang === "zh" ? "active" : ""} onClick={() => changeLang("zh")}>中文</button></div></div>
-        <div className="setting-row"><label>{t("Theme")}<span className="hint">5 presets</span></label><div className="controls"><select className="btn" value={theme} onChange={(event) => changeTheme(event.target.value)}>{[["camellia-white", t("Camellia white")], ["daylight", t("Daylight")], ["cyan-dark", t("Cyan dark")], ["orange-dark", t("Orange dark")], ["rog-red-black", t("ROG red black")]].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></div></div>
+        <div className="setting-row"><label>{t("Theme")}<span className="hint">6 presets</span></label><div className="controls"><select className="btn" value={theme} onChange={(event) => changeTheme(event.target.value)}>{[["camellia-white", t("Camellia white")], ["deep-sea-blue", t("Deep sea blue")], ["cyan-dark", t("Cyan dark")], ["orange-dark", t("Orange dark")], ["rog-red-black", t("ROG red black")], ["neon-black", t("Neon black")]].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></div></div>
         <div className="setting-row"><label>{t("Workspace")}</label><div className="controls"><input value={workspace} onChange={(event) => setWorkspace(event.target.value)} aria-label={t("Workspace name")} /></div></div>
       </div>
       <div className="card">
@@ -1010,10 +1263,10 @@ function App() {
     </div>
     <aside className="side">
       <div className="brand"><img src={brandIcon} alt="" /><span>Hymnix Orbit<small>ORBIT · {__APP_VERSION__}</small></span></div>
-      <button className="new" onClick={() => { setActive("Chat"); setMessages([]); setSessionName("Untitled session"); }}>{t("+ New session")}</button>
+      <button className="new" onClick={() => { cancel(); setActive("Chat"); setMessages([]); setSessionName("Untitled session"); }}>{t("+ New session")}</button>
       <div className="side-section"><span className="side-label">{t("WORKSPACE")}</span><button className="workspace active" onClick={() => setWorkspace("Default workspace")}><span className="dot" />{t(workspace)}</button></div>
       <div className="side-section"><span className="side-label">{t("RECENT SESSIONS")}</span>
-        {sessions.length === 0 ? <span className="side-empty">{t("No sessions yet")}</span> : <div className="session-list">{sessions.map((item) => <button className="session-item" key={item.id} onClick={() => { try { const raw = localStorage.getItem("hymnix.chat.saved"); if (!raw) return; const parsed = JSON.parse(raw); if (Array.isArray(parsed?.messages)) { setMessages(parsed.messages as Message[]); setActive("Chat"); } } catch { /* ignore */ } }}><Icon name="Chat" /><span><strong>{item.name}</strong><small>{item.count} {t("messages")}</small></span></button>)}</div>}
+        {sessions.length === 0 ? <span className="side-empty">{t("No sessions yet")}</span> : <div className="session-list">{sessions.map((item) => <button className="session-item" key={item.id} onClick={() => { try { const raw = localStorage.getItem("hymnix.chat.saved"); if (!raw) return; const parsed = JSON.parse(raw); if (Array.isArray(parsed?.messages)) { cancel(); setMessages(parsed.messages as Message[]); setFollowSignal((current) => current + 1); setActive("Chat"); } } catch { /* ignore */ } }}><Icon name="Chat" /><span><strong>{item.name}</strong><small>{item.count} {t("messages")}</small></span></button>)}</div>}
       </div>
       {navGroups.map((group) => <nav className="nav-group" aria-label="Workspace navigation" data-group={group.title} key={group.title}><span className="side-label">{t(group.title)}</span>{group.items.map((item) => <button className={active === item ? "nav active" : "nav"} key={item} onClick={() => setActive(item)} aria-current={active === item ? "page" : undefined}><Icon name={item} />{t(item)}</button>)}</nav>)}
       <button className="account" onClick={() => setWelcomeOpen(true)}>
@@ -1037,7 +1290,7 @@ function App() {
       </header>}
       {renderView()}
       {startupNote && !terminalView && <div className="notice" role="status">{startupNote}</div>}
-      {error && !terminalView && <div className="error" role="alert">{error}</div>}
+      {(error || connectionError) && !terminalView && <div className="error" role="alert">{error || connectionError}</div>}
     </main>
     {!terminalView && chatView && <aside className="inspect">
       <label>{t("CHAT SOURCE")}</label>
@@ -1069,10 +1322,10 @@ function App() {
           <button className="btn" onClick={() => void loadModels()}>{t("Refresh")}</button>
           <button className="btn" onClick={() => void toggleTunnel(tunnelState === "up" || tunnelState === "starting" ? "stop" : "start")}>{tunnelState === "up" || tunnelState === "starting" ? t("Stop tunnel") : t("Share this host")}</button>
         </div>
-        <div className="panel-pull">
-          <input value={pullName} onChange={(event) => setPullName(event.target.value)} placeholder="qwen3:8b" />
-          <button className="btn primary" onClick={() => void pullModel()} disabled={!pullName.trim() || !!modelBusy}>{t("Pull")}</button>
-        </div>
+        {remoteActive() ? <p className="panel-note">{t("Switch to local mode to download models.")}</p> : <div className="panel-pull">
+          <input value={pullName} onChange={(event) => setPullName(event.target.value)} placeholder="qwen3:8b" aria-label={t("Model to download")} />
+          <button className="btn primary" onClick={() => void pullModel()} disabled={!pullName.trim() || !!modelBusy || downloadOccupied}>{t("Pull")}</button>
+        </div>}
         {modelNote && <p className="panel-note">{modelNote}</p>}
       </div>
       <label>{t("REASONING EFFORT")}</label>
@@ -1088,7 +1341,7 @@ function App() {
           <button className="btn" onClick={saveChat}>{t("Save")}</button>
           <button className="btn" onClick={loadChat}>{t("Load")}</button>
           <button className="btn" onClick={exportChat}>{t("Export")}</button>
-          <button className="btn" onClick={() => setMessages([])}>{t("Clear")}</button>
+          <button className="btn" onClick={() => { cancel(); setMessages([]); }}>{t("Clear")}</button>
         </div>
       </div>
       <label>{t("TELEMETRY")}</label>
@@ -1099,6 +1352,9 @@ function App() {
         <div className="panel-row"><span>RAM</span><strong>{(stats ? (stats.ramUsed / 1024).toFixed(1) : "-") + "/" + (stats ? (stats.ramTotal / 1024).toFixed(1) : "-")}G</strong></div>
       </div>
     </aside>}
+    {download && <ModelDownloadFooter download={download} lang={lang} remote={remoteActive()}
+      onPause={() => stopModelDownload("pause")} onResume={resumeModelDownload}
+      onCancel={() => stopModelDownload("cancel")} onDismiss={() => setDownload(null)} />}
     {welcomeOpen && renderWelcome()}
   </div>;
 }

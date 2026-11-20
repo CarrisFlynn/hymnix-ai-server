@@ -1,4 +1,4 @@
-﻿# runtime data 鈥?never commit
+# runtime data 鈥?never commit
 logs/
 tunnel_url.txt
 trace_debug.log
@@ -21,6 +21,7 @@ hymnix_client.json
 # binaries
 cloudflared.exe
 ngrok.exe
+hymnix-server-*-x64.exe
 
 node_modules/
 release/

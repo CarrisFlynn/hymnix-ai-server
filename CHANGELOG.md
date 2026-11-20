@@ -2,6 +2,22 @@
 
 Only user-visible changes are listed. Internal refactors, test scaffolding and machine-specific paths are intentionally omitted.
 
+## 1.3.2 — 2026-11-20
+
+### Added
+
+- Two color themes: **Deep sea blue** (navy #122E8A on soft cream #F5EFEA) replaces Daylight as the light theme, and **Neon black** (electric green #00FE92 on a true black canvas) is a high-contrast dark theme. Six presets in total; a saved theme that no longer exists falls back to the default.
+- Chat follows streaming replies while you stay at the bottom, keeps your reading position when you scroll up, and offers a button back to the latest reply. The turn markers on the right jump to a turn and bold the active one.
+- Local Ollama downloads show live progress and speed, and can be paused, resumed, or canceled. Resuming continues from the data Ollama kept; canceling and pulling again starts a fresh request.
+- The expanded Ollama catalog filters by publisher, license, download size, and estimated GPU memory, and searches by name or publisher.
+- Experimental: the built-in terminal accepts reply text pushed by a local script over a loopback-only endpoint with a rotating token. The app only displays that text in the terminal. It does not forward it to a model, and it does not read or control the third-party client that produced it.
+
+### Changed
+
+- Closing the Windows desktop app stops the background gateway and the other processes the app started, so nothing keeps running after exit.
+- The Windows installer closes the previous installation and its leftover gateway before upgrading, without touching an Ollama you launched yourself.
+- Ollama can be started from the app. An Ollama started separately afterwards is picked up automatically instead of requiring an app restart.
+
 ## 1.3.0 — 2026-11-17
 
 ### Added

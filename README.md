@@ -8,7 +8,7 @@ Hymnix connects Ollama-compatible models to a practical desktop workflow: chat, 
 
 ![License](https://img.shields.io/badge/license-AGPL--3.0-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey)
-![Release](https://img.shields.io/badge/release-1.3.1-blueviolet)
+![Release](https://img.shields.io/badge/release-1.3.2-blueviolet)
 ![Python](https://img.shields.io/badge/python-3.11%2B-3776AB)
 
 ## Screenshots
@@ -29,7 +29,7 @@ More captures (chat, gateway, models, terminal, monitor, history, changelog, sup
 - Host mode: share name, share password, and a one-click public tunnel with visible state and a live log.
 - Guest mode: address, share name and connection password; the model list and chats come from the host.
 - Cloud API as a second chat source, alongside local models.
-- Downloadable model catalog with search, next to the installed list.
+- Downloadable Ollama catalog with name and publisher search, license and download size filters, and estimated GPU memory limits.
 - Terminal console with a status strip, live tunnel log and gateway configuration commands.
 - Chat with markdown, code copy and a collapsible thinking-process panel.
 - Right control panel: model, reasoning effort, conversation save / load / export, GPU / VRAM / AI / RAM telemetry.

@@ -43,6 +43,15 @@ const api: DesktopApi & { adminHistory: (adminKey: string, query?: AdminHistoryQ
     get: (baseUrl: string, path: string, token?: string) => ipcRenderer.invoke("network:get", { baseUrl, path, token }),
   } as NetworkApi,
   models: {
+    async pullStream({ requestId, model, onProgress }) {
+      const listener = (_event: Electron.IpcRendererEvent, id: string, progress: import("../shared/protocol").PullProgress) => {
+        if (id === requestId) onProgress(progress);
+      };
+      ipcRenderer.on("models:pull-progress", listener);
+      try { return await ipcRenderer.invoke("models:pull-stream", { requestId, model }); }
+      finally { ipcRenderer.removeListener("models:pull-progress", listener); }
+    },
+    cancelPull: (requestId) => { ipcRenderer.send("models:pull-cancel", requestId); },
     list: (): Promise<{ models: LocalModel[] }> => ipcRenderer.invoke("models:list"),
     pull: (model: string) => ipcRenderer.invoke("models:pull", model),
     remove: (model: string) => ipcRenderer.invoke("models:delete", model),
@@ -50,6 +59,7 @@ const api: DesktopApi & { adminHistory: (adminKey: string, query?: AdminHistoryQ
     stop: (model: string) => ipcRenderer.invoke("models:stop", model),
   },
   terminal: {
+    bridge: (command) => ipcRenderer.invoke("terminal:bridge", command),
     start: (request: TerminalCommandRequest): Promise<TerminalCommandResult> => ipcRenderer.invoke("terminal:start", request),
     cancel: (id: string) => { ipcRenderer.send("terminal:cancel", id); },
     unsubscribe: (id: string) => { ipcRenderer.send("terminal:cancel", id); },

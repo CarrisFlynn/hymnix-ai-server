@@ -7,6 +7,7 @@ export type GatewayHealth = {
   ollama?: boolean;
   models?: number;
   uptime_s?: number;
+  clients_online?: number;
 };
 
 export type GatewayModel = {
@@ -324,7 +325,12 @@ export type TerminalCompletion = {
   error?: { code: TerminalErrorCode; message: string };
 };
 
+export type TerminalBridgeCommand = "on" | "off" | "status" | "inbox";
+export type TerminalBridgeReply = { provider: "gpt" | "gemini" | "other"; text: string; receivedAt: string };
+export type TerminalBridgeResult = { enabled: boolean; endpoint?: string; pending?: number; token?: string; replies?: TerminalBridgeReply[] };
+
 export type TerminalApi = {
+  bridge: (command: TerminalBridgeCommand) => Promise<TerminalBridgeResult>;
   start: (request: TerminalCommandRequest) => Promise<TerminalCommandResult>;
   cancel: (id: string) => void;
   onOutput: (listener: (event: TerminalOutputEvent) => void) => () => void;
@@ -393,7 +399,12 @@ export type ToolsApi = {
 
 export type LocalModel = { name: string; size?: number; loaded?: boolean };
 
+export type PullProgress = { status: string; digest?: string; total?: number; completed?: number };
+export type PullInput = { requestId: string; model: string; onProgress: (progress: PullProgress) => void };
+
 export type ModelsApi = {
+  pullStream: (input: PullInput) => Promise<{ cancelled: boolean }>;
+  cancelPull: (requestId: string) => void;
   list: () => Promise<{ models: LocalModel[] }>;
   pull: (model: string) => Promise<Record<string, unknown>>;
   remove: (model: string) => Promise<Record<string, unknown>>;
@@ -411,7 +422,9 @@ export type AppSettings = {
   previewMode: "inapp" | "browser";
 };
 
-export type AppBootstrap = { base: string; port: number; external: boolean; error?: string };
+export type GatewayLifecycleState = "idle" | "starting" | "ready" | "failed" | "stopping" | "stopped";
+export type AppBootstrap = { base: string; port: number; external: boolean; error?: string; ready: boolean; state: GatewayLifecycleState };
+export type GatewayRestartResult = AppBootstrap & { ok: boolean };
 
 export type SettingsApi = {
   get: () => Promise<AppSettings>;
@@ -424,7 +437,8 @@ export type PreviewApi = {
   resize: () => Promise<{ ok: boolean }>;
 };
 
-export type OllamaApi = { control: (action: "start" | "stop" | "status") => Promise<Record<string, unknown>> };
+export type OllamaControlResult = { ok: boolean; online: boolean; ready: boolean; models?: number; code?: string; error?: string; detail?: string };
+export type OllamaApi = { control: (action: "start" | "stop" | "status") => Promise<OllamaControlResult> };
 
 export type ConfigApi = {
   get: () => Promise<Record<string, unknown>>;
@@ -463,7 +477,7 @@ export type DesktopApi = {
   config: ConfigApi;
   bootstrap: () => Promise<AppBootstrap>;
   log: (message: string) => Promise<boolean>;
-  restartGateway: () => Promise<{ ok: boolean; base: string; port: number; error?: string }>;
+  restartGateway: () => Promise<GatewayRestartResult>;
   settings: SettingsApi;
   preview: PreviewApi;
   ollama: OllamaApi;

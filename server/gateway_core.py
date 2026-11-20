@@ -14,6 +14,7 @@ import json
 import secrets
 import os
 import socket
+import shutil
 import subprocess
 import sys
 import threading
@@ -79,7 +80,8 @@ LOG_DIR = os.path.join(BASE_DIR, "logs")
 def _read_version():
     for base in (os.path.dirname(_BUNDLE_DIR), _EXE_DIR, _BUNDLE_DIR, os.path.dirname(_EXE_DIR)):
         try:
-            value = open(os.path.join(base, "VERSION"), encoding="utf-8").read().strip()
+            with open(os.path.join(base, "VERSION"), encoding="utf-8") as handle:
+                value = handle.read().strip()
             if value:
                 return value
         except (OSError, UnicodeError):
@@ -400,6 +402,7 @@ def _ensure_keys(cfg):
     changed = False
     if not str(cfg.get("api_key") or "").strip():
         cfg["api_key"] = "Hymnix" + secrets.token_urlsafe(24)
+        changed = True
     if not str(cfg.get("host_password") or "").strip():
         cfg["host_password"] = secrets.token_urlsafe(9)
         changed = True
@@ -427,12 +430,6 @@ def load_config():
 
 
 CFG = load_config()
-_env_host = str(os.environ.get("HYMNIX_LISTEN_HOST") or "").strip()
-_env_port = str(os.environ.get("HYMNIX_LISTEN_PORT") or "").strip()
-if _env_host:
-    CFG["listen_host"] = _env_host
-if _env_port.isdigit():
-    CFG["listen_port"] = int(_env_port)
 if not str(CFG.get("host_name") or "").strip():
     CFG["host_name"] = "Hymnix Orbit"
 if not str(CFG.get("host_password") or "").strip():
@@ -468,6 +465,11 @@ BAN_WINDOW = 600
 BAN_SECONDS = 1800
 TUNNEL_FILE = os.path.join(BASE_DIR, "tunnel_url.txt")
 OLLAMA_STATE = {"proc": None}
+OLLAMA_START_LOCK = threading.Lock()
+GATEWAY_STOPPING = threading.Event()
+_BOUND_LISTEN_ADDRESS = None
+OLLAMA_START_TIMEOUT = 20.0
+OLLAMA_PROBE_INTERVAL = 0.25
 TUNNEL_STATE = {"proc": None, "state": "off", "url": "", "started_ever": False, "stopped": False, "log": [], "watchdog": False}
 TUNNEL_LOG = []
 
@@ -545,7 +547,7 @@ def start_tunnel():
         TUNNEL_STATE["state"] = "failed"
         _tunnel_note("cloudflared.exe not found")
         return tunnel_status()
-    port = int(CFG.get("listen_port") or 11435)
+    port = listen_address()[1]
     try:
         proc = subprocess.Popen(
             [exe, "tunnel", "--url", "http://127.0.0.1:%d" % port, "--no-autoupdate"],
@@ -837,29 +839,120 @@ def _open_upstream(method, target, body=None, headers=None, timeout=900):
 
 def upstream_json(path, timeout=3):
     try:
-        conn = http.client.HTTPConnection(UP_HOST, UP_PORT, timeout=timeout)
-        conn.request("GET", path)
-        resp = conn.getresponse()
-        data = resp.read()
-        return resp.status, json.loads(data.decode("utf-8", "ignore"))
-    except Exception:
+        with_response = http.client.HTTPConnection(UP_HOST, UP_PORT, timeout=timeout)
+        try:
+            with_response.request("GET", path)
+            resp = with_response.getresponse()
+            data = resp.read()
+            return resp.status, json.loads(data.decode("utf-8"))
+        finally:
+            with_response.close()
+    except (OSError, http.client.HTTPException, ValueError):
         return 0, None
 
 
+def _ollama_version(timeout=1):
+    status, data = upstream_json("/api/version", timeout=timeout)
+    version = data.get("version") if isinstance(data, dict) else None
+    return version.strip() if status == 200 and isinstance(version, str) else ""
+
+
+def _ollama_models(path, timeout=3):
+    status, data = upstream_json(path, timeout=timeout)
+    if status != 200 or not isinstance(data, dict) or not isinstance(data.get("models"), list):
+        return []
+    return [m["name"] for m in data["models"] if isinstance(m, dict) and isinstance(m.get("name"), str)]
+
+
 def upstream_status():
-    st, data = upstream_json("/api/version")
-    online = st == 200
-    models, loaded = [], []
-    if online:
-        st2, tags = upstream_json("/api/tags")
-        if st2 == 200 and tags:
-            models = [m.get("name") for m in tags.get("models", [])]
-        st3, ps = upstream_json("/api/ps")
-        if st3 == 200 and ps:
-            loaded = [m.get("name") for m in ps.get("models", [])]
-    return {"online": online,
-            "version": (data or {}).get("version", "") if online else "",
-            "models": models, "loaded": loaded}
+    version = _ollama_version()
+    return {"online": bool(version), "version": version,
+            "models": _ollama_models("/api/tags") if version else [],
+            "loaded": _ollama_models("/api/ps") if version else []}
+
+
+def _ollama_result(ok, online, models=0, code=None, detail=None):
+    result = {"ok": ok, "online": online, "ready": online, "models": models}
+    if code:
+        result.update(code=code, error=code, detail=detail)
+    return result
+
+
+def _find_ollama():
+    executable = shutil.which("ollama")
+    if executable or os.name != "nt":
+        return executable
+    for key, subdir in (("LOCALAPPDATA", "Programs"), ("ProgramFiles", ""), ("ProgramFiles(x86)", "")):
+        base = os.environ.get(key)
+        if base:
+            candidate = os.path.join(base, subdir, "Ollama", "ollama.exe")
+            if os.path.isfile(candidate):
+                return candidate
+    return None
+
+
+def _stop_owned_ollama():
+    with OLLAMA_START_LOCK:
+        proc = OLLAMA_STATE.get("proc")
+        if proc is None:
+            return
+        if proc.poll() is None:
+            if os.name == "nt":
+                # Ollama serves loaded models from child runner processes on Windows.
+                try:
+                    subprocess.run(["taskkill.exe", "/PID", str(proc.pid), "/T", "/F"],
+                                   stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                   stderr=subprocess.DEVNULL, timeout=1.5,
+                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                except (OSError, subprocess.TimeoutExpired):
+                    pass
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=1)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=1)
+        OLLAMA_STATE["proc"] = None
+
+
+def _start_ollama():
+    deadline = time.monotonic() + OLLAMA_START_TIMEOUT
+    with OLLAMA_START_LOCK:
+        if GATEWAY_STOPPING.is_set():
+            return _ollama_result(False, False, code="gateway_stopping", detail="Gateway is stopping.")
+        if _ollama_version():
+            return _ollama_result(True, True, len(_ollama_models("/api/tags", timeout=1)))
+        proc = OLLAMA_STATE.get("proc")
+        if proc is None or proc.poll() is not None:
+            if UP_HOST not in ("127.0.0.1", "localhost", "::1"):
+                return _ollama_result(False, False, code="ollama_not_local", detail="The configured Ollama endpoint is remote.")
+            executable = _find_ollama()
+            if not executable:
+                return _ollama_result(False, False, code="ollama_not_installed", detail="Ollama was not found. Install Ollama and retry.")
+            ollama_host = "[%s]" % UP_HOST if ":" in UP_HOST else UP_HOST
+            try:
+                proc = subprocess.Popen([executable, "serve"], stdin=subprocess.DEVNULL,
+                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                        env={**os.environ, "OLLAMA_HOST": "%s:%d" % (ollama_host, UP_PORT)},
+                                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            except OSError as exc:
+                return _ollama_result(False, False, code="ollama_start_failed", detail=str(exc)[:160])
+            OLLAMA_STATE["proc"] = proc
+
+    while not GATEWAY_STOPPING.is_set():
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        if _ollama_version(timeout=min(1, remaining)):
+            return _ollama_result(True, True, len(_ollama_models("/api/tags", timeout=1)))
+        exit_code = proc.poll()
+        if exit_code is not None:
+            return _ollama_result(False, False, code="ollama_exited", detail="Ollama exited before becoming ready (code %s)." % exit_code)
+        GATEWAY_STOPPING.wait(min(OLLAMA_PROBE_INTERVAL, max(0, deadline - time.monotonic())))
+    if GATEWAY_STOPPING.is_set():
+        return _ollama_result(False, False, code="gateway_stopping", detail="Gateway is stopping.")
+    return _ollama_result(False, False, code="ollama_start_timeout", detail="Ollama did not become ready before the startup deadline.")
 
 
 ADMIN_HTML = os.path.join(BASE_DIR, "dashboard.html")
@@ -1086,7 +1179,7 @@ class Handler(BaseHTTPRequestHandler):
             "allow_remote": bool(CFG.get("allow_remote", True)),
             "tunnel": read_tunnel_url(),
             "tunnel_running": TUNNEL_STATE.get("proc") is not None,
-            "listen_port": CFG.get("listen_port"),
+            "listen_port": listen_address()[1],
         })
 
     def _mask_key(self, value):
@@ -1103,54 +1196,29 @@ class Handler(BaseHTTPRequestHandler):
     def _admin_ollama(self, method="POST"):
         payload = {}
         if method == "POST":
-            body = self._read_body()
             try:
-                payload = json.loads(body.decode("utf-8", "ignore") or "{}")
-            except Exception:
-                payload = {}
-        action = str((payload or {}).get("action") or "status").strip().lower()
+                payload = json.loads(self._read_body() or b"{}")
+            except (ValueError, UnicodeError):
+                pass
+        action = str(payload.get("action") or "status").strip().lower() if isinstance(payload, dict) else "status"
         if action == "start":
-            if not upstream_status().get("online"):
-                try:
-                    exe = None
-                    for cand in (os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Ollama", "ollama.exe"),
-                                 os.path.join(os.environ.get("ProgramFiles", ""), "Ollama", "ollama.exe"),
-                                 os.path.join(os.environ.get("ProgramFiles(x86)", ""), "Ollama", "ollama.exe")):
-                        if cand and os.path.exists(cand):
-                            exe = cand
-                            break
-                    if not exe:
-                        return self._json(200, {"ok": False, "online": False, "error": "ollama_not_installed",
-                                                "detail": "Ollama is not installed in a standard location."})
-                    proc = subprocess.Popen([exe, "serve"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-                    OLLAMA_STATE["proc"] = proc
-                    for _ in range(40):
-                        time.sleep(0.5)
-                        if upstream_status().get("online"):
-                            break
-                except Exception as exc:
-                    return self._json(503, {"ok": False, "error": "ollama_start_failed", "detail": str(exc)[:160]})
-            status = upstream_status()
-            return self._json(200, {"ok": True, "online": bool(status.get("online")), "models": len(status.get("models") or [])})
+            return self._json(200, _start_ollama())
         if action == "stop":
-            proc = OLLAMA_STATE.get("proc")
-            if proc is not None:
-                try:
-                    proc.terminate()
-                except Exception:
-                    pass
-                OLLAMA_STATE["proc"] = None
-            return self._json(200, {"ok": True, "online": bool(upstream_status().get("online"))})
-        status = upstream_status()
-        return self._json(200, {"ok": True, "online": bool(status.get("online")), "models": len(status.get("models") or [])})
+            try:
+                _stop_owned_ollama()
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                return self._json(200, _ollama_result(False, bool(_ollama_version()), code="ollama_stop_failed", detail=str(exc)[:160]))
+        online = bool(_ollama_version())
+        models = len(_ollama_models("/api/tags", timeout=1)) if online else 0
+        return self._json(200, _ollama_result(True, online, models))
 
     def _admin_config(self, method):
         if method == "GET":
             data = {key: CFG.get(key) for key in sorted(self.CONFIG_EDITABLE)}
             data["host_name"] = CFG.get("host_name")
-            data["listen_port"] = CFG.get("listen_port")
-            data["upstream_port"] = CFG.get("upstream_port")
+            data["listen_port"] = listen_address()[1]
+            data["upstream_host"] = UP_HOST
+            data["upstream_port"] = UP_PORT
             return self._json(200, {"ok": True, "editable": sorted(self.CONFIG_EDITABLE), "values": data})
         body = self._read_body()
         try:
@@ -1865,7 +1933,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, {
                 "gateway": {"version": VERSION, "started": STATS["started_at"],
                             "uptime_s": int(time.time() - START_TS),
-                            "listen": "%s:%s" % (CFG["listen_host"], CFG["listen_port"])},
+                            "listen": "%s:%s" % listen_address()},
                 "ollama": st,
                 "tunnel": read_tunnel_url(),
                 "clients": clients,
@@ -2610,13 +2678,14 @@ else:
     _FastUnixHTTPServer = None
 
 
-def start_server():
-    try:
-        threading.Thread(target=_idle_unloader, daemon=True).start()
-    except Exception:
-        pass
-    """在当前线程中启动 HTTP 服务（供 GUI 调用）"""
-    sock_path = str(os.environ.get("HYMNIX_SOCKET") or "").strip()
+def listen_address():
+    return _BOUND_LISTEN_ADDRESS or (CFG["listen_host"], int(CFG["listen_port"]))
+
+
+def start_server(*, desktop_managed=False):
+    """Bind an HTTP listener without persisting process-specific overrides."""
+    global _BOUND_LISTEN_ADDRESS
+    sock_path = "" if desktop_managed else str(os.environ.get("HYMNIX_SOCKET") or "").strip()
     if sock_path and _FastUnixHTTPServer is not None:
         parent = os.path.dirname(sock_path)
         if parent:
@@ -2628,31 +2697,56 @@ def start_server():
         except Exception:
             pass
         srv = _FastUnixHTTPServer(sock_path, Handler)
-        srv.daemon_threads = True
+        _BOUND_LISTEN_ADDRESS = None
         log_event("gateway_start", socket=sock_path, version=VERSION)
-        return srv
-    host = CFG["listen_host"]
-    port = int(CFG["listen_port"])
-    srv = _FastHTTPServer((host, port), Handler)
-    srv.daemon_threads = True
-    log_event("gateway_start", port=port, version=VERSION)
+    else:
+        host = "127.0.0.1" if desktop_managed else (os.environ.get("HYMNIX_LISTEN_HOST") or CFG["listen_host"])
+        port = 0 if desktop_managed else int(os.environ.get("HYMNIX_LISTEN_PORT") or CFG["listen_port"])
+        srv = _FastHTTPServer((host, port), Handler)
+        _BOUND_LISTEN_ADDRESS = srv.server_address[:2]
+        log_event("gateway_start", port=srv.server_port, version=VERSION)
+    threading.Thread(target=_idle_unloader, daemon=True).start()
     return srv
 
 
-def main():
+def main(*, control_dir=None):
+    GATEWAY_STOPPING.clear()
     load_recent_history()
-    srv = start_server()
-    if str(os.environ.get("HYMNIX_SOCKET") or "").strip():
-        print("Hymnix Gateway v%s listening on socket %s" % (VERSION, os.environ.get("HYMNIX_SOCKET")))
-    else:
-        print("Hymnix Gateway v%s listening on %s:%s" % (VERSION, CFG["listen_host"], CFG["listen_port"]))
+    srv = start_server(desktop_managed=bool(control_dir))
+    watcher_done = threading.Event()
     try:
-        srv.serve_forever()
+        if control_dir:
+            ready_path = os.path.join(control_dir, "ready.json")
+            temp_path = ready_path + ".tmp"
+            with open(temp_path, "w", encoding="utf-8") as handle:
+                json.dump({"port": srv.server_port, "version": VERSION}, handle)
+            os.replace(temp_path, ready_path)
+
+            def watch_shutdown():
+                stop_path = os.path.join(control_dir, "stop")
+                while not watcher_done.wait(0.1):
+                    if os.path.exists(stop_path) or not os.path.isdir(control_dir):
+                        GATEWAY_STOPPING.set()
+                        srv.shutdown()
+                        return
+
+            threading.Thread(target=watch_shutdown, daemon=True).start()
+        if sys.stdout is not None:
+            print("Hymnix Gateway v%s listening on %s" % (VERSION, srv.server_address), flush=True)
+        srv.serve_forever(poll_interval=0.1)
     except KeyboardInterrupt:
         pass
     finally:
-        log_event("gateway_stop")
+        GATEWAY_STOPPING.set()
+        watcher_done.set()
         srv.server_close()
+        if TUNNEL_STATE.get("proc") is not None:
+            stop_tunnel()
+        try:
+            _stop_owned_ollama()
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        log_event("gateway_stop")
 
 
 if __name__ == "__main__":
