@@ -2,12 +2,12 @@
    Colour lives in src/styles/themes/. Old names in styles.css stay as the
    compatibility layer until Phase 1 moves components over. */
 :root {
-  --font-ui: "Inter Local", Inter, "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
+  --font-ui: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "Inter Local", Inter, "PingFang SC", system-ui, sans-serif;
   --font-mono: "JetBrains Mono Local", "JetBrains Mono", "Cascadia Mono", Consolas, "Microsoft YaHei UI", monospace;
 
   /* type scale */
   --fs-caption: 12px; --fs-secondary: 13px; --fs-body: 14px; --fs-message: 15px;
-  --fs-emphasis: 16px; --fs-title: 20px; --fs-display: 28px;
+  --fs-emphasis: 16px; --fs-title: 21px; --fs-display: 28px;
   --lh-latin: 1.5; --lh-cjk: 1.6;
   --fw-regular: 400; --fw-medium: 500; --fw-semibold: 600;
 

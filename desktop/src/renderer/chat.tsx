@@ -116,9 +116,9 @@ export function Bubble({ message, turnIndex, messageIndex, busy = false, generat
   }
   const thinkingSeconds = message.reasoningMs ? Math.max(1, Math.round(message.reasoningMs / 1000)) : null;
   return <article className={(user ? "bubble user" : "bubble assistant") + (generating ? " generating" : "")} data-chat-turn={turnIndex}>
-    {user ? <span className="bubble-avatar" aria-hidden="true">U</span> : <img className="bubble-avatar brand-avatar" src={brandIcon} alt="" />}
+    {!user && <img className="bubble-avatar brand-avatar" src={brandIcon} alt="" />}
     <div className="bubble-card">
-      <div className="bubble-meta"><strong>{user ? t("You") : "Hymnix Orbit"}</strong><span>{formatMessageTime(message.at)}</span>{!user && message.tokensPerSecond ? <span className="bubble-rate" data-no-translate>{message.tokensPerSecond.toFixed(1)} tok/s</span> : null}</div>
+      {!user && <div className="bubble-meta"><strong>Hymnix Orbit</strong><span>{formatMessageTime(message.at)}</span>{message.tokensPerSecond ? <span className="bubble-rate" data-no-translate>{message.tokensPerSecond.toFixed(1)} tok/s</span> : null}</div>}
       {message.reasoning ? <details className="bubble-think">
         <summary>{thinkingSeconds ? tf("Thought for {seconds} s", { seconds: String(thinkingSeconds) }) : t("Thinking process")} · {message.reasoning.length} {t("chars")}</summary>
         <pre>{message.reasoning}</pre>
@@ -136,6 +136,7 @@ export function Bubble({ message, turnIndex, messageIndex, busy = false, generat
         {!user && onBranch && <button type="button" data-tip={t("Branch from here")} aria-label={t("Branch from here")} onClick={() => onBranch(messageIndex)}>⑂</button>}
         {onDelete && <button type="button" className="danger" data-tip={t("Delete turn")} aria-label={t("Delete turn")} onClick={() => onDelete(messageIndex)}>×</button>}
       </div>}
+      {user && message.at && <span className="bubble-time">{formatMessageTime(message.at)}</span>}
     </div>
   </article>;
 }

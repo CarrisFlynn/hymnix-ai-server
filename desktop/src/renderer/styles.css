@@ -21,11 +21,10 @@
   --keycap-lift: rgba(70, 12, 26, .30);
   --keycap-lift-hi: rgba(255, 255, 255, 1);
   --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px;
-  --fs-label: 11px;
-  --fs-meta: 12px;
-  --fs-body: 13px;
-  --fs-title: 22px;
-  --fs-display: 26px;
+  /* The type scale lives in src/styles/tokens/semantic.css; these two names are
+     kept as aliases because legacy component rules still reference them. */
+  --fs-label: var(--fs-caption);
+  --fs-meta: var(--fs-caption);
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -558,7 +557,6 @@ select.btn { padding-right: var(--s2); max-width: 260px; }
 .conn-chip .dot { margin-right: 4px; }
 .canvas { gap: var(--s3); }
 .bubble { display: flex; gap: 10px; align-items: flex-start; max-width: 100%; }
-.bubble.user { flex-direction: row-reverse; }
 .bubble-avatar { display: grid; place-items: center; width: 28px; height: 28px; flex: 0 0 28px; border-radius: 50%; font-size: 11px; font-weight: 700; background: var(--user-bubble-bg); color: var(--user-bubble-ink); border: 1px solid var(--user-bubble-line); }
 .bubble.assistant .bubble-avatar { background: var(--red-050); color: var(--red-700); border-color: var(--line-strong); }
 .bubble-card { max-width: min(760px, 78%); padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; border-top-left-radius: 4px; background: var(--surface); box-shadow: 0 1px 2px rgba(43,16,23,.04); }

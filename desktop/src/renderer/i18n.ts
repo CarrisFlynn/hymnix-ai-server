@@ -426,6 +426,7 @@ export const zh: Record<string, string> = {
   "Reading the selected workspace...": "正在读取所选工作区...",
   "Ready": "已就绪",
   "Reasoning": "推理",
+  "RECENT": "最近",
   "Refresh": "刷新",
   "Refresh models": "刷新模型",
   "Remote connection is experimental; the local gateway is still used for health and models.": "远程连接为实验性功能；健康检查与模型列表仍走本地网关。",

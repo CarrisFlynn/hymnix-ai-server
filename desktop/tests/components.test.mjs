@@ -102,9 +102,9 @@ test("theme swatches mirror the accent colour in each theme file", () => {
   // The first-run row previews each preset before it is applied, so the swatch has
   // to match `--accent` in the stylesheet. This keeps the two from drifting apart.
   const themes = fs.readFileSync(new URL("../src/theme/themeManager.ts", import.meta.url), "utf8");
-  const definitions = [...themes.matchAll(/\{ id: "([\w-]+)", mode: "(light|dark)", label: "[^"]+", swatch: "(#[0-9a-fA-F]{6})" \}/g)]
-    .map((match) => ({ id: match[1], mode: match[2], swatch: match[3].toLowerCase() }));
-  assert.equal(definitions.length, 9, "all nine presets must declare a swatch");
+  const definitions = [...themes.matchAll(/\{ id: "([\w-]+)", mode: "(light|dark)", label: "[^"]+", swatch: "(#[0-9a-fA-F]{6})", bg: "(#[0-9a-fA-F]{6})", surface: "(#[0-9a-fA-F]{6})" \}/g)]
+    .map((match) => ({ id: match[1], mode: match[2], swatch: match[3].toLowerCase(), bg: match[4].toLowerCase(), surface: match[5].toLowerCase() }));
+  assert.equal(definitions.length, 9, "all nine presets must declare swatch, bg and surface");
   const files = {
     "camellia-white": "light-camellia", "deep-sea-blue": "light-deepsea", "ink-green": "light-ink",
     "honey-crimson": "light-honey", "cyan-dark": "dark-cyan", "orange-dark": "dark-orange",
@@ -115,5 +115,11 @@ test("theme swatches mirror the accent colour in each theme file", () => {
     const accent = /--accent:(#[0-9a-fA-F]{6})/.exec(css);
     assert.ok(accent, `${definition.id} must declare --accent`);
     assert.equal(definition.swatch, accent[1].toLowerCase(), `${definition.id} swatch must match --accent`);
+    // A settings card paints its own preview from these two, so they cannot drift either.
+    const bg = /--bg:(#[0-9a-fA-F]{6})/.exec(css);
+    const surface = /--surface:(#[0-9a-fA-F]{6})/.exec(css);
+    assert.ok(bg && surface, `${definition.id} must declare --bg and --surface`);
+    assert.equal(definition.bg, bg[1].toLowerCase(), `${definition.id} preview background must match --bg`);
+    assert.equal(definition.surface, surface[1].toLowerCase(), `${definition.id} preview panel must match --surface`);
   }
 });

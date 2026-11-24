@@ -9,7 +9,7 @@ Only user-visible changes are listed. Internal refactors, test scaffolding and m
 - Phase 0 of the 2.0 redesign: one semantic token layer (`--bg`, `--text`, `--accent-fill`, status and console tokens), one theme file per preset, and locally bundled Inter and JetBrains Mono (no CDN).
 - Three new themes: Ink green (墨绿 on ivory), Honey crimson (crimson on honey) and Graphite gold (metallic gold on graphite). Nine presets in total; each one declares its light or dark mode.
 - Theme files are wired into a dedicated theme manager, so the theme picker lists all nine presets and remembers the choice.
-- Rebuilt the workspace shell with a collapsible sidebar, global command search, responsive chat inspector and a consistent flat component style.
+- Rebuilt the workspace shell with a collapsible sidebar, a responsive chat inspector and a consistent flat component style.
 - One component language across the app: six button levels, chips and status pills, hover and focus tooltips with the keyboard hint, and skeleton rows while a list loads.
 - The model picker is a searchable combobox that marks which models fit your GPU.
 - Sharing shows a password strength meter, a QR code for the public link that is generated on this device, and the list of people connected with a one-click disconnect.
@@ -31,6 +31,14 @@ Only user-visible changes are listed. Internal refactors, test scaffolding and m
 
 ### Changed
 
+- The sidebar follows the Codex and Claude arrangement: new chat, workspace and page navigation at the top, recent conversations below them taking the remaining height. One scroll column, and labels no longer sit on top of conversation rows.
+- Your messages are right-aligned bubbles; replies are left-aligned body text without the two large avatars.
+- Appearance lost the light/dark/auto switch and the hover preview: clicking a theme card switches to it, thumbnails use each theme's real colours, and one card per row is selected.
+- The composer no longer duplicates the model and reasoning pickers, which live in the right-hand panel.
+- Collapsing the sidebar now leaves only centred icons instead of stacked or clipped labels.
+- Removed every search box (title bar, sidebar, chat header, settings) and the command palette.
+- The empty-state mark is the original star again, without the circle plate and orbit rings added earlier.
+- UI text uses the Windows text face and sits about 1px larger, which reads better at these sizes.
 - Sidebar conversations follow the Claude and ChatGPT pattern: one single scroll column with single-line titles, instead of a small nested scrollbox that clipped rows. The workspace selector is a quiet row, and the footer stays pinned.
 - Text scaling goes to 200% and long labels wrap instead of clipping; touch targets grow to 44px on touch screens.
 - Chat completion is announced once to screen readers instead of on every token, and reduced-motion and forced-colors settings are respected throughout.

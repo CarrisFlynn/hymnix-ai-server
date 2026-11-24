@@ -86,15 +86,6 @@ function formatDuration(seconds: number | undefined): string {
   if (m) return `${m}m ${r}s`;
   return `${r}s`;
 }
-function fuzzyMatch(query: string, text: string): boolean {
-  const normalized = text.toLocaleLowerCase();
-  return query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean).every((term) => {
-    if (normalized.includes(term)) return true;
-    let cursor = 0;
-    for (const char of term) { cursor = normalized.indexOf(char, cursor); if (cursor < 0) return false; cursor++; }
-    return true;
-  });
-}
 
 type Attachment = { id: string; name: string; size: number; kind: "text" | "image" | "file"; text?: string };
 
@@ -230,17 +221,11 @@ function App() {
   const [welcomeSkipped, setWelcomeSkipped] = useState<string[]>([]);
   const [developerExpanded, setDeveloperExpanded] = useState(false);
   const [helpMenuOpen, setHelpMenuOpen] = useState(false);
-  const [statusPopoverOpen, setStatusPopoverOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => { try { return localStorage.getItem("hymnix.sidebar.collapsed") === "1"; } catch { return false; } });
-  const [paletteOpen, setPaletteOpen] = useState(false);
-  const [paletteQuery, setPaletteQuery] = useState("");
-  const [paletteIndex, setPaletteIndex] = useState(0);
-  const paletteInputRef = useRef<HTMLInputElement>(null);
   const [historyQuery, setHistoryQuery] = useState("");
   const [modelsTab, setModelsTab] = useState<"Installed" | "Discover" | "Downloads">("Installed");
   const [gatewayTab, setGatewayTab] = useState<"Host" | "Connect" | "Cloud API">("Host");
   const [settingsSection, setSettingsSection] = useState("General");
-  const [settingsQuery, setSettingsQuery] = useState("");
   const [terminalFilter, setTerminalFilter] = useState("All");
   const [terminalSearch, setTerminalSearch] = useState("");
   const [monitorAutoRefresh, setMonitorAutoRefresh] = useState(false);
@@ -254,7 +239,6 @@ function App() {
   const [density, setDensity] = useState<"comfortable" | "compact">(() => { try { return localStorage.getItem("hymnix.density") === "compact" ? "compact" : "comfortable"; } catch { return "comfortable"; } });
   const [textScale, setTextScale] = useState<number>(() => { try { return Math.min(200, Math.max(90, Number(localStorage.getItem("hymnix.textScale") || 100))); } catch { return 100; } });
   const [softenAccent, setSoftenAccent] = useState<boolean>(() => { try { return localStorage.getItem("hymnix.softenAccent") === "1"; } catch { return false; } });
-  const [previewTheme, setPreviewTheme] = useState<string | null>(null);
   const [enterSwaps, setEnterSwaps] = useState<boolean>(() => optionalBool("hymnix.enterSwaps"));
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [slashIndex, setSlashIndex] = useState(0);
@@ -616,12 +600,12 @@ function App() {
     const timer = window.setInterval(() => void tick(), 3000);
     return () => { alive = false; window.clearInterval(timer); };
   }, []);
-  useEffect(() => { const id = previewTheme || theme; const mode = THEMES.find((item) => item.id === id)?.mode || (appearanceMode === "auto" ? systemMode() : appearanceMode); applyTheme(id, mode); }, [theme, appearanceMode, previewTheme]);
+  useEffect(() => { const mode = THEMES.find((item) => item.id === theme)?.mode || (appearanceMode === "auto" ? systemMode() : appearanceMode); applyTheme(theme, mode); }, [theme, appearanceMode]);
   useEffect(() => { if (active === "Plugins") void loadPlugins(); }, [active]);
   useEffect(() => {
     const backgroundColor = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim();
     void window.hymnix.window.setAppearance(appearanceMode, backgroundColor);
-  }, [appearanceMode, theme, previewTheme]);
+  }, [appearanceMode, theme]);
   useEffect(() => {
     if (appearanceMode !== "auto") return;
     const media = window.matchMedia("(prefers-color-scheme: dark)");
@@ -677,10 +661,6 @@ function App() {
         if (event.key === "Escape") { event.preventDefault(); setClearAllConfirm(false); setModelDeleteTarget(null); setPluginDeleteTarget(null); }
         return;
       }
-      if (paletteOpen && event.key === "Escape") { event.preventDefault(); setPaletteOpen(false); setPaletteQuery(""); return; }
-      if (paletteOpen && !mod) return;
-      if (paletteOpen && mod && key !== "k") { setPaletteOpen(false); setPaletteQuery(""); }
-      if (mod && key === "k") { event.preventDefault(); setPaletteOpen(true); setPaletteQuery(""); setPaletteIndex(0); return; }
       if (mod && key === "f" && active === "Terminal") { event.preventDefault(); terminalSearchRef.current?.focus(); terminalSearchRef.current?.select(); return; }
       if (mod && key === "n") { event.preventDefault(); createSession(); return; }
       if (mod && key === "b") { event.preventDefault(); setSidebarCollapsed((value) => !value); return; }
@@ -695,8 +675,7 @@ function App() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [paletteOpen, active, clearAllConfirm, modelDeleteTarget, pluginDeleteTarget]);
-  useEffect(() => { if (paletteOpen) window.setTimeout(() => paletteInputRef.current?.focus(), 0); }, [paletteOpen]);
+  }, [active, clearAllConfirm, modelDeleteTarget, pluginDeleteTarget]);
   useEffect(() => {
     if (!messages.length && !draft.trim() && !savedSessions.some((item) => item.id === currentSessionId)) return;
     const timer = window.setTimeout(() => {
@@ -1409,12 +1388,6 @@ function App() {
     const totalTokens = estimateTokens(messages.map((item) => item.content).join(" "));
     return <>
       <ChatViewport messages={messages} followSignal={followSignal} empty={emptyChat} busy={chatBusy} onEditMessage={editMessage} onRegenerateMessage={regenerateMessage} onDeleteMessage={deleteMessageTurn} onBranchMessage={branchFrom} onRetryMessage={retryMessage} />
-      {messages.length > 0 && <div className="chat-tools">
-        <button className="btn" onClick={() => void copyLastReply()}>{t("Copy last reply")}</button>
-        <button className="btn" onClick={clearCurrentConversation}>{t("Clear")}</button>
-        <button className="btn" onClick={exportChat}>{t("Export chat")}</button>
-        <span className="chat-stat">{model || "-"} · {messages.length} {t("messages")} · ~{totalTokens} {t("tokens")}{lastRate ? ` · ${lastRate.toFixed(1)} tok/s` : ""}</span>
-      </div>}
       <form className={"composer" + (dropActive ? " drop-active" : "")} onSubmit={(event) => { event.preventDefault(); void send(); }}
         onDragOver={(event) => { if (event.dataTransfer?.types.includes("Files")) { event.preventDefault(); setDropActive(true); } }}
         onDragLeave={() => setDropActive(false)}
@@ -1449,8 +1422,6 @@ function App() {
           <div>
             <input ref={fileInputRef} type="file" multiple hidden onChange={(event) => { if (event.target.files?.length) void addFiles(event.target.files); event.target.value = ""; }} />
             <button type="button" className="btn icon attach-button" data-tip={t("Attach a file")} aria-label={t("Attach a file")} onClick={() => fileInputRef.current?.click()}>+</button>
-            <ModelCombobox value={model} options={models} gpuGb={stats?.vramTotal} onChange={setModel} onDownload={() => { setActive("Models"); setModelsTab("Discover"); }} />
-            <select className="btn composer-effort" value={effort} onChange={(event) => setEffort(event.target.value)} aria-label={t("Reasoning effort")}>{["low", "medium", "high"].map((value) => <option key={value} value={value}>{t(value === "low" ? "Low" : value === "medium" ? "Medium" : "High")}</option>)}</select>
             <span className="composer-hint">{t(enterSwaps ? "Shift+Enter to send · Enter for new line" : "Enter to send · Shift+Enter for new line")}</span>
           </div>
           <div>
@@ -1811,7 +1782,7 @@ function App() {
 
         <div className="welcome-setup">
           <div className="setting-row"><label>{t("Language")}</label><div className="controls segmented"><button className={lang === "en" ? "active" : ""} onClick={() => changeLang("en")}>English</button><button className={lang === "zh" ? "active" : ""} onClick={() => changeLang("zh")}>中文</button></div></div>
-          <div className="setting-row"><label>{t("Theme")}<span className="hint">{tf("Live preview · {name}", { name: t(THEMES.find((item) => item.id === theme)?.label || "") })}</span></label><div className="controls theme-swatches">{THEMES.map((preset) => <button key={preset.id} type="button" className={"theme-swatch " + (theme === preset.id ? "selected" : "")} aria-label={t(preset.label)} aria-pressed={theme === preset.id} onMouseEnter={() => setPreviewTheme(preset.id)} onMouseLeave={() => setPreviewTheme(null)} onFocus={() => setPreviewTheme(preset.id)} onBlur={() => setPreviewTheme(null)} onClick={() => { changeTheme(preset.id); setPreviewTheme(null); }}><i style={{ background: preset.swatch }} /></button>)}</div></div>
+          <div className="setting-row"><label>{t("Theme")}<span className="hint">{tf("Live preview · {name}", { name: t(THEMES.find((item) => item.id === theme)?.label || "") })}</span></label><div className="controls theme-swatches">{THEMES.map((preset) => <button key={preset.id} type="button" className={"theme-swatch " + (theme === preset.id ? "selected" : "")} aria-label={t(preset.label)} aria-pressed={theme === preset.id} onClick={() => changeTheme(preset.id)}><i style={{ background: preset.swatch }} /></button>)}</div></div>
         </div>
 
         <ol className="welcome-steps">{stepped.map((step, index) => <li key={step.key} className={step.done ? "done" : ""}>
@@ -2005,30 +1976,34 @@ function App() {
   }
   function renderSettings() {
     const sections = ["General", "Appearance", "Startup and runtime", "Models and storage", "Sharing and security", "Shortcuts", "About"];
-    const matches = (value: string) => !settingsQuery.trim() || `${t(value)} ${value}`.toLowerCase().includes(settingsQuery.trim().toLowerCase());
     const sw = (key: keyof typeof DEFAULT_UI_SETTINGS, label: string, hint: string, disabled = false, restart = false) => <div className={disabled ? "setting-row disabled" : "setting-row"} aria-disabled={disabled}>
       <label>{t(label)}{restart && <span className="chip warning">{t("Restart needed")}</span>}<span className="hint">{t(hint)}</span></label>
       <div className="controls"><button type="button" className={"switch" + (uiSettings[key] ? " on" : "")} aria-pressed={!!uiSettings[key]} aria-label={t(label)} disabled={disabled} onClick={() => void setSetting(key, !uiSettings[key])}><span /></button></div>
     </div>;
     const head = (title: string, section: string) => <div className="card-head"><h3 className="card-title">{t(title)}</h3><button type="button" className="btn ghost reset-button" onClick={() => void resetSection(section)}>{t("Reset to default")}</button></div>;
     const themePrefs = readAppearance();
+    // Clicking a card switches to that preset straight away. There is no separate
+    // light/dark/auto switch and no hover preview: the card itself is the choice.
     const themeCards = (mode: "light" | "dark") => THEMES.filter((preset) => preset.mode === mode).map((preset) => {
       const selected = mode === "light" ? themePrefs.lightTheme === preset.id : themePrefs.darkTheme === preset.id;
-      return <button type="button" key={preset.id} className={"theme-card " + (selected ? "selected" : "")} onMouseEnter={() => setPreviewTheme(preset.id)} onMouseLeave={() => setPreviewTheme(null)} onFocus={() => setPreviewTheme(preset.id)} onBlur={() => setPreviewTheme(null)} onClick={() => { changeTheme(preset.id); setPreviewTheme(null); setToast({ message: t("Saved") }); window.setTimeout(() => setToast(null), 1800); }} aria-pressed={selected}>
-        <span className={"theme-preview " + preset.id}><i /><i /><i /></span><span className="theme-card-copy"><strong>{t(preset.label)}</strong><small>{mode === "light" ? t("Light theme") : t("Dark theme")}</small></span><span className="theme-swatches"><i /><i /></span>{selected && <span className="theme-check">✓</span>}
+      return <button type="button" key={preset.id} className={"theme-card " + (selected ? "selected" : "")} onClick={() => { changeTheme(preset.id); setToast({ message: t("Saved") }); window.setTimeout(() => setToast(null), 1800); }} aria-pressed={selected} title={t(preset.label)}>
+        <span className="theme-preview" style={{ background: preset.bg }}>
+          <i style={{ background: preset.surface }} />
+          <i style={{ background: preset.swatch }} />
+        </span>
+        <span className="theme-card-copy"><strong>{t(preset.label)}</strong></span>
+        {selected && <span className="theme-check">✓</span>}
       </button>;
     });
-    const filteredSections = sections.filter(matches);
     return <section className="view-page">
-      <div className="view-heading"><div><label>{t("APPLICATION")}</label><h2>{t("Settings")}</h2><p>{t("Workspace and connection preferences.")}</p></div><label className="settings-search"><span>⌕</span><input type="search" value={settingsQuery} onChange={(event) => setSettingsQuery(event.target.value)} placeholder={t("Search settings")} /></label></div>
-      <div className="settings-layout"><nav className="settings-nav" aria-label={t("Settings sections")}>{filteredSections.map((section) => <button className={settingsSection === section ? "active" : ""} key={section} onClick={() => setSettingsSection(section)}>{t(section)}</button>)}</nav><div className="settings-content">
+      <div className="view-heading"><div><label>{t("APPLICATION")}</label><h2>{t("Settings")}</h2><p>{t("Workspace and connection preferences.")}</p></div></div>
+      <div className="settings-layout"><nav className="settings-nav" aria-label={t("Settings sections")}>{sections.map((section) => <button className={settingsSection === section ? "active" : ""} key={section} onClick={() => setSettingsSection(section)}>{t(section)}</button>)}</nav><div className="settings-content">
         {restartKeys.length > 0 && <div className="restart-bar" role="status"><span>{tf("{count} changes need a restart", { count: String(restartKeys.length) })}</span><button type="button" className="btn primary" onClick={() => void window.hymnix.window.control("restart")}>{t("Restart now")}</button><button type="button" className="btn ghost" onClick={() => setRestartKeys([])}>{t("Later")}</button></div>}
         {settingsSection === "General" && <div className="card">{head("General", "General")}
           <div className="setting-row"><label>{t("Language")}<span className="hint">English / 中文</span></label><div className="controls segmented"><button className={lang === "en" ? "active" : ""} onClick={() => changeLang("en")}>English</button><button className={lang === "zh" ? "active" : ""} onClick={() => changeLang("zh")}>中文</button></div></div>
           <div className="setting-row"><label>{t("Workspace")}</label><div className="controls"><input value={workspace} onChange={(event) => setWorkspace(event.target.value)} aria-label={t("Workspace name")} /></div></div>
         </div>}
-        {settingsSection === "Appearance" && <><div className="card">{head("Appearance", "Appearance")}<div className="setting-row"><label>{t("Appearance mode")}<span className="hint">{t("Choose a light or dark appearance, or follow Windows.")}</span></label><div className="controls segmented">{(["light", "dark", "auto"] as const).map((value) => <button className={appearanceMode === value ? "active" : ""} key={value} onClick={() => changeAppearanceMode(value)}>{t(value === "auto" ? "Auto" : value === "light" ? "Light" : "Dark")}</button>)}</div></div>
-          <div className="theme-gallery-section"><div className="gallery-heading"><strong>{t("Light themes")}</strong><small>4</small></div><div className="theme-gallery">{themeCards("light")}</div></div><div className="theme-gallery-section"><div className="gallery-heading"><strong>{t("Dark themes")}</strong><small>5</small></div><div className="theme-gallery">{themeCards("dark")}</div></div>
+        {settingsSection === "Appearance" && <><div className="card">{head("Appearance", "Appearance")}<div className="theme-gallery-section"><div className="gallery-heading"><strong>{t("Light themes")}</strong><small>4</small></div><div className="theme-gallery">{themeCards("light")}</div></div><div className="theme-gallery-section"><div className="gallery-heading"><strong>{t("Dark themes")}</strong><small>5</small></div><div className="theme-gallery">{themeCards("dark")}</div></div>
           <div className="setting-row"><label>{t("Density")}<span className="hint">{t("Choose the spacing of rows and controls.")}</span></label><div className="controls segmented"><button className={density === "comfortable" ? "active" : ""} onClick={() => setDensityPreference("comfortable")}>{t("Comfortable")}</button><button className={density === "compact" ? "active" : ""} onClick={() => setDensityPreference("compact")}>{t("Compact")}</button></div></div>
           <div className="setting-row"><label>{t("Text size")}<span className="hint">{textScale}%</span></label><div className="controls scale-control"><input type="range" min="90" max="200" step="5" value={textScale} onChange={(event) => setTextScalePreference(Number(event.target.value))} aria-label={t("Text size")} /><output>{textScale}%</output></div></div>
           <div className="setting-row"><label>{t("Reduce motion")}<span className="hint">{t("Use fades instead of movement.")}</span></label><div className="controls"><button className={"switch" + (reduceMotion ? " on" : "")} aria-label={t("Reduce motion")} aria-pressed={reduceMotion} onClick={() => setMotionPreference(!reduceMotion)}><span /></button></div></div>
@@ -2037,9 +2012,8 @@ function App() {
         {settingsSection === "Startup and runtime" && <div className="card">{head("Startup and runtime", "Startup and runtime")}{sw("betaChannel", "Join client beta", "Pre-release builds, may be unstable")}{sw("runAtStartup", "Run at system startup", "Start minimized in the tray")}{sw("startFullscreen", "Start in fullscreen", "Open the window fullscreen")}{sw("dpiScaling", "Scale text and icons for this display (Beta)", "Uses display scale factor", false, true)}{sw("smoothScroll", "Enable smooth scrolling", "Animated scroll in long pages")}{sw("gpuAcceleration", "Enable GPU accelerated rendering", "Disable only if you see flicker", false, true)}{sw("autoUpdate", "Update automatically when a new version is available", "Managed by the installer", true)}<p className="subtitle">{t("GPU acceleration and the cache folder take effect after a restart.")}</p></div>}
         {settingsSection === "Models and storage" && <div className="card">{head("Models and storage", "Models and storage")}<div className="setting-row"><label>{t("Cache storage location")}</label><div className="controls"><input readOnly value={uiSettings.cacheDir || t("Default location")} /><button className="btn" onClick={() => void chooseCacheDir()}>{t("Choose folder")}</button><button className="btn ghost" onClick={() => void setSetting("cacheDir", "")}>{t("Reset")}</button></div></div><div className="setting-row"><label>{t("How to open previews")}</label><div className="controls segmented"><button className={uiSettings.previewMode === "inapp" ? "active" : ""} onClick={() => void setSetting("previewMode", "inapp")}>{t("In-app preview")}</button><button className={uiSettings.previewMode === "browser" ? "active" : ""} onClick={() => void setSetting("previewMode", "browser")}>{t("Default browser")}</button></div></div><div className="setting-row"><label>{t("Data folder")}</label><div className="controls"><input readOnly value={filesRoot || "%LOCALAPPDATA%\\Hymnix"} /><button className="btn" onClick={() => void chooseWorkspace()}>{t("Choose folder")}</button></div></div></div>}
         {settingsSection === "Sharing and security" && <div className="card settings-link-card">{head("Sharing and security", "Sharing and security")}<p className="subtitle">{t("Configure host sharing, connections and cloud provider credentials.")}</p><button className="btn primary" onClick={() => { setActive("Gateway"); setGatewayTab("Host"); }}>{t("Open sharing settings")}</button></div>}
-                {settingsSection === "Shortcuts" && <div className="card">{head("Shortcuts", "Shortcuts")}<div className="setting-row"><label>{t("Send with Shift+Enter")}<span className="hint">{t("Swap the Enter and Shift+Enter behaviour.")}</span></label><div className="controls"><button type="button" className={"switch" + (enterSwaps ? " on" : "")} aria-pressed={enterSwaps} aria-label={t("Send with Shift+Enter")} onClick={() => setEnterSwaps((value) => !value)}><span /></button></div></div><div className="shortcut-list">{[["Ctrl+K", "Open command palette"], ["Ctrl+N", "New session"], ["Ctrl+L", "Focus message composer"], ["Ctrl+B", "Toggle sidebar"], ["Ctrl+.", "Toggle inspector"], ["Ctrl+,", "Open settings"], ["Ctrl+/", "Open the shortcut sheet"], ["Ctrl+1–5", "Navigate primary pages"], ["Ctrl+Shift+C", "Copy last reply"], ["Ctrl+Shift+E", "Export chat"], [enterSwaps ? "Shift+Enter" : "Enter", "Send message"], [enterSwaps ? "Enter" : "Shift+Enter", "New line"], ["↑", "Edit the last message"], ["Esc", "Close or stop"]].map(([shortcut, action]) => <div key={shortcut}><kbd>{shortcut}</kbd><span>{t(action)}</span></div>)}</div></div>}
+                {settingsSection === "Shortcuts" && <div className="card">{head("Shortcuts", "Shortcuts")}<div className="setting-row"><label>{t("Send with Shift+Enter")}<span className="hint">{t("Swap the Enter and Shift+Enter behaviour.")}</span></label><div className="controls"><button type="button" className={"switch" + (enterSwaps ? " on" : "")} aria-pressed={enterSwaps} aria-label={t("Send with Shift+Enter")} onClick={() => setEnterSwaps((value) => !value)}><span /></button></div></div><div className="shortcut-list">{[["Ctrl+N", "New session"], ["Ctrl+L", "Focus message composer"], ["Ctrl+B", "Toggle sidebar"], ["Ctrl+.", "Toggle inspector"], ["Ctrl+,", "Open settings"], ["Ctrl+/", "Open the shortcut sheet"], ["Ctrl+1–5", "Navigate primary pages"], ["Ctrl+Shift+C", "Copy last reply"], ["Ctrl+Shift+E", "Export chat"], [enterSwaps ? "Shift+Enter" : "Enter", "Send message"], [enterSwaps ? "Enter" : "Shift+Enter", "New line"], ["↑", "Edit the last message"], ["Esc", "Close or stop"]].map(([shortcut, action]) => <div key={shortcut}><kbd>{shortcut}</kbd><span>{t(action)}</span></div>)}</div></div>}
         {settingsSection === "About" && <div className="card">{head("About", "About")}<div className="about-brand"><img src={brandIcon} alt="" /><span><strong>Hymnix Orbit</strong><small>{__APP_VERSION__} · Hymnix Studio</small></span></div><div className="setting-row"><label>{t("Updates")}</label><div className="controls"><button className="btn" onClick={() => void window.hymnix.system.openExternal("https://github.com/CarrisFlynn/hymnix-ai-server/releases")}>{t("View releases")}</button></div></div><div className="setting-row"><label>{t("Help")}</label><div className="controls"><button className="btn" onClick={() => setActive("Support")}>{t("Help & sponsor")}</button><button className="btn ghost" onClick={() => setActive("Changelog")}>{t("Changelog")}</button><button className="btn ghost" onClick={() => setActive("DesignLab")}>{t("Component gallery")}</button></div></div></div>}
-        {!filteredSections.includes(settingsSection) && <div className="card empty-state"><strong>{t("No matching settings")}</strong><span>{t("Try a different search term.")}</span></div>}
       </div></div>
     </section>;
   }
@@ -2062,37 +2036,11 @@ function App() {
     return <section className="view-page"><div className="view-heading"><div><label>{t("GATEWAY CAPABILITY")}</label><h2>{t(active)}</h2><p>{t(capabilityCopy[active] || "")}</p></div></div><div className="card empty-state"><strong>{t(active)}</strong><span>{t("This capability is not wired to a real workflow yet.")}</span></div></section>;
   }
 
-  const palettePages = [...navGroups.flatMap((group) => group.items), "History", "Settings", "Changelog", "Support"];
-  const paletteBase: Array<{ label: string; detail: string; icon: string; run: () => void; keywords?: string }> = [
-    { label: t("New chat"), detail: t("Start a new conversation"), icon: "＋", run: createSession },
-    { label: t("Component gallery"), detail: t("Developer tool"), icon: "◆", run: () => setActive("DesignLab"), keywords: "design lab components tokens theme states" },
-    ...Array.from(new Set(palettePages)).map((page) => ({ label: t(page), detail: t("Open page"), icon: "↗", run: () => setActive(page) })),
-    ...["General", "Appearance", "Startup and runtime", "Models and storage", "Sharing and security", "Shortcuts", "About"].map((section) => ({ label: t(section), detail: `${t("Settings")} · ${t("Open page")}`, icon: "⚙", run: () => { setActive("Settings"); setSettingsSection(section); }, keywords: `settings ${section} theme dark light auto` })),
-    { label: t("Dark appearance"), detail: t("Set appearance mode"), icon: "◐", run: () => { changeAppearanceMode("dark"); setActive("Settings"); setSettingsSection("Appearance"); }, keywords: "dark theme" },
-    { label: t("Start sharing"), detail: t("Open page"), icon: "↗", run: () => { setActive("Gateway"); setGatewayTab("Host"); }, keywords: "host tunnel public link" },
-    ...(health?.ollama === false ? [{ label: t("Start Ollama"), detail: t("Start the model service"), icon: "▶", run: () => { void startOllama(); }, keywords: "start service model" }] : []),
-    ...savedSessions.slice(0, 40).map((item) => ({ label: item.name, detail: `${t("Conversation")} · ${item.model || t("No model")}`, icon: "◷", run: () => openSession(item.id), keywords: item.messages.map((message) => message.content).join(" ") })),
-    ...models.slice(0, 40).map((item) => ({ label: item.name, detail: t(item.loaded ? "Select model" : "Load model"), icon: "M", run: () => { setModel(item.name); setActive("Chat"); if (!item.loaded) void modelAction("start", item.name); }, keywords: `model ${item.loaded ? "select" : "load"}` }))
-  ];
-  const paletteItems = paletteBase.filter((item) => fuzzyMatch(paletteQuery, `${item.label} ${item.detail} ${item.keywords || ""}`)).slice(0, 12);
-  function runPaletteItem(run: () => void) { run(); setPaletteOpen(false); setPaletteQuery(""); }
-  useEffect(() => {
-    if (!paletteOpen) return;
-    const onPaletteKey = (event: KeyboardEvent) => {
-      if (event.key === "ArrowDown") { event.preventDefault(); setPaletteIndex((value) => paletteItems.length ? (value + 1) % paletteItems.length : 0); }
-      else if (event.key === "ArrowUp") { event.preventDefault(); setPaletteIndex((value) => paletteItems.length ? (value - 1 + paletteItems.length) % paletteItems.length : 0); }
-      else if (event.key === "Enter" && paletteItems.length) { event.preventDefault(); runPaletteItem(paletteItems[Math.min(paletteIndex, paletteItems.length - 1)].run); }
-    };
-    window.addEventListener("keydown", onPaletteKey);
-    return () => window.removeEventListener("keydown", onPaletteKey);
-  }, [paletteOpen, paletteItems.length, paletteIndex, paletteQuery, savedSessions, models]);
-
   const terminalView = active === "Terminal";
   const chatView = active === "Chat";
   return <div className={(terminalView ? "shell terminal-mode" : chatView ? "shell chat-mode" : "shell plain-mode") + (previewOpen ? " preview-open" : "") + (sidebarCollapsed ? " sidebar-collapsed" : "") + (chatView && inspectorOpen ? " inspector-open" : "")} data-lang={lang}>
     <div className="titlebar">
       <span className="titlebar-brand"><img src={brandIcon} alt="" /><strong>Hymnix Orbit</strong></span>
-      <button type="button" className="title-search" onClick={() => { setPaletteOpen(true); setPaletteQuery(""); setPaletteIndex(0); }} aria-label={t("Search or jump to...")}><span>⌕</span><span>{t("Search or jump to...")}</span><kbd>Ctrl K</kbd></button>
       <span className="titlebar-drag" />
       <div className="titlebar-actions">
         {previewOpen && <button type="button" className="preview-close" onClick={() => void closePreview()}>{t("Close preview")}</button>}
@@ -2102,26 +2050,33 @@ function App() {
       </div>
     </div>
     <aside className="side">
-      <div className="brand"><img src={brandIcon} alt="" /><span>Hymnix Orbit<small>ORBIT</small></span><button className="collapse-sidebar" type="button" onClick={() => setSidebarCollapsed(true)} aria-label={t("Collapse sidebar")}>‹</button></div>
-      <button className="new" onClick={createSession}><span aria-hidden="true">＋</span>{t("New chat")}<kbd>Ctrl N</kbd></button>
-      <button type="button" className="side-search" onClick={() => { setPaletteOpen(true); setPaletteQuery(""); setPaletteIndex(0); }}><span aria-hidden="true">⌕</span>{t("Search")}<kbd>Ctrl K</kbd></button>
-      <div className="side-section"><span className="side-label">{t("WORKSPACE")}</span><button className="workspace active" onClick={() => void chooseWorkspace()} title={filesRoot || t("Choose a workspace to browse files.")}><span className="dot" /><span>{filesRoot ? filesRoot.split(/[\\/]/).filter(Boolean).pop() : t(workspace)}</span><span className="workspace-caret">▾</span></button></div>
-      <div className="side-section session-section"><div className="side-section-heading"><span className="side-label">{t("RECENT SESSIONS")}</span><button type="button" className="side-text-action" onClick={() => setActive("History")}>{t("See all")}</button></div>
-        {sessions.length === 0 ? <span className="side-empty">{t("No sessions yet")}</span> : <div className="session-list">
-          {[{ label: "Pinned", items: pinnedSessions }, { label: "Today", items: todaySessions }, { label: "Yesterday", items: yesterdaySessions }, { label: "Earlier", items: olderSessions }].filter((section) => section.items.length > 0).map((section) => <div className="session-group" key={section.label}><span className="session-group-label">{t(section.label)}</span>{section.items.slice(0, 12).map((item) => <button className={item.id === currentSessionId ? "session-item active" : "session-item"} key={item.id} onClick={() => openSession(item.id)} title={`${item.name} · ${item.count} ${t("messages")}`} aria-current={item.id === currentSessionId ? "true" : undefined}><span className="session-item-title">{item.name || t("New chat")}</span>{item.pinned && <span className="session-item-pin" aria-hidden="true">✦</span>}</button>)}</div>)}
-        </div>}
+      <div className="brand"><img src={brandIcon} alt="" /><span className="brand-text">Hymnix Orbit<small>ORBIT</small></span><button className="collapse-sidebar" type="button" onClick={() => setSidebarCollapsed(true)} aria-label={t("Collapse sidebar")}>‹</button></div>
+      <button className="new" onClick={createSession}><span className="new-plus" aria-hidden="true">＋</span><span className="new-text">{t("New chat")}</span><kbd>Ctrl N</kbd></button>
+      <div className="side-workspace">
+        <button className="workspace active" onClick={() => void chooseWorkspace()} title={filesRoot || t("Choose a workspace to browse files.")}><span className="dot" /><span className="workspace-name">{filesRoot ? filesRoot.split(/[\\/]/).filter(Boolean).pop() : t(workspace)}</span><span className="workspace-caret">▾</span></button>
       </div>
-      {navGroups.map((group) => <nav className="nav-group" aria-label={t(group.title)} data-group={group.title} key={group.title}>{group.title === "DEVELOPER" ? <button type="button" className="developer-toggle" aria-expanded={developerExpanded} onClick={() => setDeveloperExpanded((value) => !value)}><span className="side-label">{t(group.title)}</span><span>{developerExpanded ? "⌄" : "›"}</span></button> : <span className="side-label">{t(group.title === "WORKSPACE" ? "NAVIGATION" : group.title)}</span>}{(group.title !== "DEVELOPER" || developerExpanded) && group.items.map((item) => <button className={active === item ? "nav active" : "nav"} key={item} onClick={() => setActive(item)} aria-current={active === item ? "page" : undefined}><Icon name={item} /><span className="nav-text">{t(item === "Gateway" ? "Sharing & connections" : item)}</span>{item === "Approvals" && approvals.length > 0 && <span className="nav-count">{approvals.length}</span>}</button>)}</nav>)}
-      <div className="side-footer"><button className={active === "Settings" ? "nav active" : "nav"} onClick={() => setActive("Settings")} aria-current={active === "Settings" ? "page" : undefined}><Icon name="Settings" /><span className="nav-text">{t("Settings")}</span></button><div className="help-menu-wrap"><button type="button" className="nav" aria-expanded={helpMenuOpen} onClick={() => setHelpMenuOpen((value) => !value)}><Icon name="Support" /><span className="nav-text">{t("Help")}</span><span className="workspace-caret">▾</span></button>{helpMenuOpen && <div className="help-menu"><button onClick={() => { setActive("Changelog"); setHelpMenuOpen(false); }}>{t("Changelog")}</button><button onClick={() => { setActive("Support"); setHelpMenuOpen(false); }}>{t("Support")}</button><button onClick={() => { setActive("Settings"); setSettingsSection("Shortcuts"); setHelpMenuOpen(false); }}>{t("Keyboard shortcuts")}</button></div>}</div>
-        <button className="account" onClick={() => setWelcomeOpen(true)}><span className="avatar">{mode === "remote" ? "R" : "L"}</span><span><strong>{t("Connection")}</strong><small>{mode === "local" ? t("Local mode") : t("Friend's server")}</small></span></button>
+      <nav className="side-nav" aria-label={t("NAVIGATION")}>
+        {navGroups.map((group) => <nav className="nav-group" aria-label={t(group.title)} data-group={group.title} key={group.title}>
+          {group.title === "DEVELOPER" && <button type="button" className="developer-toggle" aria-expanded={developerExpanded} onClick={() => setDeveloperExpanded((value) => !value)}><span className="side-label">{t(group.title)}</span><span className="developer-caret">{developerExpanded ? "⌄" : "›"}</span></button>}
+          {(group.title !== "DEVELOPER" || developerExpanded) && group.items.map((item) => <button className={active === item ? "nav active" : "nav"} key={item} onClick={() => setActive(item)} aria-current={active === item ? "page" : undefined} title={t(item === "Gateway" ? "Sharing & connections" : item)}><Icon name={item} /><span className="nav-text">{t(item === "Gateway" ? "Sharing & connections" : item)}</span>{item === "Approvals" && approvals.length > 0 && <span className="nav-count">{approvals.length}</span>}</button>)}
+        </nav>)}
+      </nav>
+      <section className="side-recent" aria-label={t("RECENT")}>
+        <div className="side-recent-head"><span className="side-label">{t("RECENT")}</span><button type="button" className="side-text-action" onClick={() => setActive("History")}>{t("See all")}</button></div>
+        <div className="session-list">
+          {sessions.length === 0 ? <span className="side-empty">{t("No sessions yet")}</span> : [{ label: "Pinned", items: pinnedSessions }, { label: "Today", items: todaySessions }, { label: "Yesterday", items: yesterdaySessions }, { label: "Earlier", items: olderSessions }].filter((section) => section.items.length > 0).map((section) => <div className="session-group" key={section.label}><span className="session-group-label">{t(section.label)}</span>{section.items.slice(0, 20).map((item) => <button className={item.id === currentSessionId ? "session-item active" : "session-item"} key={item.id} onClick={() => openSession(item.id)} title={`${item.name || t("New chat")} · ${item.count} ${t("messages")}`} aria-current={item.id === currentSessionId ? "true" : undefined}><span className="session-item-title">{item.name || t("New chat")}</span>{item.pinned && <span className="session-item-pin" aria-hidden="true">✦</span>}</button>)}</div>)}
+        </div>
+      </section>
+      <div className="side-footer"><button className={active === "Settings" ? "nav active" : "nav"} onClick={() => setActive("Settings")} aria-current={active === "Settings" ? "page" : undefined} title={t("Settings")}><Icon name="Settings" /><span className="nav-text">{t("Settings")}</span></button><div className="help-menu-wrap"><button type="button" className="nav" aria-expanded={helpMenuOpen} onClick={() => setHelpMenuOpen((value) => !value)} title={t("Help")}><Icon name="Support" /><span className="nav-text">{t("Help")}</span><span className="workspace-caret">▾</span></button>{helpMenuOpen && <div className="help-menu"><button onClick={() => { setActive("Changelog"); setHelpMenuOpen(false); }}>{t("Changelog")}</button><button onClick={() => { setActive("Support"); setHelpMenuOpen(false); }}>{t("Support")}</button><button onClick={() => { setActive("Settings"); setSettingsSection("Shortcuts"); setHelpMenuOpen(false); }}>{t("Keyboard shortcuts")}</button></div>}</div>
+        <button className="account" onClick={() => setWelcomeOpen(true)} title={`${t("Connection")} · ${t(state)}`}><span className="avatar">{mode === "remote" ? "R" : "L"}</span><span className="account-text"><strong>{t("Connection")}</strong><small>{mode === "local" ? t("Local mode") : t("Friend's server")}</small></span><span className="dot account-dot" data-state={state} aria-hidden="true" /></button>
         {downloadOccupied && <button type="button" className="download-ring-wrap" onClick={() => { setActive("Models"); setModelsTab("Downloads"); }} aria-label={t("Model download progress")}><span className="download-ring" style={{ background: `conic-gradient(var(--accent-fill) ${download?.completed != null && download?.total ? Math.floor(100 * download.completed / download.total) : 0}%, var(--sunken) 0)` }}><i /></span><small>{download?.model}</small></button>}
-        <div className="status-popover-wrap"><button type="button" className="side-status" aria-expanded={statusPopoverOpen} onClick={() => setStatusPopoverOpen((value) => !value)}><span className="dot" data-state={state} aria-hidden="true" />{t(state)}</button>{statusPopoverOpen && <div className="status-popover"><strong>{t(state)}</strong><span>{health?.gateway || t("Gateway")}</span><button onClick={() => { setActive("Monitor"); setStatusPopoverOpen(false); }}>{t("View monitor")}</button></div>}</div>
+
       </div>
     </aside>
     <main className={terminalView ? "main terminal-main" : "main"}>
       {chatView && <header className="workspace-header chat-workspace-header">
         <div className="chat-header-title">{renamingSession ? <form className="rename-session" onSubmit={(event) => { event.preventDefault(); commitRenameSession(); }}><input autoFocus value={renameDraft} onChange={(event) => setRenameDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setRenamingSession(false); }} aria-label={t("Conversation name")} /><button className="btn primary" type="submit">{t("Save name")}</button></form> : <h1 title={t("Double-click to rename")} onDoubleClick={beginRenameSession}>{sessionName}</h1>}<span className="chat-readiness"><span className={"status-pill " + (state === "ready" ? "success" : state === "error" ? "danger" : "neutral")}><span className="status-dot" />{t(state === "ready" ? "Ready" : state === "starting" ? "Starting" : state === "error" ? "Error" : "Limited")}</span>{model || (source === "cloud" ? t("Cloud API") : t("Choose a model"))}</span></div>
-        <div className="header-actions chat-header-actions"><button type="button" className="btn ghost" onClick={() => setInspectorOpen((value) => !value)} aria-expanded={inspectorOpen}>{t(inspectorOpen ? "Hide settings" : "Chat settings")}</button><button type="button" className="btn ghost icon-button" onClick={() => { setPaletteOpen(true); setPaletteIndex(0); }} aria-label={t("Search or jump to...")}>⌕</button><div className="conversation-menu-wrap" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setConversationMenuOpen(false); }}><button type="button" className="btn ghost icon-button" aria-label={t("Conversation actions")} aria-haspopup="menu" aria-expanded={conversationMenuOpen} onClick={() => setConversationMenuOpen((value) => !value)}>⋯</button>{conversationMenuOpen && <div className="conversation-menu" role="menu"><button type="button" role="menuitem" onClick={beginRenameSession}>{t("Rename conversation")}</button><button type="button" role="menuitem" onClick={() => { toggleCurrentPin(); setConversationMenuOpen(false); }}>{t(savedSessions.find((item) => item.id === currentSessionId)?.pinned ? "Unpin conversation" : "Pin conversation")}</button><button type="button" role="menuitem" onClick={() => { exportChat(); setConversationMenuOpen(false); }}>{t("Export chat")}</button><hr /><button type="button" role="menuitem" className="danger" onClick={() => { clearCurrentConversation(); setConversationMenuOpen(false); }}>{t("Clear conversation")}</button></div>}</div></div>
+        <div className="header-actions chat-header-actions"><button type="button" className="btn ghost" onClick={() => setInspectorOpen((value) => !value)} aria-expanded={inspectorOpen}>{t(inspectorOpen ? "Hide settings" : "Chat settings")}</button><div className="conversation-menu-wrap" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setConversationMenuOpen(false); }}><button type="button" className="btn ghost icon-button" aria-label={t("Conversation actions")} aria-haspopup="menu" aria-expanded={conversationMenuOpen} onClick={() => setConversationMenuOpen((value) => !value)}>⋯</button>{conversationMenuOpen && <div className="conversation-menu" role="menu"><button type="button" role="menuitem" onClick={beginRenameSession}>{t("Rename conversation")}</button><button type="button" role="menuitem" onClick={() => { toggleCurrentPin(); setConversationMenuOpen(false); }}>{t(savedSessions.find((item) => item.id === currentSessionId)?.pinned ? "Unpin conversation" : "Pin conversation")}</button><button type="button" role="menuitem" onClick={() => { exportChat(); setConversationMenuOpen(false); }}>{t("Export chat")}</button><hr /><button type="button" role="menuitem" className="danger" onClick={() => { clearCurrentConversation(); setConversationMenuOpen(false); }}>{t("Clear conversation")}</button></div>}</div></div>
       </header>}
       {renderView()}
       {startupNote && !terminalView && <div className="notice" role="status">{startupNote}</div>}
@@ -2166,15 +2121,6 @@ function App() {
         {[{ label: "GPU", value: stats?.gpu }, { label: "AI", value: stats?.ai }, { label: "VRAM", value: stats?.vramTotal ? stats.vramUsed == null ? null : stats.vramUsed / stats.vramTotal * 100 : null, text: stats?.vramUsed != null && stats?.vramTotal != null ? `${stats.vramUsed}/${stats.vramTotal} GB` : undefined }, { label: "RAM", value: stats?.ramTotal ? stats.ramUsed / stats.ramTotal * 100 : null, text: stats ? `${(stats.ramUsed / 1024).toFixed(1)}/${(stats.ramTotal / 1024).toFixed(1)} GB` : undefined }].map((item) => <div className="telemetry-item" key={item.label}><div><span>{item.label}</span><strong>{item.text || (item.value != null ? Math.round(item.value) + "%" : "—")}</strong></div><div className="telemetry-track"><i style={{ width: `${Math.max(0, Math.min(100, item.value || 0))}%` }} /></div></div>)}
       </div></details>
     </aside>}
-    {paletteOpen && <div className="palette-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) { setPaletteOpen(false); setPaletteQuery(""); } }}>
-      <section className="command-palette" role="dialog" aria-modal="true" aria-label={t("Command palette")}>
-        <div className="palette-search"><span aria-hidden="true">⌕</span><input ref={paletteInputRef} type="search" value={paletteQuery} onChange={(event) => { setPaletteQuery(event.target.value); setPaletteIndex(0); }} placeholder={t("Search pages, conversations and models...")} /><kbd>ESC</kbd></div>
-        <div className="palette-results" role="listbox" aria-label={t("Search results")}>
-          {paletteItems.length ? paletteItems.map((item, index) => <button type="button" role="option" aria-selected={index === paletteIndex} className={index === paletteIndex ? "selected" : ""} key={`${item.label}-${item.detail}`} onMouseEnter={() => setPaletteIndex(index)} onClick={() => runPaletteItem(item.run)}><span className="palette-icon">{item.icon}</span><span><strong>{item.label}</strong><small>{item.detail}</small></span><kbd>↵</kbd></button>) : <div className="palette-empty">{t("No matching results")}</div>}
-        </div>
-        <footer><span>{t("Navigate")}: <kbd>↑</kbd> <kbd>↓</kbd></span><span>{t("Open")}: <kbd>Enter</kbd></span><span>{t("Close")}: <kbd>Esc</kbd></span></footer>
-      </section>
-    </div>}
     {clearAllConfirm && <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setClearAllConfirm(false); }}><section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="clear-history-title"><div className="dialog-icon">!</div><h2 id="clear-history-title">{tf("Delete {count} conversations?", { count: String(sessions.length) })}</h2><p>{t("All saved conversations will be removed. You can undo this for 10 seconds.")}</p><div className="dialog-actions"><button type="button" className="btn" autoFocus onClick={() => setClearAllConfirm(false)}>{t("Cancel")}</button><button type="button" className="btn danger" onClick={clearAllSessions}>{tf("Delete {count} conversations", { count: String(sessions.length) })}</button></div></section></div>}
     {modelDeleteTarget && <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setModelDeleteTarget(null); }}><section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-model-title"><div className="dialog-icon danger">!</div><h2 id="delete-model-title">{t("Delete model")}</h2><p>{tf("Delete model {model} from this device? This cannot be undone.", { model: modelDeleteTarget })}</p><div className="dialog-actions"><button type="button" className="btn" autoFocus onClick={() => setModelDeleteTarget(null)}>{t("Cancel")}</button><button type="button" className="btn danger" onClick={() => { void modelAction("delete", modelDeleteTarget); setModelDeleteTarget(null); }}>{t("Delete model")}</button></div></section></div>}
     {pluginDeleteTarget && <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPluginDeleteTarget(null); }}><section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="uninstall-plugin-title"><div className="dialog-icon danger">!</div><h2 id="uninstall-plugin-title">{tf("Uninstall {name}?", { name: pluginDeleteTarget.name })}</h2><p>{t("Uninstall moves the plugin to its local recovery folder.")}</p><div className="dialog-actions"><button type="button" className="btn" autoFocus onClick={() => setPluginDeleteTarget(null)}>{t("Cancel")}</button><button type="button" className="btn danger" disabled={!!pluginActionBusy} onClick={() => void uninstallPlugin()}>{t("Uninstall")}</button></div></section></div>}

@@ -3,19 +3,24 @@ export type AppearanceMode = ThemeMode | "auto";
 /** `swatch` mirrors `--accent` from the theme file so the first-run swatch row can
  *  preview each preset before it is applied. `tests/components.test.mjs` compares
  *  the two, so the copy cannot drift. */
-export type ThemeDefinition = { id: string; mode: ThemeMode; label: string; swatch: string };
+export type ThemeDefinition = {
+  id: string; mode: ThemeMode; label: string;
+  /** Mirrors --accent, --bg and --surface of the theme file so a settings card can
+   *  preview a preset without applying it. tests/components.test.mjs keeps them equal. */
+  swatch: string; bg: string; surface: string;
+};
 export type AppearancePreferences = { mode: AppearanceMode; lightTheme: string; darkTheme: string };
 
 export const THEMES: ThemeDefinition[] = [
-  { id: "camellia-white", mode: "light", label: "Camellia white", swatch: "#E72D48" },
-  { id: "deep-sea-blue", mode: "light", label: "Deep sea blue", swatch: "#122E8A" },
-  { id: "ink-green", mode: "light", label: "Ink green", swatch: "#236050" },
-  { id: "honey-crimson", mode: "light", label: "Honey crimson", swatch: "#9B0A11" },
-  { id: "cyan-dark", mode: "dark", label: "Cyan dark", swatch: "#00DFEA" },
-  { id: "orange-dark", mode: "dark", label: "Orange dark", swatch: "#FF812C" },
-  { id: "rog-red-black", mode: "dark", label: "ROG red black", swatch: "#C10000" },
-  { id: "neon-black", mode: "dark", label: "Neon black", swatch: "#00FE92" },
-  { id: "graphite-gold", mode: "dark", label: "Graphite gold", swatch: "#D4AF37" },
+  { id: "camellia-white", mode: "light", label: "Camellia white", swatch: "#E72D48", bg: "#FDF7F7", surface: "#FFFFFF" },
+  { id: "deep-sea-blue", mode: "light", label: "Deep sea blue", swatch: "#122E8A", bg: "#F5EFEA", surface: "#FFFDFB" },
+  { id: "ink-green", mode: "light", label: "Ink green", swatch: "#236050", bg: "#FDFBEC", surface: "#FFFEF7" },
+  { id: "honey-crimson", mode: "light", label: "Honey crimson", swatch: "#9B0A11", bg: "#FFF8EA", surface: "#FFFDF8" },
+  { id: "cyan-dark", mode: "dark", label: "Cyan dark", swatch: "#00DFEA", bg: "#000000", surface: "#0C1314" },
+  { id: "orange-dark", mode: "dark", label: "Orange dark", swatch: "#FF812C", bg: "#000000", surface: "#121110" },
+  { id: "rog-red-black", mode: "dark", label: "ROG red black", swatch: "#C10000", bg: "#000000", surface: "#140B0B" },
+  { id: "neon-black", mode: "dark", label: "Neon black", swatch: "#00FE92", bg: "#000000", surface: "#0B130E" },
+  { id: "graphite-gold", mode: "dark", label: "Graphite gold", swatch: "#D4AF37", bg: "#151C27", surface: "#1F2937" },
 ];
 
 export const THEME_IDS = THEMES.map((theme) => theme.id);

@@ -67,6 +67,18 @@ test("capture every page in every theme", async () => {
   });
   const window = await app.firstWindow();
   await window.waitForFunction(() => Boolean((window as unknown as { __hymnixDev?: unknown }).__hymnixDev), null, { timeout: 60_000 });
+  // A baseline is only useful when the starting state is fixed. Earlier runs left
+  // the sidebar collapsed and a demo conversation behind, which showed up in the
+  // captures; reset the stored preferences before taking any picture.
+  await window.evaluate(() => {
+    localStorage.setItem("hymnix.welcome", "1");
+    localStorage.setItem("hymnix.whatsNew", "1.3.3");
+    localStorage.setItem("hymnix.sidebar.collapsed", "0");
+    localStorage.removeItem("hymnix.chat.sessions.v2");
+    localStorage.removeItem("hymnix.chat.saved");
+  });
+  await window.reload();
+  await window.waitForFunction(() => Boolean((window as unknown as { __hymnixDev?: unknown }).__hymnixDev), null, { timeout: 60_000 });
   await window.setViewportSize({ width: 1440, height: 900 });
   await window.evaluate(() => (window as unknown as { __hymnixDev: DevHook }).__hymnixDev.dismissOverlays());
   // Give the model list and health probe one chance to settle before capturing.
