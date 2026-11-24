@@ -27,7 +27,9 @@ class ManagedGatewayTests(unittest.TestCase):
             config_path = data / "gateway_config.json"
             config_path.write_text(json.dumps({"listen_host": "0.0.0.0", "listen_port": 11435,
                                                "upstream_port": upstream.getsockname()[1]}), encoding="utf-8")
+            plugin_root = Path(root, "plugins")
             env = {**os.environ, "HYMNIX_DESKTOP_CONTROL_DIR": str(control), "HYMNIX_DATA_DIR": str(data),
+                   "HYMNIX_PLUGINS_DIR": str(plugin_root),
                    "HYMNIX_LISTEN_HOST": "0.0.0.0", "HYMNIX_LISTEN_PORT": "11435"}
             with subprocess.Popen([sys.executable, str(SERVER / "headless_gateway.py")], env=env,
                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) as child:
@@ -51,6 +53,44 @@ class ManagedGatewayTests(unittest.TestCase):
                                                  headers={"X-Admin-Key": config["admin_key"]})
                     with urllib.request.urlopen(req, timeout=3) as response:
                         self.assertEqual(json.load(response), {"ok": True, "online": False, "ready": False, "models": 0})
+                    with self.assertRaises(urllib.error.HTTPError) as unauthorized:
+                        urllib.request.urlopen(base + "/admin/plugins", timeout=3)
+                    self.assertEqual(unauthorized.exception.code, 401)
+                    unauthorized.exception.close()
+                    source = Path(root, "plugin-source")
+                    source.mkdir()
+                    (source / "plugin.json").write_text(json.dumps({
+                        "schema_version": 1, "id": "test-plugin", "name": "Test plugin", "version": "1.0.0",
+                        "apiVersion": "1", "entry": "main.py", "capabilities": ["hook"],
+                        "permissions": ["ui.toast"], "description": "Gateway API smoke test"
+                    }), encoding="utf-8")
+                    (source / "main.py").write_text('def on_load(api):\n    api["toast"]("loaded")\n', encoding="utf-8")
+                    def plugin_request(action, **values):
+                        body = json.dumps({"action": action, **values}).encode("utf-8")
+                        request = urllib.request.Request(base + "/admin/plugins", data=body,
+                            headers={"X-Admin-Key": config["admin_key"], "Content-Type": "application/json"})
+                        with urllib.request.urlopen(request, timeout=3) as response:
+                            return json.load(response)
+                    installed = plugin_request("install", source=str(source))
+                    self.assertTrue(installed["ok"], installed)
+                    with urllib.request.urlopen(urllib.request.Request(base + "/admin/plugins",
+                            headers={"X-Admin-Key": config["admin_key"]}), timeout=3) as response:
+                        catalog = json.load(response)
+                    plugin = next(item for item in catalog["plugins"] if item["id"] == "test-plugin")
+                    self.assertFalse(plugin["enabled"])
+                    self.assertNotIn("path", plugin, "plugin API must not expose local filesystem paths")
+                    self.assertTrue(plugin_request("grant", id="test-plugin", permission="ui.toast")["ok"])
+                    enabled = plugin_request("enable", id="test-plugin")
+                    self.assertTrue(enabled["ok"], enabled)
+                    self.assertTrue(enabled["loaded"])
+                    revoked = plugin_request("revoke", id="test-plugin", permission="ui.toast")
+                    self.assertTrue(revoked["ok"])
+                    with urllib.request.urlopen(urllib.request.Request(base + "/admin/plugins",
+                            headers={"X-Admin-Key": config["admin_key"]}), timeout=3) as response:
+                        plugin = next(item for item in json.load(response)["plugins"] if item["id"] == "test-plugin")
+                    self.assertFalse(plugin["enabled"], "revoking a permission must disable the plugin")
+                    self.assertFalse(plugin["loaded"], "revoking a permission must unload the plugin")
+                    self.assertTrue(plugin_request("uninstall", id="test-plugin")["ok"])
                 finally:
                     (control / "stop").touch()
                     try:

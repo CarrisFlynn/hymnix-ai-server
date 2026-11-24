@@ -1,0 +1,15 @@
+/* Phase 0 · primitives: raw hex read from the nine colour cards.
+   Themes map these to semantic tokens; component CSS must never use them. */
+:root {
+  /* light cards */
+  --p-camellia-red: #E72D48;       --p-camellia-blush: #F1DDDF;
+  --p-deepsea-blue: #122E8A;       --p-milk-white: #F5EFEA;
+  --p-ink-green: #236050;          --p-ivory: #FDFBEC;      --p-jade-bright: #009167;
+  --p-honey-crimson: #9B0A11;      --p-honey: #FBD185;
+  /* dark cards */
+  --p-orange: #FF812C;             --p-black: #000000;
+  --p-cyan: #00DFEA;
+  --p-neon-green: #00FE92;
+  --p-rog-red: #C10000;
+  --p-graphite: #1F2937;           --p-gold: #D4AF37;       --p-gold-pale: #FFD799;
+}

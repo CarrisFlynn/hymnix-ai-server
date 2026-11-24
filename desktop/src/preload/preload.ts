@@ -9,7 +9,10 @@ const api: DesktopApi & { adminHistory: (adminKey: string, query?: AdminHistoryQ
     choose: (): Promise<WorkspaceRoot | null> => ipcRenderer.invoke("files:choose-root"),
     current: (): Promise<WorkspaceRoot | null> => ipcRenderer.invoke("files:current"),
   },
-  window: { control: (action: "minimize" | "maximize" | "close") => ipcRenderer.invoke("window:control", action) },
+  window: {
+    control: (action: "minimize" | "maximize" | "close" | "hide" | "restart") => ipcRenderer.invoke("window:control", action),
+    setAppearance: (mode: "light" | "dark" | "auto", backgroundColor: string) => ipcRenderer.invoke("window:appearance", { mode, backgroundColor }),
+  },
   github: { stars: () => ipcRenderer.invoke("github:stars") },
   bootstrap: () => ipcRenderer.invoke("app:bootstrap"),
   log: (message: string) => ipcRenderer.invoke("app:log", message),
@@ -33,7 +36,17 @@ const api: DesktopApi & { adminHistory: (adminKey: string, query?: AdminHistoryQ
     save: (payload: Record<string, unknown>) => ipcRenderer.invoke("cloud:save", payload),
     test: () => ipcRenderer.invoke("cloud:test"),
   },
-  system: { stats: () => ipcRenderer.invoke("system:stats"), openExternal: (url: string) => ipcRenderer.invoke("shell:open", url) },
+  system: {
+    stats: () => ipcRenderer.invoke("system:stats"),
+    openExternal: (url: string) => ipcRenderer.invoke("shell:open", url),
+    disk: (target: string) => ipcRenderer.invoke("system:disk", target),
+    notify: (input: { title: string; body: string }) => ipcRenderer.invoke("system:notify", input),
+  },
+  credentials: {
+    get: (key: string) => ipcRenderer.invoke("credentials:get", key),
+    set: (key: string, value: string) => ipcRenderer.invoke("credentials:set", key, value),
+    remove: (key: string) => ipcRenderer.invoke("credentials:remove", key),
+  },
   network: {
     connect: (baseUrl: string, name: string, password: string) => ipcRenderer.invoke("network:connect", { baseUrl, name, password }),
     info: () => ipcRenderer.invoke("network:info"),
@@ -41,6 +54,8 @@ const api: DesktopApi & { adminHistory: (adminKey: string, query?: AdminHistoryQ
     tunnelStatus: () => ipcRenderer.invoke("network:tunnelStatus"),
     saveIdentity: (payload: Record<string, unknown>) => ipcRenderer.invoke("network:save", payload),
     get: (baseUrl: string, path: string, token?: string) => ipcRenderer.invoke("network:get", { baseUrl, path, token }),
+    clients: () => ipcRenderer.invoke("network:clients"),
+    disconnect: (ip: string) => ipcRenderer.invoke("network:disconnect", ip),
   } as NetworkApi,
   models: {
     async pullStream({ requestId, model, onProgress }) {
@@ -80,6 +95,11 @@ const api: DesktopApi & { adminHistory: (adminKey: string, query?: AdminHistoryQ
     pending: (): Promise<ApprovalListResponse> => ipcRenderer.invoke(channels.toolsPending),
     approve: (id: string): Promise<ApprovalDecisionResponse> => ipcRenderer.invoke(channels.toolsApprove, id),
     deny: (id: string): Promise<ApprovalDecisionResponse> => ipcRenderer.invoke(channels.toolsDeny, id),
+  },
+  plugins: {
+    list: () => ipcRenderer.invoke("plugins:list"),
+    install: () => ipcRenderer.invoke("plugins:install"),
+    action: (request) => ipcRenderer.invoke("plugins:action", request),
   },
   files: {
     tree: (request: FileTreeRequest): Promise<FileTreeResponse> => ipcRenderer.invoke("files:tree", request),

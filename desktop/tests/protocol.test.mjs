@@ -13,18 +13,41 @@ assert.ok(readme.includes("127.0.0.1:11435"), "README gateway port mismatch");
 assert.ok(!readme.includes("127.0.0.1:11434"), "README documents the upstream model port as the gateway port");
 assert.ok(readme.includes("held in memory"), "README must document memory-only API key handling");
 assert.ok(!readme.includes("HYMNIx_GATEWAY_TOKEN"), "README must not claim an environment token contract");
-for (const token of ["ORBIT \u00b7 ", "__APP_VERSION__"]) assert.ok(renderer.includes(token), `renderer missing ${token}`);
+assert.ok(renderer.includes("__APP_VERSION__"), "renderer must show the app version in About");
+assert.ok(renderer.includes('head("About"') && renderer.includes("{__APP_VERSION__} · Hymnix Studio"), "app version must be in About rather than the title bar");
+assert.ok(!renderer.includes('"ORBIT · "'), "title bar must not carry the old version badge");
+assert.ok(main.includes('minWidth:800,minHeight:560'), "window must support the planned minimum dimensions");
+assert.ok(main.includes('"window:appearance"') && preload.includes('"window:appearance"'), "native window appearance must follow renderer theme selection");
 for (const view of ["Chat","History","Gateway","Models","Terminal","Monitor","Changelog","Support","Settings"]) assert.ok(renderer.includes(view), `renderer missing view ${view}`);
-for (const token of ['aria-label="Workspace navigation"', 't("Message")']) assert.ok(renderer.includes(token), `renderer accessibility/name missing ${token}`);
+for (const token of ['aria-label={t(group.title)}', 't("Message")']) assert.ok(renderer.includes(token), `renderer accessibility/name missing ${token}`);
 const chat = read("../src/renderer/chat-navigation.tsx");
 for (const token of ['aria-live="polite"', 'aria-current', 'Conversation turns']) assert.ok(chat.includes(token), `chat navigation missing ${token}`);
-for (const token of ['catalog-row', 'setting-row', 'switch', 'segmented', 'dataset.theme', 'ICONS']) assert.ok(renderer.includes(token), `renderer design system missing ${token}`);
+assert.ok(chat.includes("messageDay") && read("../src/renderer/chat.tsx").includes("formatMessageTime"), "chat messages must group by date and display readable times");
+for (const page of ["Files", "Logs"]) assert.ok(renderer.includes(`if (active === "${page}") return render${page}()`), `${page} navigation must reach its real page`);
+assert.ok(renderer.includes('if (active === "Plugins") return renderPlugins()'), "Plugins navigation must reach the management workflow");
+assert.ok(preload.includes('ipcRenderer.invoke("plugins:list")') && main.includes('ipcMain.handle("plugins:action"'), "plugin management must use validated preload IPC");
+const gatewayCore = read("../../server/gateway_core.py");
+assert.ok(gatewayCore.includes('if path == "/admin/plugins"') && gatewayCore.includes('plugins.unload(plugin_id)') && gatewayCore.includes('plugins.set_enabled(plugin_id, False)'), "plugin management must use the authenticated gateway and stop plugins when permissions are revoked");
+for (const token of ['setting-row', 'switch', 'segmented', 'ICONS', 'THEMES.filter']) assert.ok(renderer.includes(token), `renderer design system missing ${token}`);
+const themeManager = read("../src/theme/themeManager.ts");
+for (const token of ['dataset.theme', 'dataset.mode', 'THEMES', 'readStoredTheme', 'applyTheme', 'deep-sea-blue', 'neon-black', 'ink-green', 'honey-crimson', 'graphite-gold']) assert.ok(themeManager.includes(token), `theme manager missing ${token}`);
+const tokenEntry = read("../src/styles/index.css");
+for (const token of ['./tokens/semantic.css', './tokens/primitives.css', './base.css', './themes.css']) assert.ok(tokenEntry.includes(token), `token entry missing ${token}`);
+for (const name of ['light-camellia','light-deepsea','light-ink','light-honey','dark-orange','dark-cyan','dark-neon','dark-rog','dark-graphite']) {
+  const theme = read(`../src/styles/themes/${name}.css`);
+  for (const token of ['[data-theme=', '--bg:', '--accent:', '--accent-fill:', '--text:', '--border:']) assert.ok(theme.includes(token), `theme ${name} missing ${token}`);
+}
 const catalog = read("../src/renderer/ModelCatalog.tsx");
-for (const token of ['catalog-scroll', 'catalog-filters', 'type="search"']) assert.ok(catalog.includes(token), `model catalog missing ${token}`);
+for (const token of ['catalog-row', 'catalog-scroll', 'catalog-filters', 'type="search"']) assert.ok(catalog.includes(token), `model catalog missing ${token}`);
 const styles = read("../src/renderer/styles.css");
-for (const token of ['--s4', '--fs-title', '.model-grid', '.setting-row', '.segmented', '[data-theme="camellia-white"]', '[data-theme="rog-red-black"]', '[data-theme="deep-sea-blue"]', '[data-theme="neon-black"]', '--on-accent']) assert.ok(styles.includes(token), `stylesheet design system missing ${token}`);
-assert.ok(!styles.includes('[data-theme="daylight"]'), "the retired daylight theme must be gone");
-assert.ok(renderer.includes('"deep-sea-blue"') && renderer.includes('"neon-black"'), "renderer theme presets missing the new palettes");
+for (const token of ['--s4', '--fs-title', '.model-grid', '.setting-row', '.segmented', '--on-accent']) assert.ok(styles.includes(token), `stylesheet design system missing ${token}`);
+// Colour tokens moved out of the component sheet in Phase 1; the selectors now
+// live in the theme layer, so assert against that instead of the legacy file.
+const themeLayer = ['light-camellia', 'light-deepsea', 'light-ink', 'light-honey', 'dark-orange', 'dark-cyan', 'dark-neon', 'dark-rog', 'dark-graphite']
+  .map((name) => read(`../src/styles/themes/${name}.css`)).join("\n");
+for (const token of ['[data-theme="camellia-white"]', '[data-theme="rog-red-black"]', '[data-theme="deep-sea-blue"]', '[data-theme="neon-black"]', '--on-accent']) assert.ok(themeLayer.includes(token) || styles.includes(token), `theme layer missing ${token}`);
+assert.ok(!styles.includes('[data-theme="daylight"]') && !themeLayer.includes('[data-theme="daylight"]'), "the retired daylight theme must be gone");
+assert.ok(themeManager.includes('"deep-sea-blue"') && themeManager.includes('"neon-black"'), "theme catalogue missing the shipped palettes");
 assert.ok(!renderer.includes('"Product review"'), "no demo workspace fixtures");
 const i18n = read("../src/renderer/i18n.ts");
 assert.ok(renderer.includes('from "./i18n"'), "renderer must use the i18n module");

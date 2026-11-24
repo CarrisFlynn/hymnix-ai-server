@@ -1149,6 +1149,18 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError("body too large")
         return self.rfile.read(n)
 
+    def _read_json_body(self):
+        """Best-effort JSON object from the request body; empty dict on failure."""
+        try:
+            raw = self._read_body()
+        except ValueError:
+            return {}
+        try:
+            payload = json.loads(raw.decode("utf-8", "ignore") or "{}")
+        except Exception:
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
     # ---------- HTTP 动词 ----------
     # ---------- 一体化：主机身份 / 访客登录 / 公网隧道 ----------
     def _connect_verify(self):
@@ -1829,12 +1841,115 @@ class Handler(BaseHTTPRequestHandler):
             load_recent_history()
         return self._json(200, result)
 
+    def _admin_plugins(self, method):
+        if not self._admin_ok():
+            with LOCK:
+                STATS["auth_fail"] += 1
+            log_event("admin_auth_fail", ip=self._ip(), path="/admin/plugins")
+            return self._json(401, {"error": "admin key required"})
+        if method == "GET":
+            try:
+                from hxcore import plugins
+                items = []
+                for row in plugins.discover():
+                    if not isinstance(row, dict) or not isinstance(row.get("id"), str):
+                        continue
+                    items.append({key: row.get(key) for key in (
+                        "id", "name", "version", "apiVersion", "description", "author",
+                        "permissions", "capabilities", "enabled", "loaded", "source", "error")})
+                    items[-1]["granted"] = plugins.granted(row["id"])
+                status = plugins.status()
+                return self._json(200, {"ok": True, "count": len(items), "enabled": int(status.get("enabled", 0)),
+                                        "loaded": int(status.get("loaded", 0)), "plugins": items})
+            except Exception:
+                traceback.print_exc()
+                return self._json(500, {"ok": False, "error": "plugin_service_unavailable"})
+        if method != "POST":
+            return self._json(405, {"ok": False, "error": "method_not_allowed"})
+        try:
+            raw = self._read_body()
+            payload = json.loads(raw.decode("utf-8", "strict")) if raw else {}
+            if not isinstance(payload, dict):
+                return self._json(400, {"ok": False, "error": "invalid_request"})
+            from hxcore import plugins
+            action = payload.get("action")
+            if action == "install":
+                source = payload.get("source")
+                if not isinstance(source, str) or not source.strip() or len(source) > 4096:
+                    return self._json(400, {"ok": False, "error": "invalid_source"})
+                result = plugins.install_from_folder(source.strip())
+                return self._json(200, {"ok": bool(result.get("ok")), "action": action,
+                                        "id": result.get("id", ""), "error": result.get("error", "")})
+            plugin_id = payload.get("id")
+            if not isinstance(plugin_id, str) or not re.fullmatch(r"[a-z0-9][a-z0-9._-]{2,63}", plugin_id):
+                return self._json(400, {"ok": False, "error": "invalid_plugin_id"})
+            if action in ("grant", "revoke"):
+                permission = payload.get("permission")
+                if not isinstance(permission, str) or permission not in ("fs.read", "fs.write", "net.http", "ui.toast", "tools.register", "log.write"):
+                    return self._json(400, {"ok": False, "error": "invalid_permission"})
+                if action == "revoke" and permission in plugins.granted(plugin_id):
+                    plugins.unload(plugin_id)
+                    plugins.set_enabled(plugin_id, False)
+                result = plugins.grant(plugin_id, permission) if action == "grant" else plugins.revoke(plugin_id, permission)
+                return self._json(200, {"ok": bool(result.get("ok")), "action": action,
+                                        "id": plugin_id, "permission": permission})
+            if action == "enable":
+                if not plugins.set_enabled(plugin_id, True):
+                    return self._json(409, {"ok": False, "error": "permission_not_granted",
+                                            "id": plugin_id, "granted": plugins.granted(plugin_id)})
+                result = plugins.load(plugin_id)
+                if not result.get("ok"):
+                    plugins.set_enabled(plugin_id, False)
+                return self._json(200 if result.get("ok") else 409,
+                                  {"ok": bool(result.get("ok")), "action": action, "id": plugin_id,
+                                   "enabled": bool(result.get("ok")), "loaded": bool(result.get("ok")),
+                                   "error": result.get("error", ""), "detail": result.get("detail", "")})
+            if action == "disable":
+                plugins.unload(plugin_id)
+                ok = plugins.set_enabled(plugin_id, False)
+                return self._json(200 if ok else 404, {"ok": bool(ok), "action": action,
+                                                       "id": plugin_id, "enabled": False, "loaded": False})
+            if action == "load":
+                result = plugins.load(plugin_id)
+                return self._json(200 if result.get("ok") else 409,
+                                  {"ok": bool(result.get("ok")), "action": action, "id": plugin_id,
+                                   "loaded": bool(result.get("ok")), "error": result.get("error", ""),
+                                   "detail": result.get("detail", "")})
+            if action == "unload":
+                ok = plugins.unload(plugin_id)
+                return self._json(200, {"ok": True, "action": action, "id": plugin_id,
+                                        "loaded": False, "changed": bool(ok)})
+            if action == "reload":
+                result = plugins.reload(plugin_id)
+                return self._json(200 if result.get("ok") else 409,
+                                  {"ok": bool(result.get("ok")), "action": action, "id": plugin_id,
+                                   "loaded": bool(result.get("ok")), "error": result.get("error", ""),
+                                   "detail": result.get("detail", "")})
+            if action == "uninstall":
+                plugins.unload(plugin_id)
+                for permission in plugins.granted(plugin_id):
+                    plugins.revoke(plugin_id, permission)
+                ok = plugins.uninstall(plugin_id)
+                return self._json(200 if ok else 404, {"ok": bool(ok), "action": action,
+                                                       "id": plugin_id, "error": "" if ok else "plugin_not_found"})
+            return self._json(400, {"ok": False, "error": "invalid_action"})
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return self._json(400, {"ok": False, "error": "invalid_json"})
+        except ValueError:
+            return self._json(400, {"ok": False, "error": "invalid_request"})
+        except Exception:
+            traceback.print_exc()
+            return self._json(500, {"ok": False, "error": "plugin_operation_failed"})
+
     def _admin_api(self, path):
         if not self._admin_ok():
             with LOCK:
                 STATS["auth_fail"] += 1
             log_event("admin_auth_fail", ip=self._ip(), path=path)
             return self._json(401, {"error": "admin key required"})
+
+        if path == "/admin/plugins":
+            return self._admin_plugins(self.command)
 
         if path == "/admin/models":
             tags_status, tags = upstream_json("/api/tags", timeout=8)
@@ -1959,7 +2074,22 @@ class Handler(BaseHTTPRequestHandler):
                                     "items": [self._trim(r) for r in items]})
 
         if path == "/admin/clients":
-            return self._json(200, {"clients": clients_snapshot()})
+            return self._json(200, {"ok": True, "count": len(CLIENTS),
+                                    "clients": clients_snapshot()})
+
+        if path == "/admin/clients/disconnect":
+            if self.command != "POST":
+                return self._json(405, {"ok": False, "error": "method_not_allowed"})
+            body = self._read_json_body() or {}
+            ip = str(body.get("ip") or "").strip()
+            if not ip or len(ip) > 64:
+                return self._json(400, {"ok": False, "error": "invalid_ip"})
+            with LOCK:
+                removed = CLIENTS.pop(ip, None)
+            if removed is None:
+                return self._json(404, {"ok": False, "error": "unknown_client", "ip": ip})
+            log_event("client_disconnect", ip=ip, ua=(removed.get("ua") or "")[:120])
+            return self._json(200, {"ok": True, "ip": ip, "count": len(CLIENTS)})
 
         if path == "/admin/history":
             q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)

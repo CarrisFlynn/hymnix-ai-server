@@ -1,0 +1,19 @@
+{
+  "extends": null,
+  "rules": {
+    "color-no-hex": true,
+    "color-named": "never",
+    "declaration-property-value-disallowed-list": {
+      "/^--p-/": ["/.*/"]
+    }
+  },
+  "overrides": [
+    {
+      "files": ["src/styles/themes/*.css", "src/styles/tokens/*.css"],
+      "rules": {
+        "color-no-hex": null,
+        "declaration-property-value-disallowed-list": null
+      }
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+/* Phase 0 entry · tokens and themes.
+   renderer/styles.css (components + legacy compatibility tokens) is imported after this file. */
+@import "./tokens/semantic.css";
+@import "./tokens/primitives.css";
+@import "./base.css";
+@import "./themes.css";

@@ -2,6 +2,52 @@
 
 Only user-visible changes are listed. Internal refactors, test scaffolding and machine-specific paths are intentionally omitted.
 
+## 1.3.3 — 2026-11-24
+
+### Added
+
+- Phase 0 of the 2.0 redesign: one semantic token layer (`--bg`, `--text`, `--accent-fill`, status and console tokens), one theme file per preset, and locally bundled Inter and JetBrains Mono (no CDN).
+- Three new themes: Ink green (墨绿 on ivory), Honey crimson (crimson on honey) and Graphite gold (metallic gold on graphite). Nine presets in total; each one declares its light or dark mode.
+- Theme files are wired into a dedicated theme manager, so the theme picker lists all nine presets and remembers the choice.
+- Rebuilt the workspace shell with a collapsible sidebar, global command search, responsive chat inspector and a consistent flat component style.
+- One component language across the app: six button levels, chips and status pills, hover and focus tooltips with the keyboard hint, and skeleton rows while a list loads.
+- The model picker is a searchable combobox that marks which models fit your GPU.
+- Sharing shows a password strength meter, a QR code for the public link that is generated on this device, and the list of people connected with a one-click disconnect.
+- Connect to a friend now diagnoses the failure in plain language (wrong password, unreachable host, version mismatch) and keeps favourites for the hosts you use often. Admin and cloud keys are stored in the Windows credential vault instead of a plain JSON file.
+- Chat reports token speed while generating and per reply, can branch a new conversation from any reply, and keeps the partial answer when the connection drops with an inline Retry.
+- Attach files by button, drag and drop, or paste; attachments show as removable chips.
+- Slash commands in the composer: /model, /clear, /export and /system.
+- Code blocks can wrap and save as a file.
+- Downloads check free disk space before starting, notify you when they finish, and show a progress ring in the sidebar.
+- A three-step first-run card walks from starting the model service to downloading a model and sending the first message.
+- Settings gained a per-section Reset to default, `Restart needed` chips with a sticky restart bar, and an autosave confirmation.
+- A "What's new" card appears once per version.
+- Added Light, Dark and Auto appearance, live theme previews, spacing density, text scaling and reduced-motion controls.
+- Conversations autosave into searchable history with pin, delete and undo; messages support copy, edit and resend, regenerate, and turn deletion.
+- Chat and management screens now show explicit service/setup states, with focused model, sharing and monitoring views.
+- Added a desktop plugin center backed by the isolated gateway plugin manager; new installs remain disabled until permissions are reviewed.
+- Revoking a granted plugin permission unloads and disables that plugin immediately.
+- Wired Files and Logs navigation to their existing screens and made the native window background follow the selected appearance mode.
+
+### Changed
+
+- Sidebar conversations follow the Claude and ChatGPT pattern: one single scroll column with single-line titles, instead of a small nested scrollbox that clipped rows. The workspace selector is a quiet row, and the footer stays pinned.
+- Text scaling goes to 200% and long labels wrap instead of clipping; touch targets grow to 44px on touch screens.
+- Chat completion is announced once to screen readers instead of on every token, and reduced-motion and forced-colors settings are respected throughout.
+- The six existing presets keep their 1.3.2 values through a compatibility layer, so this release changes no existing colours.
+
+### Fixed
+
+- The status pill no longer clips its label or leaves a sliver beside it: the header and connection bar wrap below 1360 px instead of cutting pills.
+- Fixed a stray brace left by the theme migration that broke the stylesheet build.
+
+### Tooling
+
+- The token contract is enforced: a design-token check fails the build on any hard-coded colour in component CSS, and a WCAG AA contrast check covers 21 pairs in each of the nine themes.
+- A component gallery (`Settings > Component gallery`) renders every component in every state, and a Playwright baseline captures every page in every theme (135 images) for visual diffs.
+- The terminal command hint is no longer clipped at the bottom edge.
+- The switch off-state is visible again with a stronger track colour.
+
 ## 1.3.2 — 2026-11-20
 
 ### Added

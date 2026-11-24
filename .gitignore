@@ -33,3 +33,9 @@ win-unpacked/
 runtime/
 certs/
 *.blockmap
+
+# runtime plugin installs live next to the source tree when running unpackaged
+plugins/
+# playwright artifacts
+desktop/test-results/
+desktop/playwright-report/

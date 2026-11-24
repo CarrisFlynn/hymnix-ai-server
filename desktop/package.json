@@ -1,6 +1,6 @@
 {
   "name": "hymnix-desktop",
-  "version": "1.3.2",
+  "version": "1.3.3",
   "private": true,
   "description": "Hymnix Orbit - Hymnix scheduler with local gateway connectivity: orchestrate local models, serve a private OpenAI-compatible endpoint, keep every session on your machine.",
   "author": {
@@ -10,9 +10,14 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && vite build && node scripts/fix-renderer-html.mjs dist/renderer/index.html",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node tests/protocol.test.mjs && node --test tests/gateway-lifecycle.test.mjs tests/model-download.test.mjs tests/model-catalog.test.mjs tests/pull-stream.test.mjs tests/terminal-bridge.test.mjs",
-    "check": "pnpm typecheck && pnpm test && pnpm build",
-    "dist": "pnpm build && electron-builder --win --x64",
+    "test": "node tests/protocol.test.mjs && node --test tests/gateway-lifecycle.test.mjs tests/model-download.test.mjs tests/model-catalog.test.mjs tests/pull-stream.test.mjs tests/terminal-bridge.test.mjs tests/components.test.mjs",
+    "check:css": "node ../tools/check-css-tokens.mjs",
+    "check:contrast": "node ../tools/check-contrast.mjs",
+    "check:design": "pnpm check:css && pnpm check:contrast",
+    "visual": "pnpm exec playwright test --project=electron",
+    "check": "pnpm typecheck && pnpm test && pnpm check:design && pnpm build",
+    "build:backend": "python -m PyInstaller --noconfirm --clean --distpath ../build/hymnix-orbit2-backend --workpath ../build/work-hymnix-orbit2-backend ../server/hymnix-server.spec",
+    "dist": "pnpm build && pnpm build:backend && electron-builder --win --x64",
     "cert:selfsigned": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/make-self-signed-cert.ps1",
     "dist:sign": "electron-builder --win --x64"
   },
@@ -46,7 +51,7 @@
         "to": "engine-java/build/hymnix-engine.jar"
       },
       {
-        "from": "../hymnix-server-1.3.2-x64.exe",
+        "from": "../build/hymnix-orbit2-backend/hymnix-server-1.3.3-x64.exe",
         "to": "backend-gateway-headless.exe"
       }
     ],
@@ -75,29 +80,30 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "Hymnix Orbit",
-      "artifactName": "Hymnix-Orbit-1.3.2-Setup.${ext}",
+      "artifactName": "Hymnix-Orbit-1.3.3-Setup.${ext}",
       "multiLanguageInstaller": true,
       "installerLanguages": [
         "en_US",
         "zh_CN"
       ],
       "displayLanguageSelector": true,
-      "uninstallDisplayName": "Hymnix Orbit 1.3.2"
+      "uninstallDisplayName": "Hymnix Orbit 1.3.3"
     },
     "portable": {
-      "artifactName": "Hymnix-Orbit-1.3.2-Portable.${ext}"
+      "artifactName": "Hymnix-Orbit-1.3.3-Portable.${ext}"
     }
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "latest",
+    "@playwright/test": "^1.65.1",
     "@types/node": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
+    "@vitejs/plugin-react": "latest",
+    "electron": "latest",
+    "electron-builder": "latest",
     "react": "latest",
     "react-dom": "latest",
     "typescript": "latest",
-    "vite": "latest",
-    "electron": "latest",
-    "electron-builder": "latest"
+    "vite": "latest"
   }
 }

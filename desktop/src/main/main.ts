@@ -1,8 +1,8 @@
-import {app,BrowserWindow,Menu,WebContentsView,dialog,ipcMain,net,protocol,screen,session,shell} from "electron";
+import {app,BrowserWindow,Menu,Notification,Tray,WebContentsView,dialog,ipcMain,net,nativeTheme,protocol,safeStorage,screen,session,shell} from "electron";
 import {basename,extname,join,relative,resolve,sep} from "node:path";
 import {pathToFileURL} from "node:url";
 import {GatewayLifecycle} from "./gateway-lifecycle";
-import {existsSync,realpathSync,statSync,readdirSync,readFileSync,writeFileSync,mkdirSync} from "node:fs";
+import {existsSync,realpathSync,statfsSync,statSync,readdirSync,readFileSync,writeFileSync,mkdirSync} from "node:fs";
 import {spawn,execFile,ChildProcess} from "node:child_process";
 import os from "node:os";
 import {readPullStream} from "./pull-stream";
@@ -319,6 +319,34 @@ function registerToolsIpc(): void {
   ipcMain.handle("tools:pending", async (event) => { assertSender(event); return parseApprovalListResponse(await toolsJson("admin/approvals",{method:"GET"},"X-Admin-Key","Approval list")); });
   for(const decision of ["approve","deny"] as const) ipcMain.handle("tools:"+decision, async (event, rawId: unknown) => { assertSender(event); if(typeof rawId!=="string"||!rawId.trim()||rawId.length>256||/[\/\0]/.test(rawId)) throw new Error(JSON.stringify({code:"invalid_request",message:"Invalid approval id"})); const payload=await toolsJson("admin/approvals/"+encodeURIComponent(rawId),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({decision})},"X-Admin-Key","Approval decision"); return parseApprovalDecisionResponse(payload); });
 }
+const pluginPermissions = new Set(["fs.read", "fs.write", "net.http", "ui.toast", "tools.register", "log.write"]);
+const pluginActions = new Set(["grant", "revoke", "enable", "disable", "load", "unload", "reload", "uninstall"]);
+function registerPluginsIpc(): void {
+  ipcMain.handle("plugins:list", async (event) => { assertSender(event); return adminJson("admin/plugins"); });
+  ipcMain.handle("plugins:install", async (event) => {
+    assertSender(event);
+    const options: Electron.OpenDialogOptions = { title: "Choose a local plugin folder", properties: ["openDirectory"] };
+    const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
+    if (result.canceled || !result.filePaths[0]) return { ok: false, canceled: true };
+    return adminJson("admin/plugins", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "install", source: result.filePaths[0] }) });
+  });
+  ipcMain.handle("plugins:action", async (event, raw: unknown) => {
+    assertSender(event);
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error(JSON.stringify({ code: "invalid_request", message: "Plugin action must be an object" }));
+    const input = raw as Record<string, unknown>;
+    const action = typeof input.action === "string" ? input.action : "";
+    const id = typeof input.id === "string" ? input.id : "";
+    if (!pluginActions.has(action) || !/^[a-z0-9][a-z0-9._-]{2,63}$/.test(id)) throw new Error(JSON.stringify({ code: "invalid_request", message: "Invalid plugin action or ID" }));
+    const payload: Record<string, string> = { action, id };
+    if (action === "grant" || action === "revoke") {
+      const permission = typeof input.permission === "string" ? input.permission : "";
+      if (!pluginPermissions.has(permission)) throw new Error(JSON.stringify({ code: "invalid_request", message: "Invalid plugin permission" }));
+      payload.permission = permission;
+    }
+    return adminJson("admin/plugins", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+  });
+}
 const activePulls = new Map<number, { id: string; controller: AbortController }>();
 function registerModelIpc(): void {
   ipcMain.on("models:pull-cancel", (event, id: unknown) => {
@@ -374,7 +402,7 @@ function registerModelIpc(): void {
   ipcMain.handle(modelChannels.stop, async (event, model: unknown) => { assertSender(event); return adminJson("admin/models/stop", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ model: required(model, "model") }) }); });
 }
 // ---------- integrated host / guest networking ----------
-const netChannels = { connect:"network:connect", network:"network:info", tunnel:"network:tunnel", networkSave:"network:save", tunnelStatus:"network:tunnelStatus", get:"network:get" } as const;
+const netChannels = { connect:"network:connect", network:"network:info", tunnel:"network:tunnel", networkSave:"network:save", tunnelStatus:"network:tunnelStatus", get:"network:get", clients:"network:clients", disconnect:"network:disconnect" } as const;
 function registerNetworkIpc(): void {
   ipcMain.handle(netChannels.connect, async (event, raw: unknown) => {
     assertSender(event);
@@ -409,6 +437,41 @@ function registerNetworkIpc(): void {
     return payload ?? {};
   });
   ipcMain.handle(netChannels.tunnel, async (event, action: unknown) => { assertSender(event); return adminJson("admin/tunnel", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ action: action === "stop" ? "stop" : "start" }) }); });
+  // Who is currently connected to this computer. Shown in Sharing so a stranger
+  // in the list can be disconnected without stopping the whole share.
+  ipcMain.handle(netChannels.clients, async (event) => {
+    assertSender(event);
+    try {
+      const payload = await adminJson("admin/clients") as Record<string, unknown> | null;
+      const list = Array.isArray(payload?.clients) ? payload!.clients as Record<string, unknown>[] : [];
+      return {
+        ok: true,
+        total: typeof payload?.count === "number" ? payload.count : list.length,
+        clients: list.map((entry) => ({
+          ip: String(entry.ip ?? entry.address ?? ""),
+          ua: typeof entry.ua === "string" ? entry.ua : "",
+          requests: typeof entry.requests === "number" ? entry.requests : 0,
+          conversations: typeof entry.conversations === "number" ? entry.conversations : 0,
+          online: entry.online === true,
+          last_seen: typeof entry.last_seen === "string" ? entry.last_seen : "",
+          last_model: typeof entry.last_model === "string" ? entry.last_model : ""
+        })).filter((entry) => entry.ip)
+      };
+    } catch (error) {
+      return { ok: false, clients: [], error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+  ipcMain.handle(netChannels.disconnect, async (event, rawIp: unknown) => {
+    assertSender(event);
+    const ip = typeof rawIp === "string" ? rawIp.trim() : "";
+    if (!ip || ip.length > 64) return { ok: false, error: "invalid_ip" };
+    try {
+      const payload = await adminJson("admin/clients/disconnect", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ip }) }) as Record<string, unknown> | null;
+      return { ok: payload?.ok !== false, ip, error: typeof payload?.error === "string" ? payload.error : undefined };
+    } catch (error) {
+      return { ok: false, ip, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
 }
 // ---------- system telemetry ----------
 type SystemStats = { gpu: number | null; vramUsed: number | null; vramTotal: number | null; ramUsed: number; ramTotal: number; ai: number | null };
@@ -436,6 +499,78 @@ function registerSystemIpc(): void {
       } catch { /* no nvidia gpu or smi missing */ }
     }
     return stats;
+  });
+  // Free disk space is checked before a model download so the UI can refuse a
+  // pull that would fill the volume instead of failing halfway through.
+  ipcMain.handle("system:disk", (event, raw: unknown) => {
+    assertSender(event);
+    const requested = typeof raw === "string" && raw.trim() ? resolve(raw.trim()) : "";
+    const target = requested && existsSync(requested) ? requested : app.getPath("userData");
+    try {
+      const info = statfsSync(target);
+      return { path: target, free: Number(info.bavail) * Number(info.bsize), total: Number(info.blocks) * Number(info.bsize), ok: true };
+    } catch {
+      return { path: target, free: 0, total: 0, ok: false };
+    }
+  });
+  // Native toast for long-running work the user has almost certainly tabbed away from.
+  ipcMain.handle("system:notify", (event, raw: unknown) => {
+    assertSender(event);
+    const value = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+    const title = typeof value.title === "string" ? value.title.slice(0, 120) : "";
+    const body = typeof value.body === "string" ? value.body.slice(0, 400) : "";
+    if (!title) return { ok: false };
+    if (!Notification.isSupported()) return { ok: false };
+    try {
+      const toast = new Notification({ title, body, silent: false });
+      toast.on("click", () => { if (mainWindow && !mainWindow.isDestroyed()) { if (mainWindow.isMinimized()) mainWindow.restore(); mainWindow.show(); mainWindow.focus(); } });
+      toast.show();
+      return { ok: true };
+    } catch { return { ok: false }; }
+  });
+}
+// ---------- credential vault ----------
+// Secrets used to live in plaintext JSON next to the settings file. They now go
+// through safeStorage (DPAPI on Windows), so a copied profile folder leaks nothing.
+function credentialsPath(): string { return join(app.getPath("userData"), "orbit-credentials.bin"); }
+function readVault(): Record<string, string> {
+  try { return JSON.parse(readFileSync(credentialsPath(), "utf8")) as Record<string, string>; } catch { return {}; }
+}
+function writeVault(vault: Record<string, string>): void {
+  try { mkdirSync(app.getPath("userData"), { recursive: true }); writeFileSync(credentialsPath(), JSON.stringify(vault), { encoding: "utf8", mode: 0o600 }); } catch { /* ignore */ }
+}
+function registerCredentialsIpc(): void {
+  ipcMain.handle("credentials:get", (event, rawKey: unknown) => {
+    assertSender(event);
+    const key = typeof rawKey === "string" ? rawKey.trim() : "";
+    if (!key || key.length > 128) return null;
+    const sealed = readVault()[key];
+    if (typeof sealed !== "string" || !sealed) return null;
+    try {
+      if (!safeStorage.isEncryptionAvailable()) return null;
+      return safeStorage.decryptString(Buffer.from(sealed, "base64"));
+    } catch { return null; }
+  });
+  ipcMain.handle("credentials:set", (event, rawKey: unknown, rawValue: unknown) => {
+    assertSender(event);
+    const key = typeof rawKey === "string" ? rawKey.trim() : "";
+    const value = typeof rawValue === "string" ? rawValue : "";
+    if (!key || key.length > 128) return { ok: false, encrypted: false };
+    if (!value) { const vault = readVault(); delete vault[key]; writeVault(vault); return { ok: true, encrypted: true }; }
+    if (!safeStorage.isEncryptionAvailable()) return { ok: false, encrypted: false };
+    const vault = readVault();
+    vault[key] = safeStorage.encryptString(value).toString("base64");
+    writeVault(vault);
+    return { ok: true, encrypted: true };
+  });
+  ipcMain.handle("credentials:remove", (event, rawKey: unknown) => {
+    assertSender(event);
+    const key = typeof rawKey === "string" ? rawKey.trim() : "";
+    if (!key) return { ok: false };
+    const vault = readVault();
+    delete vault[key];
+    writeVault(vault);
+    return { ok: true };
   });
 }
 // ---------- settings + in-app preview ----------
@@ -515,22 +650,79 @@ function registerCloudIpc(): void {
   ipcMain.handle("cloud:save", async (event, raw: unknown) => { assertSender(event); return adminJson("admin/cloud", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(raw && typeof raw === "object" ? raw : {}) }); });
   ipcMain.handle("cloud:test", async (event) => { assertSender(event); return adminJson("admin/cloud/test", { method:"POST", headers:{ "Content-Type":"application/json" }, body: "{}" }); });
 }
-ipcMain.handle("window:control", (event, raw: unknown) => { assertSender(event); const action = typeof raw === "string" ? raw : ""; const win = BrowserWindow.fromWebContents(event.sender); if (!win) return { ok: false }; if (action === "minimize") win.minimize(); else if (action === "maximize") win.isMaximized() ? win.unmaximize() : win.maximize(); else if (action === "close") win.close(); return { ok: true, maximized: win.isMaximized() }; });
+// ---------- tray ----------
+// Hiding to the tray is only offered when sharing is on, so a user who keeps the
+// window closed still has a way back and a way to quit cleanly.
+let tray: Tray | null = null;
+function showWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) { createWindow(); return; }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+function ensureTray(): void {
+  if (tray) return;
+  const icon = app.isPackaged
+    ? join(process.resourcesPath, "assets", "hymnix-red-white-star.png")
+    : join(productRoot, "desktop", "src", "renderer", "assets", "hymnix-red-white-star.png");
+  if (!existsSync(icon)) return;
+  try { tray = new Tray(icon); } catch { return; }
+  tray.setToolTip("Hymnix Orbit");
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: "Open Hymnix Orbit", click: () => showWindow() },
+    { type: "separator" },
+    { label: "Quit", click: () => { app.quit(); } }
+  ]));
+  tray.on("click", () => showWindow());
+}
+function disposeTray(): void {
+  if (!tray) return;
+  try { tray.destroy(); } catch { /* ignore */ }
+  tray = null;
+}
+ipcMain.handle("window:control", (event, raw: unknown) => {
+  assertSender(event);
+  const action = typeof raw === "string" ? raw : "";
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (action === "restart") { allowQuit = true; app.relaunch(); app.quit(); return { ok: true }; }
+  if (!win) return { ok: false };
+  if (action === "minimize") win.minimize();
+  else if (action === "maximize") win.isMaximized() ? win.unmaximize() : win.maximize();
+  else if (action === "close") win.close();
+  else if (action === "hide") { ensureTray(); win.hide(); return { ok: true, hidden: true, maximized: win.isMaximized() }; }
+  else return { ok: false };
+  return { ok: true, maximized: win.isMaximized(), hidden: false };
+});
+ipcMain.handle("window:appearance", (event, raw: unknown) => {
+  assertSender(event);
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (!win || !raw || typeof raw !== "object") return { ok: false };
+  const input = raw as { mode?: unknown; backgroundColor?: unknown };
+  if (input.mode !== "light" && input.mode !== "dark" && input.mode !== "auto") return { ok: false };
+  if (typeof input.backgroundColor !== "string" || !/^#[\da-f]{6}$/i.test(input.backgroundColor)) return { ok: false };
+  nativeTheme.themeSource = input.mode === "auto" ? "system" : input.mode;
+  win.setBackgroundColor(input.backgroundColor);
+  return { ok: true };
+});
 ipcMain.handle("shell:open", async (event, raw: unknown) => { assertSender(event); const url = typeof raw === "string" ? raw.trim() : ""; if (!/^https?:\/\//i.test(url)) throw new Error("Only http(s) links are allowed"); await shell.openExternal(url); return { ok: true }; });
 registerCloudIpc();
 registerNetworkIpc();
+registerCredentialsIpc();
 registerTerminalIpc();
 registerModelIpc();
 registerToolsIpc();
+registerPluginsIpc();
 
 registerGatewayIpc();
 function createWindow(){
   const icon = app.isPackaged
     ? join(process.resourcesPath, "assets", "hymnix-red-white-star.png")
     : join(productRoot, "desktop", "src", "renderer", "assets", "hymnix-red-white-star.png");
-  const win=new BrowserWindow({width:1440,height:900,minWidth:980,minHeight:640,frame:false,titleBarStyle:"hidden",fullscreen:readSettings().startFullscreen,backgroundColor:"#fff9f8",...(existsSync(icon)?{icon}:{}),webPreferences:{preload:join(__dirname,"../preload/preload.js"),contextIsolation:true,sandbox:true,nodeIntegration:false,webSecurity:true}});win.webContents.setWindowOpenHandler(()=>({action:"deny"}));win.webContents.on("will-navigate",(event,url)=>{if(!isAllowedRendererUrl(url))event.preventDefault()});void win.loadURL(rendererUrl);mainWindow=win;
+  const win=new BrowserWindow({width:1440,height:900,minWidth:800,minHeight:560,frame:false,titleBarStyle:"hidden",fullscreen:readSettings().startFullscreen,backgroundColor:nativeTheme.shouldUseDarkColors?"#151c27":"#fdf7f7",...(existsSync(icon)?{icon}:{}),webPreferences:{preload:join(__dirname,"../preload/preload.js"),contextIsolation:true,sandbox:true,nodeIntegration:false,webSecurity:true}});win.webContents.setWindowOpenHandler(()=>({action:"deny"}));win.webContents.on("will-navigate",(event,url)=>{if(!isAllowedRendererUrl(url))event.preventDefault()});void win.loadURL(rendererUrl);mainWindow=win;
   win.webContents.on("did-start-loading", () => terminalBridge.stop());
-  win.webContents.on("render-process-gone", () => terminalBridge.stop());
+  win.webContents.on("did-fail-load", (_event, code, description, url, isMainFrame) => { if (isMainFrame) bootLog(`renderer load failed code=${code} description=${description} url=${url}`); });
+  win.webContents.on("did-finish-load", () => bootLog("renderer finished loading"));
+  win.webContents.on("render-process-gone", (_event, details) => { bootLog(`renderer process exited reason=${details.reason} code=${details.exitCode}`); void terminalBridge.stop(); });
   win.webContents.once("destroyed", () => terminalBridge.stop());
   win.on("resize",()=>{if(previewView)previewView.setBounds(previewBounds(win));});win.on("closed",()=>{if(mainWindow===win)mainWindow=null;});}
 const hasInstanceLock = app.requestSingleInstanceLock();

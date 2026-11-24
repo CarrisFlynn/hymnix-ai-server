@@ -1,0 +1,20 @@
+:root[data-theme="graphite-gold"] {
+  --bg:#151C27; --sidebar:#0F151E; --surface:#1F2937; --raised:#2A3546; --sunken:#111822;
+  --border:#2F3B4D; --border-strong:#61748F;
+  --text:#F4EFE3; --muted:#A9B1BD; --faint:#8591A1;
+  --accent:#D4AF37; --accent-fill:#D4AF37; --accent-hover:#E2C158; --accent-pressed:#B8952A;
+  --on-accent:#1A1405; --accent-text:#D4AF37; --accent-soft:#2B2615; --highlight:#3A3319;
+  --accent-bright:#FFD799;
+  --term-bg:var(--bg); --term-fg:var(--text); --term-muted:var(--muted); --term-prompt:var(--accent-text);
+  --success:#3DDC97; --success-soft:#0E2A20; --warning:#FFB84D; --warning-soft:#2A2110; --danger:#FF6B6B; --danger-soft:#2A1414;
+  /* Phase 0 compatibility aliases: pre-2.0 components still read these names. */
+  --red-700:var(--accent-text); --red-600:var(--accent-hover); --red-500:var(--accent-fill);
+  --red-050:var(--accent-soft); --red-100:#3A3319;
+  --ink:var(--text); --ink-soft:var(--muted); --line:var(--border); --line-strong:var(--border-strong);
+  --surface:#1F2937; --surface-sunken:var(--bg);
+  --user-bubble-bg:var(--accent-soft); --user-bubble-line:var(--border); --user-bubble-ink:var(--accent-text);
+  --ok-050:var(--success-soft); --ok-line:var(--success); --ok-700:var(--success);
+  --keycap-hi:rgba(255,255,255,.06); --keycap-shade:rgba(0,0,0,.70); --keycap-ring:rgba(255,255,255,.05);
+  --keycap-inset-shade:rgba(0,0,0,.90); --keycap-inset-hi:rgba(255,255,255,.09);
+  --keycap-led-glow:rgba(212,175,55,.55); --keycap-lift:rgba(0,0,0,.68); --keycap-lift-hi:rgba(255,255,255,.07);
+}

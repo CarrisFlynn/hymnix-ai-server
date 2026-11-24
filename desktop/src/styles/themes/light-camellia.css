@@ -1,0 +1,9 @@
+:root[data-theme="camellia-white"] {
+  --bg:#FDF7F7; --sidebar:#F8EBEC; --surface:#FFFFFF; --raised:#FFFFFF; --sunken:#F6E7E9;
+  --border:#EBD5D8; --border-strong:#BB7E88;
+  --text:#2B1418; --muted:#6F545A; --faint:#836B71;
+  --accent:#E72D48; --accent-fill:#D8233F; --accent-hover:#CB1F3A; --accent-pressed:#B01A33;
+  --on-accent:#FFFFFF; --accent-text:#C81F3B; --accent-soft:#FCE5E9; --highlight:#F1DDDF;
+  --term-bg:#1A1114; --term-fg:#F4E9EB; --term-muted:#A8959A; --term-prompt:#FF6B81;
+  --success:#1B7A57; --success-soft:#E3F3EA; --warning:#A25C00; --warning-soft:#FFF0D6; --danger:#C0262D; --danger-soft:#FDE4E2;
+}

@@ -397,6 +397,19 @@ export type ToolsApi = {
   deny: (id: string) => Promise<ApprovalDecisionResponse>;
 };
 
+export type PluginDescriptor = {
+  id: string; name: string; version: string; apiVersion: string; author: string; description: string;
+  permissions: string[]; granted: string[]; capabilities: string[]; enabled: boolean; loaded: boolean;
+  source: string; error: string;
+};
+export type PluginsResponse = { ok: boolean; count: number; enabled: number; loaded: number; plugins: PluginDescriptor[] };
+export type PluginActionResult = { ok: boolean; action?: string; id?: string; permission?: string; enabled?: boolean; loaded?: boolean; error?: string; detail?: string; canceled?: boolean };
+export type PluginsApi = {
+  list: () => Promise<PluginsResponse>;
+  install: () => Promise<PluginActionResult>;
+  action: (request: { action: "grant" | "revoke" | "enable" | "disable" | "load" | "unload" | "reload" | "uninstall"; id: string; permission?: string }) => Promise<PluginActionResult>;
+};
+
 export type LocalModel = { name: string; size?: number; loaded?: boolean };
 
 export type PullProgress = { status: string; digest?: string; total?: number; completed?: number };
@@ -414,7 +427,10 @@ export type ModelsApi = {
 
 export type SystemStats = { gpu: number | null; vramUsed: number | null; vramTotal: number | null; ramUsed: number; ramTotal: number; ai: number | null };
 
-export type WindowApi = { control: (action: "minimize" | "maximize" | "close") => Promise<{ ok: boolean; maximized?: boolean }> };
+export type WindowApi = {
+  control: (action: "minimize" | "maximize" | "close" | "hide" | "restart") => Promise<{ ok: boolean; maximized?: boolean; hidden?: boolean }>;
+  setAppearance: (mode: "light" | "dark" | "auto", backgroundColor: string) => Promise<{ ok: boolean }>;
+};
 
 export type AppSettings = {
   betaChannel: boolean; runAtStartup: boolean; dpiScaling: boolean; startFullscreen: boolean;
@@ -451,7 +467,33 @@ export type CloudApi = {
   test: () => Promise<Record<string, unknown>>;
 };
 
-export type SystemApi = { stats: () => Promise<SystemStats>; openExternal: (url: string) => Promise<{ ok: boolean }> };
+export type DiskInfo = { path: string; free: number; total: number; ok: boolean };
+
+export type NotifyInput = { title: string; body: string };
+
+export type SystemApi = {
+  stats: () => Promise<SystemStats>;
+  openExternal: (url: string) => Promise<{ ok: boolean }>;
+  disk: (target: string) => Promise<DiskInfo>;
+  notify: (input: NotifyInput) => Promise<{ ok: boolean }>;
+};
+
+/** Secrets never leave the main process in plaintext; values are sealed with safeStorage. */
+export type CredentialsApi = {
+  get: (key: string) => Promise<string | null>;
+  set: (key: string, value: string) => Promise<{ ok: boolean; encrypted: boolean }>;
+  remove: (key: string) => Promise<{ ok: boolean }>;
+};
+
+export type NetworkClient = {
+  ip: string;
+  ua: string;
+  requests: number;
+  conversations: number;
+  online: boolean;
+  last_seen: string;
+  last_model: string;
+};
 
 export type NetworkConnectResult = { ok: boolean; name?: string; token?: string; gateway?: string };
 
@@ -462,6 +504,8 @@ export type NetworkApi = {
   tunnelStatus: () => Promise<Record<string, unknown>>;
   saveIdentity: (payload: Record<string, unknown>) => Promise<Record<string, unknown>>;
   get: (baseUrl: string, path: string, token?: string) => Promise<Record<string, unknown>>;
+  clients: () => Promise<{ ok: boolean; clients: NetworkClient[]; total?: number; error?: string }>;
+  disconnect: (ip: string) => Promise<{ ok: boolean; ip?: string; error?: string }>;
 };
 
 export type DesktopApi = {
@@ -472,6 +516,7 @@ export type DesktopApi = {
   models: ModelsApi;
   network: NetworkApi;
   system: SystemApi;
+  credentials: CredentialsApi;
   github: { stars: () => Promise<{ ok: boolean; stars: number | null }> };
   cloud: CloudApi;
   config: ConfigApi;
@@ -483,4 +528,5 @@ export type DesktopApi = {
   ollama: OllamaApi;
   window: WindowApi;
   tools: ToolsApi;
+  plugins: PluginsApi;
 };

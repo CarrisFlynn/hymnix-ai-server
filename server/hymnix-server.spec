@@ -50,7 +50,7 @@ a = Analysis(
     binaries=[(_cloudflared, '.')] if os.path.exists(_cloudflared) else [],
     datas=datas,
     # Headless gateway only: no Tk UI modules are imported by this entry point.
-    hiddenimports=['gateway_core', 'hxcore', 'hxcore.paths', 'hxcore.tokens', 'hxcore.logindex', 'hxcore.fstree', 'hxcore.tools', 'hxcore.approvals'],
+    hiddenimports=['gateway_core', 'hxcore', 'hxcore.paths', 'hxcore.tokens', 'hxcore.logindex', 'hxcore.fstree', 'hxcore.tools', 'hxcore.approvals', 'hxcore.plugins'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

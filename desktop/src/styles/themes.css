@@ -1,0 +1,12 @@
+/* Phase 0 · one file per theme. Import order matters: these load before the
+   legacy blocks in renderer/styles.css, which still win for the six shipped
+   presets so Phase 0 changes nothing visually. */
+@import "./themes/light-camellia.css";
+@import "./themes/light-deepsea.css";
+@import "./themes/light-ink.css";
+@import "./themes/light-honey.css";
+@import "./themes/dark-orange.css";
+@import "./themes/dark-cyan.css";
+@import "./themes/dark-neon.css";
+@import "./themes/dark-rog.css";
+@import "./themes/dark-graphite.css";

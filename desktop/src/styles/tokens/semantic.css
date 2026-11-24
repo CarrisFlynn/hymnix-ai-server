@@ -1,0 +1,28 @@
+/* Phase 0 · semantic layer: shared, non-colour tokens (type, space, shape, motion).
+   Colour lives in src/styles/themes/. Old names in styles.css stay as the
+   compatibility layer until Phase 1 moves components over. */
+:root {
+  --font-ui: "Inter Local", Inter, "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Local", "JetBrains Mono", "Cascadia Mono", Consolas, "Microsoft YaHei UI", monospace;
+
+  /* type scale */
+  --fs-caption: 12px; --fs-secondary: 13px; --fs-body: 14px; --fs-message: 15px;
+  --fs-emphasis: 16px; --fs-title: 20px; --fs-display: 28px;
+  --lh-latin: 1.5; --lh-cjk: 1.6;
+  --fw-regular: 400; --fw-medium: 500; --fw-semibold: 600;
+
+  /* space scale: 4px base */
+  --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px; --s-5: 20px; --s-6: 24px; --s-7: 32px; --s-8: 48px;
+
+  /* shape */
+  --r-sm: 6px; --r-md: 10px; --r-lg: 14px; --r-xl: 20px;
+  --h-dense: 28px; --h-default: 36px; --h-hero: 44px;
+
+  /* motion */
+  --dur-press: 90ms; --dur-hover: 140ms; --dur-panel: 220ms; --dur-toast: 320ms;
+  --ease-standard: cubic-bezier(.2, 0, 0, 1);
+  --ease-exit: cubic-bezier(.4, 0, 1, 1);
+
+  /* layers */
+  --z-popover: 40; --z-dialog: 60; --z-toast: 80;
+}

@@ -48,6 +48,9 @@ jobs:
       - name: Typecheck
         working-directory: desktop
         run: pnpm typecheck
+      - name: Design tokens and theme contrast
+        working-directory: desktop
+        run: pnpm check:design
       - name: Tests
         working-directory: desktop
         run: pnpm test

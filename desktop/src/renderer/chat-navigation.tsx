@@ -1,20 +1,29 @@
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { Bubble, type ChatMessage } from "./chat";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { Bubble, messageDay, type ChatMessage } from "./chat";
 import { t, tf } from "./i18n";
 
 const BOTTOM_GAP = 32;
 const TURN_OFFSET = 16;
 
-export function ChatViewport({ messages, empty, followSignal }: {
+export function ChatViewport({ messages, empty, followSignal, busy = false, onEditMessage, onRegenerateMessage, onDeleteMessage, onBranchMessage, onRetryMessage }: {
   messages: readonly ChatMessage[];
   empty: ReactNode;
   followSignal: number;
+  busy?: boolean;
+  onEditMessage?: (index: number) => void;
+  onRegenerateMessage?: (index: number) => void;
+  onDeleteMessage?: (index: number) => void;
+  onBranchMessage?: (index: number) => void;
+  onRetryMessage?: (index: number) => void;
 }) {
   const canvas = useRef<HTMLElement>(null);
   const following = useRef(true);
   const jump = useRef<{ index: number; top: number } | null>(null);
+  const seen = useRef(messages.length);
   const [atLatest, setAtLatest] = useState(true);
+  const [hasNew, setHasNew] = useState(false);
   const [currentTurn, setCurrentTurn] = useState<number>();
+  const [announcement, setAnnouncement] = useState("");
   const turns = messages.flatMap((message, index) => message.role === "user" ? [{ message, index }] : []);
 
   function updatePosition(view: HTMLElement) {
@@ -27,6 +36,7 @@ export function ChatViewport({ messages, empty, followSignal }: {
     const atBottom = view.scrollHeight - view.clientHeight - view.scrollTop <= BOTTOM_GAP;
     following.current = atBottom;
     setAtLatest(atBottom);
+    if (atBottom) setHasNew(false);
     const nodes = view.querySelectorAll<HTMLElement>("[data-chat-turn]");
     let low = 0;
     let high = nodes.length;
@@ -46,6 +56,7 @@ export function ChatViewport({ messages, empty, followSignal }: {
     jump.current = null;
     following.current = true;
     view.scrollTop = view.scrollHeight;
+    setHasNew(false);
     updatePosition(view);
   }
 
@@ -63,9 +74,19 @@ export function ChatViewport({ messages, empty, followSignal }: {
   useLayoutEffect(() => {
     const view = canvas.current;
     if (!view) return;
+    if (messages.length > seen.current && !following.current) setHasNew(true);
+    seen.current = messages.length;
     if (following.current || messages.length === 0) goToLatest();
     else updatePosition(view);
   }, [messages]);
+
+  // Announce completion once, not once per token: screen readers get a single
+  // polite message when the stream ends (plan §10.11).
+  useEffect(() => {
+    if (busy) return;
+    const last = messages[messages.length - 1];
+    if (last?.role === "assistant" && last.content) setAnnouncement(tf("Reply complete, {count} characters", { count: String(last.content.length) }));
+  }, [busy]);
 
   useLayoutEffect(() => {
     const view = canvas.current;
@@ -79,10 +100,17 @@ export function ChatViewport({ messages, empty, followSignal }: {
   }, []);
 
   return <div className="chat-viewport">
-    <section ref={canvas} className="canvas" aria-live="polite" onScroll={(event) => updatePosition(event.currentTarget)}>
-      {messages.length === 0 ? empty : messages.map((message, index) =>
-        <Bubble key={index} message={message} turnIndex={message.role === "user" ? index : undefined} />)}
+    <section ref={canvas} className="canvas" onScroll={(event) => updatePosition(event.currentTarget)}>
+      {messages.length === 0 ? empty : messages.map((message, index) => {
+        const day = messageDay(message.at);
+        const previousDay = index > 0 ? messageDay(messages[index - 1].at) : null;
+        return <div className="chat-message-group" key={index}>
+          {day && day.key !== previousDay?.key && <div className="chat-date-separator"><span>{day.label}</span></div>}
+          <Bubble message={message} messageIndex={index} busy={busy} generating={busy && index === messages.length - 1} onEdit={onEditMessage} onRegenerate={onRegenerateMessage} onDelete={onDeleteMessage} onBranch={onBranchMessage} onRetry={onRetryMessage} turnIndex={message.role === "user" ? index : undefined} />
+        </div>;
+      })}
     </section>
+    <span className="sr-only" aria-live="polite" role="status">{announcement}</span>
     {turns.length > 0 && <nav className="chat-turn-rail" aria-label={t("Conversation turns")}>
       {turns.map(({ message, index }, position) => {
         const snippet = message.content.replace(/\s+/g, " ").trim().slice(0, 80);
@@ -91,6 +119,6 @@ export function ChatViewport({ messages, empty, followSignal }: {
           aria-current={currentTurn === index ? "location" : undefined} onClick={() => goToTurn(index)} />;
       })}
     </nav>}
-    {!atLatest && <button type="button" className="btn chat-latest" onClick={goToLatest}>{t("Back to latest")} ↓</button>}
+    {!atLatest && <button type="button" className={"btn chat-latest" + (hasNew ? " has-new" : "")} onClick={goToLatest}>{hasNew ? t("New content") : t("Back to latest")} ↓</button>}
   </div>;
 }
