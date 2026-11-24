@@ -40,14 +40,22 @@ Only user-visible changes are listed. Internal refactors, test scaffolding and m
 - The empty-state mark is the original star again, without the circle plate and orbit rings added earlier.
 - UI text uses the Windows text face and sits about 1px larger, which reads better at these sizes.
 - Sidebar conversations follow the Claude and ChatGPT pattern: one single scroll column with single-line titles, instead of a small nested scrollbox that clipped rows. The workspace selector is a quiet row, and the footer stays pinned.
-- Text scaling goes to 200% and long labels wrap instead of clipping; touch targets grow to 44px on touch screens.
+- Text scaling stays usable up to 150% and long labels wrap instead of clipping; touch targets grow to 44px on touch screens.
 - Chat completion is announced once to screen readers instead of on every token, and reduced-motion and forced-colors settings are respected throughout.
 - The six existing presets keep their 1.3.2 values through a compatibility layer, so this release changes no existing colours.
+- The main list now carries only pages that do real work: Chat, Models, Sharing & connections, Plugins, Changelog and Sponsor, plus Monitor and Terminal for developers. Files, Tools and Approvals are gone.
+- Monitor and Terminal are no longer folded into a collapsible developer group; they are always visible.
+- The help menu is gone: Changelog and Sponsor sit in the main list, and the shortcut list stays in Settings.
+- Every page has a Back control (Alt+← works too) that returns to the page you came from.
+- Text size finally scales type instead of only spacing: a label at 100% is 12px, at 130% it is 15.6px. The range is capped at 150%.
+- Startup and runtime keeps three switches: client beta, run at system startup, start in fullscreen.
+- The cache and data folders show their real paths with an Open folder button, and "How to open previews" became "File preview" with a clearer pair of choices.
 
 ### Fixed
 
 - The status pill no longer clips its label or leaves a sliver beside it: the header and connection bar wrap below 1360 px instead of cutting pills.
 - Fixed a stray brace left by the theme migration that broke the stylesheet build.
+- Both theme rows could show a tick at the same time. Only the active theme is ticked now: choosing a light theme clears the dark row and vice versa.
 
 ### Tooling
 

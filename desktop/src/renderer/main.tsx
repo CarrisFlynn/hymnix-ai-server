@@ -5,7 +5,7 @@ import "../styles/index.css";
 import "./styles.css";
 import "./orbit-v2.css";
 import brandIcon from "./assets/hymnix-red-white-star.png";
-import { THEMES, readAppearance, readStoredTheme, readStoredMode, applyTheme, persistTheme, persistAppearanceMode, activeMode, selectedTheme, systemMode, type AppearanceMode } from "../theme/themeManager";
+import { THEMES, readStoredTheme, readStoredMode, applyTheme, persistTheme, persistAppearanceMode, activeMode, selectedTheme, systemMode, type AppearanceMode } from "../theme/themeManager";
 import { t, tf, getLang, setLang, translateDom, installAutoTranslate, type Lang } from "./i18n";
 import type { ChatMessage } from "./chat";
 import { ChatViewport } from "./chat-navigation";
@@ -57,8 +57,8 @@ const ICONS: Record<string, string> = {
 function Icon({ name }: { name: string }) { return <svg viewBox="0 0 24 24" aria-hidden="true"><path d={ICONS[name] || ICONS.Chat} /></svg> }
 
 const navGroups = [
-  { title: "WORKSPACE", items: ["Chat", "Models", "Gateway", "Files", "Tools", "Approvals", "Plugins"] },
-  { title: "DEVELOPER", items: ["Monitor", "Terminal", "Logs"] }
+  { title: "WORKSPACE", items: ["Chat", "Models", "Gateway", "Plugins", "Changelog", "Support"] },
+  { title: "DEVELOPER", items: ["Monitor", "Terminal"] }
 ];
 
 const SLASH_COMMANDS = [
@@ -69,12 +69,6 @@ const SLASH_COMMANDS = [
 ];
 
 const DEFAULT_UI_SETTINGS = { betaChannel: false, runAtStartup: false, dpiScaling: false, startFullscreen: false, autoUpdate: true, smoothScroll: true, gpuAcceleration: true, cacheDir: "", previewMode: "inapp" as "inapp" | "browser" };
-
-const capabilityCopy: Record<string, string> = {
-  Tools: "Inspect registered tools and recent tool calls.",
-  Approvals: "Review and resolve pending permission requests.",
-  Plugins: "Manage installed plugins and lifecycle status."
-};
 
 function stamp(): string { return new Date().toISOString(); }
 function formatDuration(seconds: number | undefined): string {
@@ -208,6 +202,12 @@ function App() {
   if (initialSessionsRef.current === null) initialSessionsRef.current = readChatSessions();
   const [state, setState] = useState("connecting");
   const [active, setActive] = useState("Chat");
+  // Any page opened from another page needs a way back. Keep the trail in a ref
+  // so going back never pushes itself onto the stack again.
+  const navTrailRef = useRef<string[]>([]);
+  const activeRef = useRef("Chat");
+  const goingBackRef = useRef(false);
+  const [canGoBack, setCanGoBack] = useState(false);
   const [lang, setLangState] = useState<Lang>(getLang());
   const [theme, setThemeState] = useState<string>(readTheme);
   const [appearanceMode, setAppearanceMode] = useState<AppearanceMode>(readStoredMode);
@@ -219,8 +219,6 @@ function App() {
   const [welcomeOpen, setWelcomeOpen] = useState(() => { try { return localStorage.getItem("hymnix.welcome") !== "1"; } catch { return true; } });
   const [welcomeStep, setWelcomeStep] = useState(0);
   const [welcomeSkipped, setWelcomeSkipped] = useState<string[]>([]);
-  const [developerExpanded, setDeveloperExpanded] = useState(false);
-  const [helpMenuOpen, setHelpMenuOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => { try { return localStorage.getItem("hymnix.sidebar.collapsed") === "1"; } catch { return false; } });
   const [historyQuery, setHistoryQuery] = useState("");
   const [modelsTab, setModelsTab] = useState<"Installed" | "Discover" | "Downloads">("Installed");
@@ -237,7 +235,7 @@ function App() {
   const [modelDeleteTarget, setModelDeleteTarget] = useState<string | null>(null);
   const [reduceMotion, setReduceMotion] = useState<boolean>(() => { try { return localStorage.getItem("hymnix.reduceMotion") === "1"; } catch { return false; } });
   const [density, setDensity] = useState<"comfortable" | "compact">(() => { try { return localStorage.getItem("hymnix.density") === "compact" ? "compact" : "comfortable"; } catch { return "comfortable"; } });
-  const [textScale, setTextScale] = useState<number>(() => { try { return Math.min(200, Math.max(90, Number(localStorage.getItem("hymnix.textScale") || 100))); } catch { return 100; } });
+  const [textScale, setTextScale] = useState<number>(() => { try { return Math.min(150, Math.max(90, Number(localStorage.getItem("hymnix.textScale") || 100))); } catch { return 100; } });
   const [softenAccent, setSoftenAccent] = useState<boolean>(() => { try { return localStorage.getItem("hymnix.softenAccent") === "1"; } catch { return false; } });
   const [enterSwaps, setEnterSwaps] = useState<boolean>(() => optionalBool("hymnix.enterSwaps"));
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -304,6 +302,7 @@ function App() {
   const [apiKey, setApiKey] = useState("");
   const [adminKey, setAdminKey] = useState("");
   const [diskFree, setDiskFree] = useState<number | null>(null);
+  const [paths, setPaths] = useState<{ cache: string; cacheDefault: string; appData: string; workspace: string } | null>(null);
 
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [model, setModel] = useState("");
@@ -603,6 +602,14 @@ function App() {
   useEffect(() => { const mode = THEMES.find((item) => item.id === theme)?.mode || (appearanceMode === "auto" ? systemMode() : appearanceMode); applyTheme(theme, mode); }, [theme, appearanceMode]);
   useEffect(() => { if (active === "Plugins") void loadPlugins(); }, [active]);
   useEffect(() => {
+    const previous = activeRef.current;
+    if (previous === active) { goingBackRef.current = false; return; }
+    activeRef.current = active;
+    if (goingBackRef.current) goingBackRef.current = false;
+    else navTrailRef.current = [...navTrailRef.current.slice(-9), previous];
+    setCanGoBack(navTrailRef.current.length > 0);
+  }, [active]);
+  useEffect(() => {
     const backgroundColor = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim();
     void window.hymnix.window.setAppearance(appearanceMode, backgroundColor);
   }, [appearanceMode, theme]);
@@ -630,6 +637,9 @@ function App() {
   useEffect(() => {
     void window.hymnix.system.disk("").then((info) => setDiskFree(info?.free ?? null)).catch(() => undefined);
   }, []);
+  useEffect(() => {
+    void window.hymnix.system.paths().then(setPaths).catch(() => undefined);
+  }, [uiSettings.cacheDir]);
   // Playwright visual baselines drive pages and themes through this hook.
   useEffect(() => {
     (window as any).__hymnixDev = {
@@ -661,6 +671,7 @@ function App() {
         if (event.key === "Escape") { event.preventDefault(); setClearAllConfirm(false); setModelDeleteTarget(null); setPluginDeleteTarget(null); }
         return;
       }
+      if (event.altKey && event.key === "ArrowLeft") { event.preventDefault(); goBack(); return; }
       if (mod && key === "f" && active === "Terminal") { event.preventDefault(); terminalSearchRef.current?.focus(); terminalSearchRef.current?.select(); return; }
       if (mod && key === "n") { event.preventDefault(); createSession(); return; }
       if (mod && key === "b") { event.preventDefault(); setSidebarCollapsed((value) => !value); return; }
@@ -711,6 +722,17 @@ function App() {
   }, []);
 
   function changeLang(next: Lang) { setLang(next); setLangState(next); }
+  // Exactly one theme card carries a tick. Picking a light theme unticks the dark
+  // row and vice versa, because there is only one active theme at a time.
+  const backButton = canGoBack ? <button type="button" className="page-back" onClick={goBack} aria-label={t("Back")} title={`${t("Back")} · Alt+←`}><span aria-hidden="true">←</span><span className="page-back-text">{t("Back")}</span></button> : null;
+  function goBack(): void {
+    const target = navTrailRef.current[navTrailRef.current.length - 1];
+    if (!target) return;
+    navTrailRef.current = navTrailRef.current.slice(0, -1);
+    goingBackRef.current = true;
+    setCanGoBack(navTrailRef.current.length > 0);
+    setActive(target);
+  }
   function changeTheme(next: string) {
     // Picking a theme also picks its mode: in Auto, choosing Neon black while
     // Windows is light used to do nothing visible because Auto kept resolving to
@@ -733,7 +755,7 @@ function App() {
   }
   function setDensityPreference(next: "comfortable" | "compact") { setDensity(next); try { localStorage.setItem("hymnix.density", next); } catch { /* private mode */ } }
   function setMotionPreference(next: boolean) { setReduceMotion(next); try { localStorage.setItem("hymnix.reduceMotion", next ? "1" : "0"); } catch { /* private mode */ } }
-  function setTextScalePreference(next: number) { const value = Math.min(200, Math.max(90, next)); setTextScale(value); try { localStorage.setItem("hymnix.textScale", String(value)); } catch { /* private mode */ } }
+  function setTextScalePreference(next: number) { const value = Math.min(150, Math.max(90, next)); setTextScale(value); try { localStorage.setItem("hymnix.textScale", String(value)); } catch { /* private mode */ } }
 
   function persistCurrentSession(): void {
     if (!messages.length && !draft.trim()) return;
@@ -1436,7 +1458,7 @@ function App() {
   function renderModels() {
     const tabs: Array<"Installed" | "Discover" | "Downloads"> = ["Installed", "Discover", "Downloads"];
     return <section className="view-page">
-      <div className="view-heading"><div><label>{t("MODEL CATALOG")}</label><h2>{t("Models")}</h2><p>{t("Discover models served by the local gateway.")}</p></div><button className="btn primary" onClick={() => void loadModels()}>{t("Refresh models")}</button></div>
+      <div className="view-heading">{backButton}<div><label>{t("MODEL CATALOG")}</label><h2>{t("Models")}</h2><p>{t("Discover models served by the local gateway.")}</p></div><button className="btn primary" onClick={() => void loadModels()}>{t("Refresh models")}</button></div>
       {renderOllamaNotice()}
       <div className="tab-strip model-tabs" role="tablist" aria-label={t("Model sections")}>{tabs.map((tab) => <button role="tab" aria-selected={modelsTab === tab} className={modelsTab === tab ? "tab active" : "tab"} key={tab} onClick={() => setModelsTab(tab)}>{t(tab)}{tab === "Downloads" && downloadOccupied ? <span className="count-badge">1</span> : null}</button>)}</div>
       {modelsTab === "Installed" && <div className="card model-table-card">
@@ -1523,23 +1545,13 @@ function App() {
     </section>;
   }
 
-  function renderFiles() {
-    return <section className="view-page">
-      <div className="view-heading"><div><label>{t("WORKSPACE FILES")}</label><h2>{t("Files")}</h2><p>{filesRoot || t("Choose a workspace to browse files.")}</p></div><button className="btn" onClick={() => void chooseWorkspace()} disabled={filesBusy}>{t("Choose workspace")}</button></div>
-      {filesError && <div className="error">{filesError}</div>}
-      <div className="card"><div className="setting-row"><label>{t("Search files")}</label><div className="controls"><input value={fileQuery} onChange={(event) => setFileQuery(event.target.value)} /><button className="btn" onClick={() => void searchFiles()}>{t("Search")}</button></div></div></div>
-      {(fileHits.length ? fileHits : fileEntries).length ? <div className="list">{(fileHits.length ? fileHits : fileEntries).slice(0, 200).map((item: any, index: number) => <button className="list-row" key={index} onClick={() => void readFile(item.path || item.rel)}><span className="model-mark">{(item.type === "directory" || item.isDir) ? "D" : "F"}</span><span>{item.path || item.rel}</span></button>)}</div> : <div className="card empty-state"><strong>{t("No files found")}</strong></div>}
-      {fileText && <pre className="term-log">{fileText}</pre>}
-    </section>;
-  }
-
   function renderHistory() {
     const filtered = sessions.filter((item) => {
       const transcript = savedSessions.find((session) => session.id === item.id)?.messages || [];
       return `${item.name} ${item.model} ${transcript.map((message) => message.content).join(" ")}`.toLowerCase().includes(historyQuery.trim().toLowerCase());
     });
     return <section className="view-page">
-      <div className="view-heading"><div><label>{t("CONVERSATIONS")}</label><h2>{t("History")}</h2><p>{t("Saved conversations on this machine.")}</p></div><button className="btn danger" onClick={() => setClearAllConfirm(true)} disabled={!sessions.length}>{t("Clear all")}</button></div>
+      <div className="view-heading">{backButton}<div><label>{t("CONVERSATIONS")}</label><h2>{t("History")}</h2><p>{t("Saved conversations on this machine.")}</p></div><button className="btn danger" onClick={() => setClearAllConfirm(true)} disabled={!sessions.length}>{t("Clear all")}</button></div>
       <div className="history-toolbar"><input type="search" value={historyQuery} onChange={(event) => setHistoryQuery(event.target.value)} placeholder={t("Search conversations...")} aria-label={t("Search conversations")} /><span className="hint">{filtered.length} {t("conversations")}</span></div>
       {filtered.length === 0 ? <div className="card empty-state"><div className="empty-orbit" aria-hidden="true">✦</div><strong>{sessions.length ? t("No conversations match your search") : t("Your conversations will appear here")}</strong><span>{sessions.length ? t("Try another search term.") : t("Messages are saved automatically on this device.")}</span><button className="btn primary" onClick={createSession}>{t("Start chatting")}</button></div> : <div className="list conversation-list">{filtered.map((item) => {
         const record = savedSessions.find((session) => session.id === item.id);
@@ -1567,7 +1579,7 @@ function App() {
       { label: "Moonshot", base: "https://api.moonshot.cn", model: "moonshot-v1-8k" },
     ];
     return <section className="view-page">
-      <div className="view-heading"><div><label>{t("SHARING & CONNECTIONS")}</label><h2>{t("Sharing & connections")}</h2><p>{t("Host this computer, connect to a friend, or configure a cloud provider.")}</p></div><button className="btn ghost" onClick={() => { void loadNetwork(); void loadCloud(); void loadHealth(); void loadHostClients(); }}>{t("Refresh")}</button></div>
+      <div className="view-heading">{backButton}<div><label>{t("SHARING & CONNECTIONS")}</label><h2>{t("Sharing & connections")}</h2><p>{t("Host this computer, connect to a friend, or configure a cloud provider.")}</p></div><button className="btn ghost" onClick={() => { void loadNetwork(); void loadCloud(); void loadHealth(); void loadHostClients(); }}>{t("Refresh")}</button></div>
       <div className="sharing-summary card"><span className={"status-pill " + (tunnelState === "up" ? "success" : "neutral")}><span className="status-dot" />{t(tunnelState === "up" ? "Sharing" : "Not sharing")}</span><span>{t("Clients online")}: <strong>{online}</strong></span><span className="public-link">{tunnelUrl || t("No public link yet")}</span>{tunnelUrl && <button className="btn tonal" onClick={() => void navigator.clipboard?.writeText(tunnelUrl)}>{t("Copy link")}</button>}{tunnelUrl && <button className="btn" onClick={() => setQrOpen(true)}>{t("Show QR code")}</button>}</div>
       <div className="tab-strip" role="tablist" aria-label={t("Sharing options")}>{(["Host", "Connect", "Cloud API"] as const).map((tab) => <button role="tab" aria-selected={gatewayTab === tab} className={gatewayTab === tab ? "tab active" : "tab"} key={tab} onClick={() => setGatewayTab(tab)}>{t(tab)}</button>)}</div>
 
@@ -1648,7 +1660,7 @@ function App() {
       { version: "1.1.0", items: [t("First public build with gateway and local models.")] }
     ];
     return <section className="view-page">
-      <div className="view-heading"><div><label>{t("CHANGELOG")}</label><h2>{t("Changelog")}</h2><p>{t("What changed in each release.")}</p></div></div>
+      <div className="view-heading">{backButton}<div><h2>{t("Changelog")}</h2><p>{t("What changed in each release.")}</p></div></div>
       {entries.map((entry) => <div className="card" key={entry.version}>
         <h3 className="card-title">{entry.version}</h3>
         <ul className="md-li">{entry.items.map((item, index) => <li key={index}>{item}</li>)}</ul>
@@ -1656,24 +1668,11 @@ function App() {
     </section>;
   }
 
-  function renderTools() {
-    const safeTools = tools.filter((tool) => Object.prototype.hasOwnProperty.call(SAFE_TOOL_PRESETS, tool.name));
-    return <section className="view-page">
-      <div className="view-heading"><div><label>{t("TOOLS CATALOG")}</label><h2>{t("Tools")}</h2><p>{t("Inspect available tool metadata and permission requirements.")}</p></div><button className="btn primary" onClick={() => void loadTools()} disabled={toolsBusy}>{toolsBusy ? t("Loading...") : t("Refresh")}</button></div>
-      {toolsBusy ? <div className="card empty-state"><strong>{t("Loading tools")}</strong><span>{t("Reading tool metadata...")}</span></div> : toolsError ? <div className="card empty-state"><strong>{t("Tools request failed")}</strong><span>{toolsError}</span><button className="btn" onClick={() => void loadTools()}>{t("Retry")}</button></div> : <><div className="card">
-        <div className="setting-row"><label>{t("Safe tool")}</label><div className="controls"><select value={selectedTool} onChange={(event) => setSelectedTool(event.target.value)} aria-label={t("Safe tool")}><option value="">{t("Choose a safe tool")}</option>{safeTools.map((tool) => <option key={tool.name} value={tool.name}>{tool.name}</option>)}</select><button className="btn primary" onClick={() => void invokeSelectedTool()} disabled={!selectedTool || toolCall.status === "running"}>{toolCall.status === "running" ? t("Running...") : t("Run")}</button></div></div>
-        <p className="subtitle">{t("Only fixed safe tools and fixed arguments are available. No commands or arbitrary arguments are accepted.")}</p>
-        {toolCall.status !== "idle" && <div className="panel-row"><span>{t("Tool status")}</span><strong>{t(toolCall.status)}</strong><span>{toolCall.message}</span></div>}
-        {(toolCall.status === "success" || toolCall.status === "error") && toolCall.value !== undefined && <pre>{JSON.stringify(toolCall.value, null, 2)}</pre>}
-      </div>
-      {tools.length === 0 ? <div className="card empty-state"><strong>{t("No tools available")}</strong><span>{t("No tool metadata was returned.")}</span></div> : <div className="list" aria-label={t("Tool metadata")}>{tools.map((tool) => <article className="list-row" key={tool.name}><span className="model-mark" aria-hidden="true">{tool.danger ? "!" : "T"}</span><span><strong>{tool.name}</strong><small>{tool.description || t("No description")}</small><small>{tool.danger ? t("Dangerous") : t("Read-only metadata")} · {tool.permission || t("No permission requirement")}</small><pre aria-label={t("Tool schema")}>{JSON.stringify(tool.schema, null, 2)}</pre></span></article>)}</div>}</> }
-    </section>;
-  }
   function renderPlugins() {
     const enabledCount = plugins.filter((item) => item.enabled).length;
     const loadedCount = plugins.filter((item) => item.loaded).length;
     return <section className="view-page plugin-page">
-      <div className="view-heading"><div><label>{t("EXTENSIONS")}</label><h2>{t("Plugin center")}</h2><p>{t("Manage local plugins, requested permissions and runtime status.")}</p></div>
+      <div className="view-heading">{backButton}<div><label>{t("EXTENSIONS")}</label><h2>{t("Plugin center")}</h2><p>{t("Manage local plugins, requested permissions and runtime status.")}</p></div>
         <div className="header-actions"><button type="button" className="btn ghost" onClick={() => void loadPlugins()} disabled={pluginsBusy || !!pluginActionBusy}>{t(pluginsBusy ? "Loading plugins..." : "Refresh plugins")}</button><button type="button" className="btn primary" onClick={() => void installPlugin()} disabled={pluginsBusy || !!pluginActionBusy}>{t("Install local plugin")}</button></div>
       </div>
       <div className="plugin-summary card"><span>{tf("Installed {count} · Enabled {enabled} · Loaded {loaded}", { count: String(plugins.length), enabled: String(enabledCount), loaded: String(loadedCount) })}</span><small>{t("Permissions are granted individually; revoking one stops the plugin.")}</small></div>
@@ -1700,19 +1699,12 @@ function App() {
       })}</div>
     </section>;
   }
-  function renderApprovals() {
-    return <section className="view-page">
-      <div className="view-heading"><div><label>{t("APPROVALS")}</label><h2>{t("Approvals")}</h2><p>{t("Review and resolve pending permission requests.")}</p></div><button className="btn primary" onClick={() => void refreshApprovals()} disabled={approvalsBusy}>{approvalsBusy ? t("Loading...") : t("Refresh")}</button></div>
-      {approvalsError && <div className="error">{approvalsError}</div>}
-      {approvals.length === 0 ? <div className="card empty-state"><strong>{t("No pending approvals")}</strong><span>{t("Approved and denied actions are recorded by the gateway.")}</span></div> : <div className="list">{approvals.map((approval) => <article className="list-row" key={approval.id}><span className="model-mark">!</span><span><strong>{approval.tool}</strong><small>{t("Risk")}: {approval.risk} · {approval.reasons.join("; ") || t("No reasons provided")}</small><pre>{JSON.stringify(approval.argsRedacted, null, 2)}</pre><small>{approval.createdAt} - {approval.expiresAt}</small><span className="controls"><button className="btn primary" onClick={() => void decideApproval(approval.id, "approve")} disabled={approvalsBusy}>{t("Approve")}</button><button className="btn" onClick={() => void decideApproval(approval.id, "deny")} disabled={approvalsBusy}>{t("Deny")}</button></span></span></article>)}</div>}
-    </section>;
-  }
   function renderMonitor() {
     const statusLabel = state === "ready" ? t("Ready") : state === "connecting" ? t("Starting") : t(state);
     const clients = Array.isArray(statusData?.clients) ? statusData.clients : [];
     const recent = Array.isArray(statusData?.recent) ? statusData.recent : [];
     return <section className="view-page">
-      <div className="view-heading"><div><label>{t("GATEWAY MONITOR")}</label><h2>{t("Monitor")}</h2><p>{t("Review gateway health, usage and active operations.")}</p></div><div className="header-actions"><label className="inline-toggle"><input type="checkbox" checked={monitorAutoRefresh} onChange={(event) => setMonitorAutoRefresh(event.target.checked)} />{t("Auto refresh · 5s")}</label><button className="btn ghost" onClick={() => { void loadHealth(); if (adminKey.trim()) void loadStatus(); void pollTunnel(); }}>{t("Refresh")}</button></div></div>
+      <div className="view-heading">{backButton}<div><label>{t("GATEWAY MONITOR")}</label><h2>{t("Monitor")}</h2><p>{t("Review gateway health, usage and active operations.")}</p></div><div className="header-actions"><label className="inline-toggle"><input type="checkbox" checked={monitorAutoRefresh} onChange={(event) => setMonitorAutoRefresh(event.target.checked)} />{t("Auto refresh · 5s")}</label><button className="btn ghost" onClick={() => { void loadHealth(); if (adminKey.trim()) void loadStatus(); void pollTunnel(); }}>{t("Refresh")}</button></div></div>
       <div className="metric-grid">
         <div className="metric-card"><span>{t("Status")}</span><strong><i className={"status-dot " + (state === "ready" ? "success" : "warning")} />{statusLabel}</strong><small>{health?.gateway || t("Gateway")}</small></div>
         <div className="metric-card"><span>{t("Models")}</span><strong>{health?.models ?? models.length}</strong><small>{health?.ollama ? t("Model service online") : t("Model service offline")}</small></div>
@@ -1728,15 +1720,6 @@ function App() {
     </section>;
   }
 
-  function renderLogs() {
-    return <section className="view-page">
-      <div className="view-heading"><div><label>{t("ADMIN ERRORS")}</label><h2>{t("Logs")}</h2><p>{t("Review short, redacted gateway error summaries.")}</p></div><button className="btn primary" onClick={() => void loadLogs()}>{t("Load")}</button></div>
-      <div className="card"><div className="setting-row"><label>{t("Admin key")}</label><div className="controls"><input type="password" value={adminKey} onChange={(event) => setAdminKey(event.target.value)} /></div></div></div>
-      {logError && <div className="error">{logError}</div>}
-      {logItems.length ? <div className="list">{logItems.map((item: any, index: number) => <div className="list-row" key={index}><span className="model-mark">E</span><span>{item.t || item.time || "-"}</span><span className="model-meta">{item.code || item.message || ""}</span></div>)}</div> : <div className="card empty-state"><strong>{t("No error entries")}</strong></div>}
-    </section>;
-  }
-
   function finishWelcome() {
     try {
       localStorage.setItem("hymnix.welcome", "1");
@@ -1749,7 +1732,7 @@ function App() {
   }
   function renderSupport() {
     return <section className="view-page">
-      <div className="view-heading"><div><label>{t("SUPPORT")}</label><h2>{t("Support")}</h2><p>{t("Sponsor the project or send feedback.")}</p></div></div>
+      <div className="view-heading">{backButton}<div><label>{t("SUPPORT")}</label><h2>{t("Sponsor")}</h2><p>{t("Sponsor the project or send feedback.")}</p></div></div>
       <div className="card">
         <div className="setting-row"><label>{t("Sponsor")}<span className="hint">爱发电</span></label><div className="controls"><button className="btn primary" onClick={() => void window.hymnix.system.openExternal("https://ifdian.net/a/hymnixstudio")}>{t("Open sponsor page")}</button></div></div>
         <div className="setting-row"><label>{t("Source code")}<span className="hint">GitHub</span></label><div className="controls"><button className="btn" onClick={() => void window.hymnix.system.openExternal("https://github.com/CarrisFlynn/hymnix-ai-server")}>github.com/CarrisFlynn/hymnix-ai-server</button></div></div>
@@ -1819,8 +1802,7 @@ function App() {
     if (section === "General") {
       changeLang("en"); setWorkspace("Default workspace");
     } else if (section === "Appearance") {
-      changeAppearanceMode("auto");
-      persistTheme("camellia-white"); persistTheme("graphite-gold");
+      changeTheme("camellia-white");
       setDensityPreference("comfortable"); setTextScalePreference(100);
       setMotionPreference(false); setSoftenAccent(false);
     } else if (section === "Startup and runtime") {
@@ -1981,11 +1963,11 @@ function App() {
       <div className="controls"><button type="button" className={"switch" + (uiSettings[key] ? " on" : "")} aria-pressed={!!uiSettings[key]} aria-label={t(label)} disabled={disabled} onClick={() => void setSetting(key, !uiSettings[key])}><span /></button></div>
     </div>;
     const head = (title: string, section: string) => <div className="card-head"><h3 className="card-title">{t(title)}</h3><button type="button" className="btn ghost reset-button" onClick={() => void resetSection(section)}>{t("Reset to default")}</button></div>;
-    const themePrefs = readAppearance();
     // Clicking a card switches to that preset straight away. There is no separate
-    // light/dark/auto switch and no hover preview: the card itself is the choice.
+    // light/dark/auto switch and no hover preview: the card itself is the choice,
+    // and only the theme that is actually active can be ticked.
     const themeCards = (mode: "light" | "dark") => THEMES.filter((preset) => preset.mode === mode).map((preset) => {
-      const selected = mode === "light" ? themePrefs.lightTheme === preset.id : themePrefs.darkTheme === preset.id;
+      const selected = theme === preset.id;
       return <button type="button" key={preset.id} className={"theme-card " + (selected ? "selected" : "")} onClick={() => { changeTheme(preset.id); setToast({ message: t("Saved") }); window.setTimeout(() => setToast(null), 1800); }} aria-pressed={selected} title={t(preset.label)}>
         <span className="theme-preview" style={{ background: preset.bg }}>
           <i style={{ background: preset.surface }} />
@@ -1996,7 +1978,7 @@ function App() {
       </button>;
     });
     return <section className="view-page">
-      <div className="view-heading"><div><label>{t("APPLICATION")}</label><h2>{t("Settings")}</h2><p>{t("Workspace and connection preferences.")}</p></div></div>
+      <div className="view-heading">{backButton}<div><label>{t("APPLICATION")}</label><h2>{t("Settings")}</h2><p>{t("Workspace and connection preferences.")}</p></div></div>
       <div className="settings-layout"><nav className="settings-nav" aria-label={t("Settings sections")}>{sections.map((section) => <button className={settingsSection === section ? "active" : ""} key={section} onClick={() => setSettingsSection(section)}>{t(section)}</button>)}</nav><div className="settings-content">
         {restartKeys.length > 0 && <div className="restart-bar" role="status"><span>{tf("{count} changes need a restart", { count: String(restartKeys.length) })}</span><button type="button" className="btn primary" onClick={() => void window.hymnix.window.control("restart")}>{t("Restart now")}</button><button type="button" className="btn ghost" onClick={() => setRestartKeys([])}>{t("Later")}</button></div>}
         {settingsSection === "General" && <div className="card">{head("General", "General")}
@@ -2005,35 +1987,37 @@ function App() {
         </div>}
         {settingsSection === "Appearance" && <><div className="card">{head("Appearance", "Appearance")}<div className="theme-gallery-section"><div className="gallery-heading"><strong>{t("Light themes")}</strong><small>4</small></div><div className="theme-gallery">{themeCards("light")}</div></div><div className="theme-gallery-section"><div className="gallery-heading"><strong>{t("Dark themes")}</strong><small>5</small></div><div className="theme-gallery">{themeCards("dark")}</div></div>
           <div className="setting-row"><label>{t("Density")}<span className="hint">{t("Choose the spacing of rows and controls.")}</span></label><div className="controls segmented"><button className={density === "comfortable" ? "active" : ""} onClick={() => setDensityPreference("comfortable")}>{t("Comfortable")}</button><button className={density === "compact" ? "active" : ""} onClick={() => setDensityPreference("compact")}>{t("Compact")}</button></div></div>
-          <div className="setting-row"><label>{t("Text size")}<span className="hint">{textScale}%</span></label><div className="controls scale-control"><input type="range" min="90" max="200" step="5" value={textScale} onChange={(event) => setTextScalePreference(Number(event.target.value))} aria-label={t("Text size")} /><output>{textScale}%</output></div></div>
+          <div className="setting-row"><label>{t("Text size")}<span className="hint">{t("Scales every label, message and menu.")}</span></label><div className="controls scale-control"><input type="range" min="90" max="150" step="5" value={textScale} onChange={(event) => setTextScalePreference(Number(event.target.value))} aria-label={t("Text size")} /><output>{textScale}%</output></div></div>
           <div className="setting-row"><label>{t("Reduce motion")}<span className="hint">{t("Use fades instead of movement.")}</span></label><div className="controls"><button className={"switch" + (reduceMotion ? " on" : "")} aria-label={t("Reduce motion")} aria-pressed={reduceMotion} onClick={() => setMotionPreference(!reduceMotion)}><span /></button></div></div>
           {(theme.startsWith("neon") || theme.startsWith("cyan")) && <div className="setting-row"><label>{t("Soften accent")}<span className="hint">{t("Lower the accent intensity for long sessions.")}</span></label><div className="controls"><button className={"switch" + (softenAccent ? " on" : "")} aria-label={t("Soften accent")} aria-pressed={softenAccent} onClick={() => setSoftenAccent((value) => !value)}><span /></button></div></div>}
         </div><p className={"settings-saved" + (savedFlash ? " flash" : "")} role="status">{savedFlash ? "✓ " + t("Saved") : "✓ " + t("Changes are saved automatically")}</p></>}
-        {settingsSection === "Startup and runtime" && <div className="card">{head("Startup and runtime", "Startup and runtime")}{sw("betaChannel", "Join client beta", "Pre-release builds, may be unstable")}{sw("runAtStartup", "Run at system startup", "Start minimized in the tray")}{sw("startFullscreen", "Start in fullscreen", "Open the window fullscreen")}{sw("dpiScaling", "Scale text and icons for this display (Beta)", "Uses display scale factor", false, true)}{sw("smoothScroll", "Enable smooth scrolling", "Animated scroll in long pages")}{sw("gpuAcceleration", "Enable GPU accelerated rendering", "Disable only if you see flicker", false, true)}{sw("autoUpdate", "Update automatically when a new version is available", "Managed by the installer", true)}<p className="subtitle">{t("GPU acceleration and the cache folder take effect after a restart.")}</p></div>}
-        {settingsSection === "Models and storage" && <div className="card">{head("Models and storage", "Models and storage")}<div className="setting-row"><label>{t("Cache storage location")}</label><div className="controls"><input readOnly value={uiSettings.cacheDir || t("Default location")} /><button className="btn" onClick={() => void chooseCacheDir()}>{t("Choose folder")}</button><button className="btn ghost" onClick={() => void setSetting("cacheDir", "")}>{t("Reset")}</button></div></div><div className="setting-row"><label>{t("How to open previews")}</label><div className="controls segmented"><button className={uiSettings.previewMode === "inapp" ? "active" : ""} onClick={() => void setSetting("previewMode", "inapp")}>{t("In-app preview")}</button><button className={uiSettings.previewMode === "browser" ? "active" : ""} onClick={() => void setSetting("previewMode", "browser")}>{t("Default browser")}</button></div></div><div className="setting-row"><label>{t("Data folder")}</label><div className="controls"><input readOnly value={filesRoot || "%LOCALAPPDATA%\\Hymnix"} /><button className="btn" onClick={() => void chooseWorkspace()}>{t("Choose folder")}</button></div></div></div>}
+        {settingsSection === "Startup and runtime" && <div className="card">{head("Startup and runtime", "Startup and runtime")}{sw("betaChannel", "Join client beta", "Pre-release builds, may be unstable")}{sw("runAtStartup", "Run at system startup", "Start minimized in the tray")}{sw("startFullscreen", "Start in fullscreen", "Open the window fullscreen")}</div>}
+        {settingsSection === "Models and storage" && <div className="card">{head("Models and storage", "Models and storage")}
+          <div className="setting-row path-row"><label>{t("Cache storage location")}<span className="hint">{uiSettings.cacheDir ? t("Custom folder") : t("System default")}</span></label><div className="controls"><input readOnly value={uiSettings.cacheDir || paths?.cache || paths?.cacheDefault || ""} title={uiSettings.cacheDir || paths?.cache || ""} /><button className="btn" onClick={() => void chooseCacheDir()}>{t("Choose folder")}</button>{uiSettings.cacheDir && <button className="btn ghost" onClick={() => void setSetting("cacheDir", "")}>{t("Reset")}</button>}</div></div>
+          <div className="setting-row"><label>{t("File preview")}<span className="hint">{t("Where a clicked file opens.")}</span></label><div className="controls segmented"><button className={uiSettings.previewMode === "inapp" ? "active" : ""} onClick={() => void setSetting("previewMode", "inapp")}>{t("In-app window")}</button><button className={uiSettings.previewMode === "browser" ? "active" : ""} onClick={() => void setSetting("previewMode", "browser")}>{t("Default browser")}</button></div></div>
+          <div className="setting-row path-row"><label>{t("Data folder")}<span className="hint">{t("Sessions, settings and logs.")}</span></label><div className="controls"><input readOnly value={paths?.appData || ""} title={paths?.appData || ""} /><button className="btn" onClick={() => { if (paths?.appData) void window.hymnix.system.reveal(paths.appData); }} disabled={!paths?.appData}>{t("Open folder")}</button></div></div>
+        </div>}
         {settingsSection === "Sharing and security" && <div className="card settings-link-card">{head("Sharing and security", "Sharing and security")}<p className="subtitle">{t("Configure host sharing, connections and cloud provider credentials.")}</p><button className="btn primary" onClick={() => { setActive("Gateway"); setGatewayTab("Host"); }}>{t("Open sharing settings")}</button></div>}
                 {settingsSection === "Shortcuts" && <div className="card">{head("Shortcuts", "Shortcuts")}<div className="setting-row"><label>{t("Send with Shift+Enter")}<span className="hint">{t("Swap the Enter and Shift+Enter behaviour.")}</span></label><div className="controls"><button type="button" className={"switch" + (enterSwaps ? " on" : "")} aria-pressed={enterSwaps} aria-label={t("Send with Shift+Enter")} onClick={() => setEnterSwaps((value) => !value)}><span /></button></div></div><div className="shortcut-list">{[["Ctrl+N", "New session"], ["Ctrl+L", "Focus message composer"], ["Ctrl+B", "Toggle sidebar"], ["Ctrl+.", "Toggle inspector"], ["Ctrl+,", "Open settings"], ["Ctrl+/", "Open the shortcut sheet"], ["Ctrl+1–5", "Navigate primary pages"], ["Ctrl+Shift+C", "Copy last reply"], ["Ctrl+Shift+E", "Export chat"], [enterSwaps ? "Shift+Enter" : "Enter", "Send message"], [enterSwaps ? "Enter" : "Shift+Enter", "New line"], ["↑", "Edit the last message"], ["Esc", "Close or stop"]].map(([shortcut, action]) => <div key={shortcut}><kbd>{shortcut}</kbd><span>{t(action)}</span></div>)}</div></div>}
-        {settingsSection === "About" && <div className="card">{head("About", "About")}<div className="about-brand"><img src={brandIcon} alt="" /><span><strong>Hymnix Orbit</strong><small>{__APP_VERSION__} · Hymnix Studio</small></span></div><div className="setting-row"><label>{t("Updates")}</label><div className="controls"><button className="btn" onClick={() => void window.hymnix.system.openExternal("https://github.com/CarrisFlynn/hymnix-ai-server/releases")}>{t("View releases")}</button></div></div><div className="setting-row"><label>{t("Help")}</label><div className="controls"><button className="btn" onClick={() => setActive("Support")}>{t("Help & sponsor")}</button><button className="btn ghost" onClick={() => setActive("Changelog")}>{t("Changelog")}</button><button className="btn ghost" onClick={() => setActive("DesignLab")}>{t("Component gallery")}</button></div></div></div>}
+        {settingsSection === "About" && <div className="card">{head("About", "About")}<div className="about-brand"><img src={brandIcon} alt="" /><span><strong>Hymnix Orbit</strong><small>{__APP_VERSION__} · Hymnix Studio</small></span></div><div className="setting-row"><label>{t("Updates")}</label><div className="controls"><button className="btn" onClick={() => void window.hymnix.system.openExternal("https://github.com/CarrisFlynn/hymnix-ai-server/releases")}>{t("View releases")}</button></div></div><div className="setting-row"><label>{t("Help")}</label><div className="controls"><button className="btn" onClick={() => setActive("Support")}>{t("Sponsor")}</button><button className="btn ghost" onClick={() => setActive("Changelog")}>{t("Changelog")}</button><button className="btn ghost" onClick={() => setActive("DesignLab")}>{t("Component gallery")}</button></div></div></div>}
       </div></div>
     </section>;
   }
   function renderView() {
     if (active === "Chat") return renderChat();
     if (active === "Models") return renderModels();
-    if (active === "Files") return renderFiles();
-    if (active === "Logs") return renderLogs();
-    if (active === "Tools") return renderTools();
     if (active === "Plugins") return renderPlugins();
-    if (active === "Approvals") return renderApprovals();
     if (active === "Terminal") return renderTerminal();
     if (active === "History") return renderHistory();
     if (active === "Gateway") return renderGateway();
     if (active === "Monitor") return renderMonitor();
     if (active === "Changelog") return renderChangelog();
-    if (active === "Settings") return renderSettings();
     if (active === "Support") return renderSupport();
+    if (active === "Settings") return renderSettings();
     if (active === "DesignLab") return <DesignLab lang={lang} mode={appearanceMode === "auto" ? systemMode() : appearanceMode} onLang={changeLang} onMode={changeAppearanceMode} onTheme={changeTheme} themes={THEMES} />;
-    return <section className="view-page"><div className="view-heading"><div><label>{t("GATEWAY CAPABILITY")}</label><h2>{t(active)}</h2><p>{t(capabilityCopy[active] || "")}</p></div></div><div className="card empty-state"><strong>{t(active)}</strong><span>{t("This capability is not wired to a real workflow yet.")}</span></div></section>;
+    // Removed pages (Files, Tools, Approvals, Logs, Support) fall back to chat
+    // instead of showing a dead "capability" screen.
+    return renderChat();
   }
 
   const terminalView = active === "Terminal";
@@ -2057,8 +2041,8 @@ function App() {
       </div>
       <nav className="side-nav" aria-label={t("NAVIGATION")}>
         {navGroups.map((group) => <nav className="nav-group" aria-label={t(group.title)} data-group={group.title} key={group.title}>
-          {group.title === "DEVELOPER" && <button type="button" className="developer-toggle" aria-expanded={developerExpanded} onClick={() => setDeveloperExpanded((value) => !value)}><span className="side-label">{t(group.title)}</span><span className="developer-caret">{developerExpanded ? "⌄" : "›"}</span></button>}
-          {(group.title !== "DEVELOPER" || developerExpanded) && group.items.map((item) => <button className={active === item ? "nav active" : "nav"} key={item} onClick={() => setActive(item)} aria-current={active === item ? "page" : undefined} title={t(item === "Gateway" ? "Sharing & connections" : item)}><Icon name={item} /><span className="nav-text">{t(item === "Gateway" ? "Sharing & connections" : item)}</span>{item === "Approvals" && approvals.length > 0 && <span className="nav-count">{approvals.length}</span>}</button>)}
+          <span className="side-label">{t(group.title)}</span>
+          {group.items.map((item) => <button className={active === item ? "nav active" : "nav"} key={item} onClick={() => setActive(item)} aria-current={active === item ? "page" : undefined} title={t(item === "Gateway" ? "Sharing & connections" : item)}><Icon name={item} /><span className="nav-text">{t(item === "Gateway" ? "Sharing & connections" : item)}</span></button>)}
         </nav>)}
       </nav>
       <section className="side-recent" aria-label={t("RECENT")}>
@@ -2067,7 +2051,7 @@ function App() {
           {sessions.length === 0 ? <span className="side-empty">{t("No sessions yet")}</span> : [{ label: "Pinned", items: pinnedSessions }, { label: "Today", items: todaySessions }, { label: "Yesterday", items: yesterdaySessions }, { label: "Earlier", items: olderSessions }].filter((section) => section.items.length > 0).map((section) => <div className="session-group" key={section.label}><span className="session-group-label">{t(section.label)}</span>{section.items.slice(0, 20).map((item) => <button className={item.id === currentSessionId ? "session-item active" : "session-item"} key={item.id} onClick={() => openSession(item.id)} title={`${item.name || t("New chat")} · ${item.count} ${t("messages")}`} aria-current={item.id === currentSessionId ? "true" : undefined}><span className="session-item-title">{item.name || t("New chat")}</span>{item.pinned && <span className="session-item-pin" aria-hidden="true">✦</span>}</button>)}</div>)}
         </div>
       </section>
-      <div className="side-footer"><button className={active === "Settings" ? "nav active" : "nav"} onClick={() => setActive("Settings")} aria-current={active === "Settings" ? "page" : undefined} title={t("Settings")}><Icon name="Settings" /><span className="nav-text">{t("Settings")}</span></button><div className="help-menu-wrap"><button type="button" className="nav" aria-expanded={helpMenuOpen} onClick={() => setHelpMenuOpen((value) => !value)} title={t("Help")}><Icon name="Support" /><span className="nav-text">{t("Help")}</span><span className="workspace-caret">▾</span></button>{helpMenuOpen && <div className="help-menu"><button onClick={() => { setActive("Changelog"); setHelpMenuOpen(false); }}>{t("Changelog")}</button><button onClick={() => { setActive("Support"); setHelpMenuOpen(false); }}>{t("Support")}</button><button onClick={() => { setActive("Settings"); setSettingsSection("Shortcuts"); setHelpMenuOpen(false); }}>{t("Keyboard shortcuts")}</button></div>}</div>
+      <div className="side-footer"><button className={active === "Settings" ? "nav active" : "nav"} onClick={() => setActive("Settings")} aria-current={active === "Settings" ? "page" : undefined} title={t("Settings")}><Icon name="Settings" /><span className="nav-text">{t("Settings")}</span></button>
         <button className="account" onClick={() => setWelcomeOpen(true)} title={`${t("Connection")} · ${t(state)}`}><span className="avatar">{mode === "remote" ? "R" : "L"}</span><span className="account-text"><strong>{t("Connection")}</strong><small>{mode === "local" ? t("Local mode") : t("Friend's server")}</small></span><span className="dot account-dot" data-state={state} aria-hidden="true" /></button>
         {downloadOccupied && <button type="button" className="download-ring-wrap" onClick={() => { setActive("Models"); setModelsTab("Downloads"); }} aria-label={t("Model download progress")}><span className="download-ring" style={{ background: `conic-gradient(var(--accent-fill) ${download?.completed != null && download?.total ? Math.floor(100 * download.completed / download.total) : 0}%, var(--sunken) 0)` }}><i /></span><small>{download?.model}</small></button>}
 

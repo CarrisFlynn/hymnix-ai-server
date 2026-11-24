@@ -6,8 +6,8 @@
   --font-mono: "JetBrains Mono Local", "JetBrains Mono", "Cascadia Mono", Consolas, "Microsoft YaHei UI", monospace;
 
   /* type scale */
-  --fs-caption: 12px; --fs-secondary: 13px; --fs-body: 14px; --fs-message: 15px;
-  --fs-emphasis: 16px; --fs-title: 21px; --fs-display: 28px;
+  --fs-caption: calc(12px * var(--text-scale, 1)); --fs-secondary: calc(13px * var(--text-scale, 1)); --fs-body: calc(14px * var(--text-scale, 1)); --fs-message: calc(15px * var(--text-scale, 1));
+  --fs-emphasis: calc(16px * var(--text-scale, 1)); --fs-title: calc(21px * var(--text-scale, 1)); --fs-display: calc(28px * var(--text-scale, 1));
   --lh-latin: 1.5; --lh-cjk: 1.6;
   --fw-regular: 400; --fw-medium: 500; --fw-semibold: 600;
 

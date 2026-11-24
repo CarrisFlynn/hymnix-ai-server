@@ -3,7 +3,7 @@ import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 /**
- * Captures one baseline image per page per theme (15 pages x 9 themes = 135).
+ * Captures one baseline image per page per theme (11 pages x 9 themes = 99).
  *
  * Run `pnpm build` first, then `pnpm visual`. Each image lands in
  * docs/2.0-plan/phase1/screenshots/<theme>/<page>.png and is committed so a
@@ -32,13 +32,9 @@ const PAGES = [
   "Chat",
   "Models",
   "Gateway",
-  "Files",
-  "Tools",
-  "Approvals",
   "Plugins",
   "Monitor",
   "Terminal",
-  "Logs",
   "History",
   "Settings",
   "Changelog",

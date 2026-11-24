@@ -471,11 +471,23 @@ export type DiskInfo = { path: string; free: number; total: number; ok: boolean 
 
 export type NotifyInput = { title: string; body: string };
 
+/** Real folders on this machine, so the settings page never shows a placeholder. */
+export type SystemPaths = {
+  /** Where Electron caches right now: the chosen folder, or the OS default. */
+  cache: string;
+  cacheDefault: string;
+  appData: string;
+  workspace: string;
+};
+
 export type SystemApi = {
   stats: () => Promise<SystemStats>;
   openExternal: (url: string) => Promise<{ ok: boolean }>;
   disk: (target: string) => Promise<DiskInfo>;
   notify: (input: NotifyInput) => Promise<{ ok: boolean }>;
+  paths: () => Promise<SystemPaths>;
+  /** Open one of the folders reported by `paths` in Explorer. */
+  reveal: (target: string) => Promise<{ ok: boolean }>;
 };
 
 /** Secrets never leave the main process in plaintext; values are sealed with safeStorage. */

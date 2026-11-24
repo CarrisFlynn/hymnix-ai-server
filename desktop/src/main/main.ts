@@ -21,6 +21,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   previewMode: "inapp"
 };
 function settingsPath(): string { return join(app.getPath("userData"), "orbit-settings.json"); }
+/** Electron resolves the cache folder at runtime; the bundled type union omits it. */
+function cachePath(): string { return (app.getPath as unknown as (name: string) => string)("cache"); }
 function readSettings(): AppSettings {
   try {
     const raw = readFileSync(settingsPath(), "utf8");
@@ -513,6 +515,28 @@ function registerSystemIpc(): void {
       return { path: target, free: 0, total: 0, ok: false };
     }
   });
+  // The settings page shows real folders instead of names like "default location".
+  ipcMain.handle("system:paths", (event) => {
+    assertSender(event);
+    const settings = readSettings();
+    return {
+      cache: settings.cacheDir || cachePath(),
+      cacheDefault: defaultCacheDir,
+      appData: userDataDir,
+      workspace: selectedFilesRoot || "",
+    };
+  });
+  // Reveal a folder the settings page already shows; anything else is refused.
+  ipcMain.handle("shell:reveal", async (event, raw: unknown) => {
+    assertSender(event);
+    const target = typeof raw === "string" ? resolve(raw.trim()) : "";
+    if (!target) throw new Error("Path is empty");
+    const settings = readSettings();
+    const allowed = [userDataDir, cachePath(), settings.cacheDir].filter(Boolean).map((item) => resolve(String(item)));
+    if (!allowed.includes(target)) throw new Error("Path is not one of the app folders");
+    const error = await shell.openPath(target);
+    return { ok: !error, error };
+  });
   // Native toast for long-running work the user has almost certainly tabbed away from.
   ipcMain.handle("system:notify", (event, raw: unknown) => {
     assertSender(event);
@@ -729,7 +753,12 @@ const hasInstanceLock = app.requestSingleInstanceLock();
 if (!hasInstanceLock) { app.quit(); } else { app.on("second-instance",()=>{ if (mainWindow) { if (mainWindow.isMinimized()) mainWindow.restore(); mainWindow.show(); mainWindow.focus(); } }); }
 const bootSettings = readSettings();
 if (!bootSettings.gpuAcceleration) { try { app.disableHardwareAcceleration(); } catch { /* ignore */ } }
-if (bootSettings.cacheDir) { try { mkdirSync(bootSettings.cacheDir, { recursive: true }); app.setPath("cache", bootSettings.cacheDir); } catch { /* ignore */ } }
+// Electron's own "cache" default lands in the roaming root on Windows, which is
+// both wrong-looking and shared with other apps. Pin it to <userData>\Cache so
+// the settings page can show the folder the app really writes to.
+const userDataDir = app.getPath("userData");
+const defaultCacheDir = join(userDataDir, "Cache");
+try { const cacheDir = bootSettings.cacheDir || defaultCacheDir; mkdirSync(cacheDir, { recursive: true }); app.setPath("cache", cacheDir); } catch { /* ignore */ }
 app.whenReady().then(async()=>{if (!hasInstanceLock) return; const bootT0=Date.now();bootLog("boot start");Menu.setApplicationMenu(null);protocol.handle("app",(request)=>{ const url=new URL(request.url); const relative=decodeURIComponent(url.pathname).replace(/^\/+/, "")||"index.html"; const target=join(rendererRoot,relative); if(!target.startsWith(rendererRoot)) return new Response("Forbidden",{status:403}); return net.fetch(pathToFileURL(target).toString()); });session.defaultSession.webRequest.onHeadersReceived((details,callback)=>callback({responseHeaders:{...details.responseHeaders,"Content-Security-Policy":["default-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:*; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'"]}}));bootLog("pre-window t=" + (Date.now()-bootT0)); createWindow(); bootLog("window created t=" + (Date.now()-bootT0)); void gateway.start();app.on("activate",()=>{if(BrowserWindow.getAllWindows().length===0)createWindow();});}).catch((error)=>{console.error(error);app.quit();});
 let allowQuit = false;
 let quitCleanup: Promise<void> | undefined;

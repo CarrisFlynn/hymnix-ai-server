@@ -41,6 +41,8 @@ const api: DesktopApi & { adminHistory: (adminKey: string, query?: AdminHistoryQ
     openExternal: (url: string) => ipcRenderer.invoke("shell:open", url),
     disk: (target: string) => ipcRenderer.invoke("system:disk", target),
     notify: (input: { title: string; body: string }) => ipcRenderer.invoke("system:notify", input),
+    paths: () => ipcRenderer.invoke("system:paths"),
+    reveal: (target: string) => ipcRenderer.invoke("shell:reveal", target),
   },
   credentials: {
     get: (key: string) => ipcRenderer.invoke("credentials:get", key),

@@ -94,7 +94,7 @@ pnpm typecheck     通过
 pnpm test          24/24 通过（新增 components.test.mjs 6 项、qr.test.mjs 5 项）
 pnpm check:design  令牌检查通过；对比度 189/189
 pnpm build         通过（577 kB renderer bundle, gzip 160 kB）
-pnpm visual        1 passed，39 s，生成 135 张基线（15 页 × 9 主题）
+pnpm visual        1 passed，39 s，生成 99 张基线（11 页 × 9 主题）
 ```
 
 - 新增测试：`tests/components.test.mjs`（token 估算、斜杠解析、连接错误分类、字节格式化、密码强度、**中文文案完整性**——所有 `t()/tf()` 字面量都必须有中文条目）、`tests/qr.test.mjs`（编解码往返）。
