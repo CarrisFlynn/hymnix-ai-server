@@ -100,10 +100,12 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 .session-item-pin { flex: 0 0 auto; color: var(--accent-text); font-size: 9px; opacity: .7; }
 .side-empty { padding: 5px; color: var(--faint); font-size: 11px; }
 .nav-group { gap: 2px; }
-.nav { position: relative; display: flex; width: 100%; min-height: 36px; align-items: center; gap: 10px; padding: 0 9px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--muted); text-align: left; font-size: 12px; font-weight: 500; }
+/* Flat row: no lift, no keycap shadow. Only background and text change. */
+.nav { position: relative; display: flex; width: 100%; min-height: 36px; align-items: center; gap: 10px; padding: 0 9px; border: 1px solid transparent; border-radius: 7px; background: transparent; box-shadow: none; color: var(--muted); text-align: left; font-size: 12px; font-weight: 500; transform: none; }
 .nav svg { width: 15px; height: 15px; flex: 0 0 15px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.6; }
-.nav:hover { background: color-mix(in srgb, var(--surface) 68%, transparent); color: var(--text); }
-.nav.active { border-color: var(--border); background: var(--surface); color: var(--accent-text); font-weight: 600; }
+.nav:hover { background: color-mix(in srgb, var(--text) 6%, transparent); box-shadow: none; color: var(--text); transform: none; }
+.nav:active { background: color-mix(in srgb, var(--text) 10%, transparent); }
+.nav.active { border-color: transparent; background: var(--accent-soft); box-shadow: none; color: var(--accent-text); font-weight: 600; transform: none; }
 .nav.active::before { position: absolute; left: -1px; top: 7px; bottom: 7px; width: 2px; border-radius: 0 2px 2px 0; background: var(--accent-fill); content: ""; }
 .nav-text { min-width: 0; overflow: hidden; flex: 1; text-overflow: ellipsis; white-space: nowrap; }
 .nav-count { display: grid; min-width: 18px; height: 18px; place-items: center; border-radius: 10px; background: var(--accent-soft); color: var(--accent-text); font-size: 9px; }

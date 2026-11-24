@@ -1390,7 +1390,7 @@ function App() {
       <div className="ready-actions"><button className="btn primary" onClick={() => { setActive("Models"); setModelsTab("Discover"); }}>{t("Discover models")}</button><button className="btn" onClick={() => { setSource("cloud"); setInspectorOpen(true); }}>{t("Use Cloud API")}</button></div>
     </div> : modelNeedsLoad ? <div className="chat-ready-card">
       <div className="ready-icon"><Icon name="Models" /></div><div className="ready-copy"><span className="eyebrow">{t("MODEL READY")}</span><h2>{tf("Load {model} to begin", { model })}</h2><p>{t("The model is installed but not loaded. Load it before starting a conversation.")}</p></div>
-      <div className="ready-actions"><button className="btn primary" onClick={() => void modelAction("start", model)} disabled={!!modelBusy}>{t(modelBusy === model ? "Loading..." : "Load model")}</button><button className="btn" onClick={() => setActive("Models")}>{t("Choose another model")}</button></div>
+      <div className="ready-actions"><button className="btn primary" onClick={() => void modelAction("start", model)} disabled={!!modelBusy}>{t(model && modelBusy === model ? "Loading..." : "Load model")}</button><button className="btn" onClick={() => setActive("Models")}>{t("Choose another model")}</button></div>
     </div> : cloudUnconfigured ? <div className="chat-ready-card">
       <div className="ready-icon"><span>✦</span></div><div className="ready-copy"><span className="eyebrow">{t("CLOUD API")}</span><h2>{t("Configure a cloud model")}</h2><p>{t("Add an API endpoint and model name in Chat settings before sending a message.")}</p></div>
       <div className="ready-actions"><button className="btn primary" onClick={() => setInspectorOpen(true)}>{t("Open chat settings")}</button><button className="btn" onClick={() => setSource("local")}>{t("Use local model")}</button></div>
@@ -1473,7 +1473,7 @@ function App() {
         {models.length === 0 && state === "starting" ? <SkeletonList rows={4} /> : models.length === 0 ? <div className="empty-state"><strong>{t("No model installed yet.")}</strong><span>{t("Choose a model that fits your hardware from Discover.")}</span><button className="btn primary" onClick={() => setModelsTab("Discover")}>{t("Discover models")}</button></div> : <div className="model-table"><div className="model-table-head"><span>{t("Name")}</span><span>{t("Status")}</span><span>{t("Actions")}</span></div>{models.map((item) => <div className="model-table-row" key={item.name}>
           <span className="catalog-main"><strong>{item.name}</strong><small>{item.name.split(":")[1] || t("Installed model")}</small></span>
           <span className={item.loaded ? "status-pill success" : "status-pill neutral"}><span className="status-dot" />{item.loaded ? t("Loaded") : t("Installed")}</span>
-          <span className="controls"><button className={item.loaded ? "btn" : "btn primary"} onClick={() => { setModel(item.name); void modelAction(item.loaded ? "stop" : "start", item.name); }} disabled={modelBusy === item.name}>{modelBusy === item.name ? t("Loading...") : item.loaded ? t("Unload") : t("Load")}</button><button className="btn danger" onClick={() => setModelDeleteTarget(item.name)} disabled={modelBusy === item.name}>{t("Delete")}</button></span>
+          <span className="controls"><button className={item.loaded ? "btn" : "btn primary"} onClick={() => { setModel(item.name); void modelAction(item.loaded ? "stop" : "start", item.name); }} disabled={modelBusy === item.name}>{(item.name && modelBusy === item.name) ? t("Loading...") : item.loaded ? t("Unload") : t("Load")}</button><button className="btn danger" onClick={() => setModelDeleteTarget(item.name)} disabled={modelBusy === item.name}>{t("Delete")}</button></span>
         </div>)}</div>}
       </div>}
       {modelsTab === "Discover" && <ModelCatalog installedNames={models.map((item) => item.name)} filters={catalogFilters} onFiltersChange={setCatalogFilters} lang={lang} remote={remoteActive()} downloadDisabled={!!modelBusy} activeDownload={downloadOccupied ? download?.model : undefined} downloadPaused={download?.phase === "paused"} onDownload={(name) => void pullModelByName(name)} note={modelNote} />}
@@ -2150,7 +2150,7 @@ function App() {
           {models.map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}
         </select>
         <div className="panel-actions">
-          <button className={selectedLocalModel?.loaded ? "btn" : "btn primary"} onClick={() => void modelAction(selectedLocalModel?.loaded ? "stop" : "start", model)} disabled={!model || modelBusy === model}>{modelBusy === model ? t("Loading...") : selectedLocalModel?.loaded ? t("Unload model") : t("Load model")}</button>
+          <button className={selectedLocalModel?.loaded ? "btn" : "btn primary"} onClick={() => void modelAction(selectedLocalModel?.loaded ? "stop" : "start", model)} disabled={!model || modelBusy === model}>{(model && modelBusy === model) ? t("Loading...") : selectedLocalModel?.loaded ? t("Unload model") : t("Load model")}</button>
           <button className="btn" onClick={() => void loadModels()} aria-label={t("Refresh models")}>{t("Refresh")}</button>
         </div>
         <button type="button" className="panel-link" onClick={() => setActive("Models")}>{t("Get more models...")}</button>

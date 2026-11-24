@@ -83,66 +83,10 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   border-top: 1px solid var(--line);
 }
 .nav-group:first-of-type { border-top: 0; padding-top: 0; }
-/* Sidebar menu items are neumorphic keycaps: raised at rest, lifted on hover,
-   sunk 2px with the light flipped inward while pressed, and kept pressed with a
-   theme-coloured indicator LED when they are the current view. */
-.nav {
-  display: flex; align-items: center; gap: var(--s2);
-  width: 100%; min-height: 32px; padding: 0 24px 0 var(--s2);
-  border: 1px solid transparent; border-radius: var(--radius-sm);
-  background: var(--keycap-face); color: var(--ink-soft);
-  font-size: var(--fs-body); text-align: left; position: relative;
-  box-shadow:
-    2px 2px 5px var(--keycap-shade),
-    -2px -2px 5px var(--keycap-hi),
-    inset 0 0 0 1px var(--keycap-ring);
-  transition:
-    transform .18s cubic-bezier(.34, 1.56, .64, 1),
-    box-shadow .18s ease,
-    color .18s ease;
-}
-.nav:hover {
-  color: var(--ink);
-  transform: translateY(-2px);
-  box-shadow:
-    6px 9px 18px var(--keycap-lift),
-    -3px -4px 10px var(--keycap-lift-hi),
-    inset 0 0 0 1px var(--keycap-ring);
-}
-.nav:active {
-  transform: translateY(2px);
-  box-shadow:
-    inset 2px 3px 7px var(--keycap-inset-shade),
-    inset -2px -2px 6px var(--keycap-inset-hi),
-    inset 0 0 0 1px var(--keycap-ring);
-}
-.nav.active,
-.nav.active:hover,
-.nav.active:active {
-  transform: translateY(2px);
-  border-color: transparent;
-  color: var(--ink); font-weight: 600;
-  box-shadow:
-    inset 2px 3px 7px var(--keycap-inset-shade),
-    inset -2px -2px 6px var(--keycap-inset-hi),
-    inset 0 0 0 1px var(--keycap-ring);
-}
-.nav::after {
-  content: ""; position: absolute; right: 9px; top: 50%;
-  width: 6px; height: 6px; margin-top: -3px; border-radius: 50%;
-  background: var(--red-500); opacity: 0; transform: scale(.4);
-  transition: opacity .2s ease, transform .2s ease;
-  pointer-events: none;
-}
-.nav.active::after {
-  opacity: 1; transform: scale(1);
-  box-shadow:
-    0 0 0 2px var(--keycap-ring),
-    0 0 7px 1px var(--keycap-led-glow),
-    inset 0 0 2px rgba(255, 255, 255, .9);
-}
-.nav svg { width: 16px; height: 16px; flex: 0 0 16px; stroke: currentColor; fill: none; stroke-width: 1.6; }
-.nav.active svg { stroke: var(--red-600); }
+/* Sidebar navigation rows are owned by orbit-v2.css (flat rows with an accent
+   bar). The neumorphic keycap treatment that used to live here was removed: its
+   box-shadow and transform survived the override and made every row look like a
+   raised card. */
 
 .side-status {
   display: flex; align-items: center; gap: var(--s2);
