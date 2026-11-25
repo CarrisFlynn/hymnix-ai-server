@@ -2607,8 +2607,8 @@ function App() {
   return <div className={"app" + (terminalView ? " terminal-mode" : "") + (chatView ? " chat-mode" : "") + (sidebarCollapsed ? " rail-collapsed" : "")} data-lang={lang}>
     <div className="titlebar">
       <div className="tb-left">
-        <button type="button" className="tb-icon" onClick={() => setSidebarCollapsed((value) => !value)} aria-label={t(sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar")} title={t(sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar")}>
-          <span aria-hidden="true">{sidebarCollapsed ? "»" : "«"}</span>
+        <button type="button" className="tb-icon panel-toggle" onClick={() => setSidebarCollapsed((value) => !value)} aria-label={t(sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar")} title={t(sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar")}>
+          <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="3.5" width="15" height="13" rx="3" /><path d="M8 3.5v13" /></svg>
         </button>
       </div>
       <div className="titlebar-drag" />

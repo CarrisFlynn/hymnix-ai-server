@@ -881,12 +881,11 @@ ipcMain.handle("window:control", (event, raw: unknown) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   if (action === "restart") { allowQuit = true; app.relaunch(); app.quit(); return { ok: true }; }
   if (!win) return { ok: false };
-  if (action === "minimize") win.minimize();
-  else if (action === "maximize") win.isMaximized() ? win.unmaximize() : win.maximize();
-  else if (action === "close") win.close();
-  else if (action === "hide") { ensureTray(); win.hide(); return { ok: true, hidden: true, maximized: win.isMaximized() }; }
-  else return { ok: false };
-  return { ok: true, maximized: win.isMaximized(), hidden: false };
+  if (action === "minimize") { win.minimize(); return { ok: true, minimized: true }; }
+  if (action === "maximize") { if (win.isMaximized()) win.unmaximize(); else win.maximize(); return { ok: true, maximized: win.isMaximized() }; }
+  if (action === "close") { win.close(); return { ok: true }; }
+  if (action === "hide") { ensureTray(); win.hide(); return { ok: true, hidden: true, maximized: win.isMaximized() }; }
+  return { ok: false };
 });
 ipcMain.handle("window:appearance", (event, raw: unknown) => {
   assertSender(event);

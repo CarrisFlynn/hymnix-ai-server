@@ -1804,3 +1804,11 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 .chat-head.page-head::before { display: none; }
 /* Keep the panel's top-left curve clear of the title. */
 .chat-head .chat-title { padding-left: 2px; }
+
+/* Window controls live outside the drag region, with real hover/press feedback. */
+.tb-left, .tb-window { -webkit-app-region: no-drag; }
+.tb-icon, .tb-window button { position: relative; }
+.tb-icon:active, .tb-window button:active { transform: translateY(0.5px); }
+.tb-window button:hover { background: var(--highlight); color: var(--text); }
+.tb-window button.close:hover { background: var(--danger); color: var(--surface); }
+.panel-toggle svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; }
