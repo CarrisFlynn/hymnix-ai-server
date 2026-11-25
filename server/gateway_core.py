@@ -45,6 +45,29 @@ _TOOL_APPROVAL_TTL = 60.0
 _TOOL_APPROVAL_MAX = 256
 _SAFE_REMOTE_TOOLS = {"time.now", "calc", "fs.list", "fs.read", "fs.stat", "sysinfo", "repo.tree", "repo.search", "repo.read"}
 
+# Tool classes for the three-level policy. Unknown tools count as exec: the most
+# restrictive class below "full".
+_TOOL_READ = {"time.now", "calc", "sysinfo", "fs.list", "fs.read", "fs.stat", "repo.tree", "repo.search", "repo.read"}
+_TOOL_WRITE = {"fs.write", "fs.mkdir", "fs.move", "fs.remove", "diff.apply", "diff.rollback"}
+
+
+def _tool_class(name):
+    if name in _TOOL_READ:
+        return "read"
+    if name in _TOOL_WRITE:
+        return "write"
+    return "exec"
+
+
+def _tool_policy_allows(policy, name):
+    """Return (allowed, reason) for one tool call under the current policy."""
+    cls = _tool_class(name)
+    if policy == "read":
+        return (cls == "read", "read_only")
+    if policy == "workspace":
+        return (cls != "exec", "workspace_only")
+    return (True, "")
+
 
 class _BoundedJSONError(Exception):
     def __init__(self, status, code):
@@ -113,6 +136,8 @@ DEFAULT_CONFIG = {
     "cloud_active": "",
     # When true, tool calls skip the approval queue (still logged).
     "auto_approve_tools": False,
+    # read | workspace | full — what tools may do without asking.
+    "tool_policy": "workspace",
     "max_body_mb": 32,
     "online_timeout_s": 120,
     "keep_log_days": 30,
@@ -1358,7 +1383,7 @@ class Handler(BaseHTTPRequestHandler):
         "keep_log_days", "online_timeout_s", "max_body_mb", "billing_enabled",
         "daily_quota_tokens", "power_price", "base_power_w", "allow_remote",
         "chat_source", "timezone", "compat_mode", "inject_time", "enable_note_injection",
-        "auto_approve_tools",
+        "auto_approve_tools", "tool_policy",
     }
 
     def _admin_ollama(self, method="POST"):
@@ -1955,7 +1980,18 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(status, {"ok": bool(result.get("ok")), "request_id": request_id,
                                            "tool": name, "result": safe_result,
                                            "error": str(result.get("error") or "")[:128]})
-            if bool(CFG.get("auto_approve_tools", False)):
+            policy = str(CFG.get("tool_policy") or "workspace").strip().lower()
+            allowed, reason = _tool_policy_allows(policy, name)
+            if not allowed:
+                try:
+                    append_log("tool-denied-%s.jsonl" % _today(), {
+                        "t": time.strftime("%Y-%m-%d %H:%M:%S"), "request_id": request_id,
+                        "tool": name, "policy": policy, "reason": reason, "ip": self._ip()})
+                except Exception:
+                    pass
+                return self._json(403, {"ok": False, "request_id": request_id, "tool": name,
+                                        "error": "policy_denied", "policy": policy, "detail": reason})
+            if True:
                 # Global "auto allow" switch from the composer. The call is still
                 # audited, it just never enters the approval queue.
                 if not item:

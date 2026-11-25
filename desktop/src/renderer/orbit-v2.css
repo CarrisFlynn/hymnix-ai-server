@@ -1664,3 +1664,51 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 .models-page { max-width: none; }
 .view-heading, .page-head { margin: 0 0 18px; padding: 18px 0 10px; }
 .view-heading::after, .page-head::after { right: -24px; left: -24px; }
+
+/* ==========================================================================
+   Tool policy menu, theme-coloured reasoning slider, quiet close button.
+   ========================================================================== */
+
+.policy-wrap { position: relative; display: inline-flex; }
+.policy-menu { position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 46; display: flex; width: 300px; flex-direction: column; gap: 1px; padding: 4px; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--raised); box-shadow: 0 18px 44px color-mix(in srgb, var(--text) 22%, transparent); }
+.policy-menu button { display: flex; width: 100%; align-items: flex-start; gap: 8px; padding: 8px 9px; border: 0; border-radius: 6px; background: transparent; color: var(--text); text-align: left; }
+.policy-menu button:hover { background: var(--highlight); }
+.policy-menu button.active { background: var(--accent-soft); }
+.policy-check { width: 14px; flex: 0 0 14px; padding-top: 1px; color: var(--accent-text); font-size: calc(12px * var(--text-scale, 1)); }
+.policy-copy { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
+.policy-copy strong { font-size: calc(13px * var(--text-scale, 1)); font-weight: 550; }
+.policy-copy small { color: var(--faint); font-size: calc(11px * var(--text-scale, 1)); line-height: 1.4; }
+
+/* Slider: continuous drag, snap on release, accent-coloured flow. */
+.effort-slider-wrap { position: relative; height: 30px; border-radius: 999px; touch-action: none; cursor: pointer; }
+.effort-slider-wrap:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.effort-track { position: absolute; inset: 0; overflow: hidden; border-radius: 999px; background: linear-gradient(90deg, color-mix(in srgb, var(--accent-fill) 30%, var(--surface)), var(--accent-fill), color-mix(in srgb, var(--accent-fill) 55%, var(--warning))); background-size: 220% 100%; animation: effort-flow 9s linear infinite; }
+.effort-fill { position: absolute; top: 0; bottom: 0; left: 0; border-radius: 999px 0 0 999px; background: color-mix(in srgb, var(--accent-fill) 34%, transparent); }
+.effort-thumb { position: absolute; top: 50%; width: 20px; height: 20px; margin-left: -10px; border: 2px solid var(--surface); border-radius: 50%; background: var(--text); box-shadow: 0 1px 4px color-mix(in srgb, var(--text) 30%, transparent); transform: translateY(-50%); transition: left 90ms var(--ease-standard); }
+.effort-track[data-level="low"] { animation-duration: 18s; opacity: .6; }
+.effort-track[data-level="medium"] { animation-duration: 10s; opacity: .75; }
+.effort-track[data-level="high"] { animation-duration: 5.5s; opacity: .9; }
+.effort-track[data-level="max"] { animation-duration: 2.2s; opacity: 1; }
+.effort-stops { display: flex; justify-content: space-between; margin-top: 7px; }
+.effort-stops button { padding: 0; border: 0; background: transparent; color: var(--faint); font-size: calc(10.5px * var(--text-scale, 1)); }
+.effort-stops button.on { color: var(--accent-text); font-weight: 600; }
+.effort-stops button[data-disabled="true"] { opacity: .4; }
+
+/* The panel's close button: 28px, obvious, hover backdrop. */
+.mp-close { display: grid; width: 28px; height: 28px; place-items: center; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font-size: calc(16px * var(--text-scale, 1)); line-height: 1; }
+.mp-close:hover { background: var(--highlight); color: var(--text); }
+
+/* Changelog timeline: version on the left, grouped prose on the right, no dots. */
+.timeline { display: flex; flex-direction: column; }
+.timeline-row { display: grid; grid-template-columns: 132px minmax(0, 1fr); gap: 28px; padding: 20px 0; border-top: 1px solid var(--border); }
+.timeline-row:first-child { border-top: 0; padding-top: 6px; }
+.timeline-meta { display: flex; flex-direction: column; gap: 3px; }
+.timeline-meta strong { color: var(--text); font-size: calc(15px * var(--text-scale, 1)); font-weight: 600; letter-spacing: -.01em; }
+.timeline-meta small { color: var(--faint); font-size: calc(11.5px * var(--text-scale, 1)); }
+.timeline-body { display: flex; min-width: 0; flex-direction: column; gap: 16px; }
+.timeline-group h4 { margin: 0 0 6px; color: var(--accent-text); font-size: calc(12px * var(--text-scale, 1)); font-weight: 600; letter-spacing: .02em; }
+.timeline-group p { margin: 0 0 5px; color: var(--muted); font-size: calc(13.5px * var(--text-scale, 1)); line-height: 1.65; }
+.timeline-group p:last-child { margin-bottom: 0; }
+@media (max-width: 900px) {
+  .timeline-row { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+}

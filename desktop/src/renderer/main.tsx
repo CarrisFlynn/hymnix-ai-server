@@ -81,6 +81,13 @@ const EFFORT_LEVELS = [
   { key: "max", label: "Max" }
 ] as const;
 
+/** The three tool policies: what the assistant may do without asking. */
+const TOOL_POLICIES = [
+  { id: "read", label: "Read only", detail: "Read files and look things up. Nothing is changed or executed." },
+  { id: "workspace", label: "Workspace writes", detail: "Read and write inside the workspace. No commands, no network." },
+  { id: "full", label: "Full access", detail: "Run commands, reach the network and call plugins." }
+] as const;
+
 /** Vendor presets for the add-provider form. Only defaults; everything is editable. */
 const PROVIDER_CATALOG = [
   { id: "deepseek", label: "DeepSeek", kind: "openai", base: "https://api.deepseek.com/v1", models: ["deepseek-chat", "deepseek-reasoner"] },
@@ -334,9 +341,12 @@ function App() {
   const [activeProviderId, setActiveProviderId] = useState("");
   const [providersBusy, setProvidersBusy] = useState(false);
   const [providerError, setProviderError] = useState("");
-  const [autoApprove, setAutoApprove] = useState(false);
+  const [toolPolicy, setToolPolicy] = useState<"read" | "workspace" | "full">("workspace");
+  const [policyMenu, setPolicyMenu] = useState(false);
+  const [effortDrag, setEffortDrag] = useState<number | null>(null);
   const [modelPopover, setModelPopover] = useState<"closed" | "root" | "models">("closed");
   const [sessionSearchOpen, setSessionSearchOpen] = useState(false);
+  const [changelog, setChangelog] = useState<Array<{ version: string; date: string; groups: Array<{ title: string; items: string[] }> }>>([]);
   const [todayUsage, setTodayUsage] = useState<{ messages: number; tokens: number }>({ messages: 0, tokens: 0 });
   const [modelQuery, setModelQuery] = useState("");
   const [providerForm, setProviderForm] = useState<null | {
@@ -732,7 +742,33 @@ function App() {
   useEffect(() => {
     void window.hymnix.credentials?.get("adminKey").then((value) => { if (value) setAdminKey(value); }).catch(() => undefined);
   }, []);
-  useEffect(() => { void loadProviders(); }, []);
+  useEffect(() => { void loadProviders(); void loadToolPolicy(); }, []);
+  useEffect(() => {
+    // The release notes come straight from CHANGELOG.md, packaged beside the app.
+    void window.hymnix.changelog.get().then((result) => {
+      if (!result?.ok || !result.text) return;
+      const releases: Array<{ version: string; date: string; groups: Array<{ title: string; items: string[] }> }> = [];
+      let current: (typeof releases)[number] | null = null;
+      let group: { title: string; items: string[] } | null = null;
+      for (const line of result.text.split(/\r?\n/)) {
+        const heading = /^##\s+(.+?)\s*$/.exec(line);
+        if (heading) {
+          const raw = heading[1];
+          if (/^unreleased/i.test(raw)) { current = null; group = null; continue; }
+          const parts = raw.split(/\s+[—-]\s+/);
+          current = { version: parts[0].replace(/^\[|\]$/g, ""), date: parts[1] || "", groups: [] };
+          releases.push(current);
+          group = null;
+          continue;
+        }
+        const sub = /^###\s+(.+?)\s*$/.exec(line);
+        if (sub && current) { group = { title: sub[1], items: [] }; current.groups.push(group); continue; }
+        const item = /^[-*]\s+(.+)$/.exec(line);
+        if (item && group) group.items.push(item[1].replace(/\*\*/g, ""));
+      }
+      setChangelog(releases.filter((release) => release.groups.length > 0).slice(0, 8));
+    }).catch(() => undefined);
+  }, []);
   // Any click outside the composer closes the model panel: a popover must never
   // survive a click on the page, a tab switch or a keystroke into the message box.
   useEffect(() => {
@@ -1616,9 +1652,17 @@ function App() {
         <div className="composer-bar">
           <input ref={fileInputRef} type="file" multiple hidden onChange={(event) => { if (event.target.files?.length) void addFiles(event.target.files); event.target.value = ""; }} />
           <button type="button" className="cb-icon" onClick={() => fileInputRef.current?.click()} aria-label={t("Attach a file")} data-tip={t("Attach a file")}><Icon name="Plus" /></button>
-          <button type="button" className={"cb-chip approval" + (autoApprove ? " auto" : "")} onClick={() => void toggleAutoApprove(!autoApprove)} aria-pressed={autoApprove} title={t("Tool approval")}>
-            <Icon name="Approvals" />{t(autoApprove ? "Auto allow" : "Ask every time")}
-          </button>
+          <div className="policy-wrap">
+            <button type="button" className="cb-chip approval" onClick={() => setPolicyMenu((value) => !value)} aria-expanded={policyMenu} aria-haspopup="listbox" title={t("Tool policy")}>
+              <Icon name="Approvals" />{t(TOOL_POLICIES.find((level) => level.id === toolPolicy)?.label || "Workspace writes")}
+            </button>
+            {policyMenu && <div className="policy-menu" role="listbox" aria-label={t("Tool policy")}>
+              {TOOL_POLICIES.map((level) => <button key={level.id} type="button" role="option" aria-selected={toolPolicy === level.id} className={toolPolicy === level.id ? "active" : ""} onClick={() => void chooseToolPolicy(level.id)}>
+                <span className="policy-check" aria-hidden="true">{toolPolicy === level.id ? "✓" : ""}</span>
+                <span className="policy-copy"><strong>{t(level.label)}</strong><small>{t(level.detail)}</small></span>
+              </button>)}
+            </div>}
+          </div>
           <button type="button" className={"cb-chip model" + (modelUsable ? "" : " is-empty")} onClick={() => setModelPopover((value) => value === "closed" ? "root" : "closed")} aria-expanded={modelPopover !== "closed"} aria-haspopup="dialog">
             <span className="cb-model-name">{modelTitle}</span>
             <span className="cb-model-source">{sourceLabel}</span>
@@ -1648,22 +1692,43 @@ function App() {
             </button>
             <div className="mp-row mp-row-slider">
               <div className="mp-slider-head"><span className="mp-label">{t("Reasoning")}</span><strong className="mp-level" data-level={effortLevel.key}>{effortLevel.label}</strong></div>
-              <div className="effort-slider-wrap">
-                <div className="effort-track" data-level={effortLevel.key} aria-hidden="true" />
-                <input type="range" min={0} max={EFFORT_LEVELS.length - 1} step={1} value={effortIndex} className="effort-slider" aria-label={t("Reasoning effort")}
-                  onChange={(event) => {
-                    const next = EFFORT_LEVELS[Number(event.target.value)];
-                    if (!next || (next.key === "max" && !maxSupported)) return;
-                    setEffort(next.key);
-                  }} />
+              <div className="effort-slider-wrap"
+                onPointerDown={(event) => { const rect = event.currentTarget.getBoundingClientRect(); event.currentTarget.setPointerCapture(event.pointerId); setEffortDrag(Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)) * 3); }}
+                onPointerMove={(event) => {
+                  if (effortDrag === null) return;
+                  const rect = event.currentTarget.getBoundingClientRect();
+                  setEffortDrag(Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)) * 3);
+                }}
+                onPointerUp={(event) => {
+                  const rect = event.currentTarget.getBoundingClientRect();
+                  let index = Math.round(Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)) * 3);
+                  if (index === 3 && !maxSupported) index = 2;
+                  setEffortDrag(null);
+                  setEffort(EFFORT_LEVELS[index].key);
+                }}
+                onPointerCancel={() => setEffortDrag(null)}
+                role="slider" tabIndex={0} aria-valuemin={0} aria-valuemax={3} aria-valuenow={effortIndex} aria-valuetext={effortLevel.label} aria-label={t("Reasoning effort")}
+                onKeyDown={(event) => {
+                  const current = effortIndex;
+                  let next = current;
+                  if (event.key === "ArrowLeft" || event.key === "ArrowDown") next = Math.max(0, current - 1);
+                  else if (event.key === "ArrowRight" || event.key === "ArrowUp") next = Math.min(3, current + 1);
+                  else if (event.key === "Home") next = 0;
+                  else if (event.key === "End") next = 3;
+                  else return;
+                  if (next === 3 && !maxSupported) return;
+                  event.preventDefault();
+                  setEffort(EFFORT_LEVELS[next].key);
+                }}>
+                <div className="effort-track" data-level={EFFORT_LEVELS[Math.round(effortDrag ?? effortIndex)].key} aria-hidden="true" />
+                <span className="effort-fill" style={{ width: ((effortDrag ?? effortIndex) / 3) * 100 + "%" }} aria-hidden="true" />
+                <span className="effort-thumb" style={{ left: ((effortDrag ?? effortIndex) / 3) * 100 + "%" }} aria-hidden="true" />
               </div>
-              <div className="effort-stops">{EFFORT_LEVELS.map((level, index) => <span key={level.key} className={index <= effortIndex ? "on" : ""} data-disabled={level.key === "max" && !maxSupported ? "true" : "false"}>{level.label}</span>)}</div>
+              <div className="effort-stops">{EFFORT_LEVELS.map((level, index) => <button key={level.key} type="button" className={index <= effortIndex ? "on" : ""} data-disabled={level.key === "max" && !maxSupported ? "true" : "false"} onClick={() => { if (index === 3 && !maxSupported) return; setEffort(level.key); }}>{level.label}</button>)}</div>
               {!maxSupported && <p className="mp-note">{t("Max needs a provider that declares support for it.")}</p>}
             </div>
             <div className="mp-row"><span className="mp-label">{t("Context")}</span><span className="mp-value">~{totalTokens} {t("tokens")}</span></div>
-            <div className="mp-row"><span className="mp-label">{t("Tool approval")}</span>
-              <button type="button" className={"switch" + (autoApprove ? " on" : "")} aria-pressed={autoApprove} aria-label={t("Tool approval")} onClick={() => void toggleAutoApprove(!autoApprove)}><span /></button>
-            </div>
+            <div className="mp-row"><span className="mp-label">{t("Tool policy")}</span><span className="mp-value">{t(TOOL_POLICIES.find((level) => level.id === toolPolicy)?.label || "Workspace writes")}</span></div>
           </div> : <div className="mp-body mp-models">
             <input className="mp-search" autoFocus value={modelQuery} onChange={(event) => setModelQuery(event.target.value)} placeholder={t("Search models")} aria-label={t("Search models")} />
             <div className="mp-scroll">
@@ -1792,15 +1857,6 @@ function App() {
       {chatTab === "chat" && <>
         <ChatViewport messages={messages} footer={toolCard} followSignal={followSignal} empty={emptyChat} busy={chatBusy} onEditMessage={editMessage} onRegenerateMessage={regenerateMessage} onDeleteMessage={deleteMessageTurn} onBranchMessage={branchFrom} onRetryMessage={retryMessage} />
         {messages.length > 0 && composer}
-        {messages.length > 0 && <div className="composer-meta">
-          <span>{messages.length} {t("messages")}</span>
-          <span aria-hidden="true">·</span>
-          <span>~{estimateTokens(messages.map((item) => item.content).join(" "))} {t("tokens")}</span>
-          <span aria-hidden="true">·</span>
-          <span>{modelTitle}</span>
-          <span aria-hidden="true">·</span>
-          <span>{sourceLabel}</span>
-        </div>}
       </>}
       {chatTab === "context" && <div className="chat-tab-body">{contextPanel}</div>}
       {chatTab === "trace" && <div className="chat-tab-body">{tracePanel}</div>}
@@ -2043,7 +2099,7 @@ function App() {
       { key: "share", label: t("Start sharing"), done: tunnelState === "up" },
     ];
     return <section className="view-page">
-      <div className="view-heading">{backButton}<div><label>{t("SHARING & CONNECTIONS")}</label><h2>{t("Sharing & connections")}</h2><p>{t("Share this computer's model service with friends. Connecting to a friend or adding a cloud provider lives on the Models page.")}</p></div><button className="btn ghost" onClick={() => { void loadNetwork(); void loadCloud(); void loadHealth(); void loadHostClients(); }}>{t("Refresh")}</button></div>
+      <div className="view-heading">{backButton}<div><label>{t("SHARING & CONNECTIONS")}</label><h2>{t("Sharing")}</h2><p>{t("Share this computer's model service with friends. Connecting to a friend or adding a cloud provider lives on the Models page.")}</p></div><button className="btn ghost" onClick={() => { void loadNetwork(); void loadCloud(); void loadHealth(); void loadHostClients(); }}>{t("Refresh")}</button></div>
       <div className="sharing-summary card"><span className={"status-pill " + (tunnelState === "up" ? "success" : "neutral")}><span className="status-dot" />{t(tunnelState === "up" ? "Sharing" : "Not sharing")}</span><span>{t("Clients online")}: <strong>{online}</strong></span><span className="public-link">{tunnelUrl || t("No public link yet")}</span>{tunnelUrl && <button className="btn tonal" onClick={() => void navigator.clipboard?.writeText(tunnelUrl)}>{t("Copy link")}</button>}{tunnelUrl && <button className="btn" onClick={() => setQrOpen(true)}>{t("Show QR code")}</button>}</div>
       <div className="section-head"><div><h3>{t("Share this computer")}</h3><p className="subtitle">{t("People connect with the address and password below; their chats run on your hardware.")}</p></div></div>
 
@@ -2072,38 +2128,23 @@ function App() {
     </section>;
   }
   function renderChangelog() {
-    const entries = [
-      { version: __APP_VERSION__, items: [
-        t("Added a plugin center backed by the isolated plugin manager; installs stay disabled until permissions are reviewed."),
-        t("Revoking a plugin permission immediately unloads and disables it."),
-        t("Wired Files and Logs navigation to their existing screens."),
-        t("Native window background now follows light, dark or system appearance."),
-        t("Rebuilt the workspace shell with a compact sidebar, global search, and a responsive chat settings panel."),
-        t("Added Light, Dark and Auto appearance, nine theme previews, density, text size and reduced-motion controls."),
-        t("Conversations now autosave with searchable history, pinning, deletion and undo; messages support copy, edit, regenerate and turn deletion."),
-        t("Chat, model, sharing and monitoring pages now show setup steps and explicit service states."),
-        t("Phase 0 of the 2.0 redesign: one semantic token layer, nine theme files and locally bundled fonts."),
-        t("Three new themes: Ink green, Honey crimson and Graphite gold. Nine presets in total."),
-        t("Fixed the clipped status pill, the terminal hint and the faint switch off-state."),
-        t("Two new themes: Deep sea blue replaces Daylight, and Neon black pairs electric green with true black."),
-        t("Closing Hymnix also stops its background gateway and services."),
-        t("Start Ollama from the app or reconnect automatically after starting it yourself."),
-        t("Chat follows streaming replies, with side markers to jump between turns."),
-        t("Pause and resume local Ollama downloads with live progress."),
-        t("The built-in terminal can receive replies from a local script via an experimental bridge."),
-        t("The expanded Ollama catalog adds publisher, license, download size, and GPU memory filters."),
-      ] },
-      { version: "1.3.1", items: [t("Local mode always sends the local gateway key; the model list and chat now work without a manual key."), t("The Ollama button resolves the real executable instead of failing silently."), t("Startup: the window appears in ~40ms and the 9.7s port preflight loop is gone."), t("The connection bar only appears on Chat and Gateway, on a single aligned row.")] },
-            { version: "1.3.0", items: [t("Product renamed to Hymnix Orbit."), t("New client-style UI with bubbles, terminal console and control panel."), t("Host mode with share password and public tunnel."), t("Guest mode: chats and models run on the host's hardware."), t("Cloud API source alongside local models.")] },
-      { version: "1.2.0", items: [t("17 pages in one window."), t("Bubble cards with avatars and code copy."), t("Terminal console with status strips."), t("Five languages, 418 keys.")] },
-      { version: "1.1.0", items: [t("First public build with gateway and local models.")] }
-    ];
-    return <section className="view-page">
-      <div className="view-heading">{backButton}<div><h2>{t("Changelog")}</h2><p>{t("What changed in each release.")}</p></div></div>
-      {entries.map((entry) => <div className="card" key={entry.version}>
-        <h3 className="card-title">{entry.version}</h3>
-        <ul className="md-li">{entry.items.map((item, index) => <li key={index}>{item}</li>)}</ul>
-      </div>)}
+    return <section className="page changelog-page">
+      <div className="page-head"><h2>{t("Changelog")}</h2></div>
+      {changelog.length === 0
+        ? <div className="empty-state"><strong>{t("Nothing to show yet")}</strong><span>{t("The release notes ship with the app.")}</span></div>
+        : <div className="timeline">{changelog.map((release) => <article className="timeline-row" key={release.version}>
+            <div className="timeline-meta">
+              <strong>{release.version}</strong>
+              {release.date && <small>{release.date}</small>}
+            </div>
+            <div className="timeline-body">
+              {release.groups.map((group) => <section className="timeline-group" key={group.title}>
+                <h4>{t(group.title)}</h4>
+                {group.items.map((item, index) => <p key={index}>{item}</p>)}
+              </section>)}
+            </div>
+          </article>)}
+        </div>}
     </section>;
   }
 
@@ -2300,7 +2341,6 @@ function App() {
       const data = await window.hymnix.providers.list();
       setProviders(Array.isArray(data.providers) ? data.providers : []);
       setActiveProviderId(String(data.active || ""));
-      setAutoApprove(data.auto_approve_tools === true);
       setProviderError("");
     } catch (reason) { setProviderError(reason instanceof Error ? reason.message : String(reason)); }
   }
@@ -2310,16 +2350,24 @@ function App() {
       const data = await window.hymnix.providers.save(payload);
       setProviders(Array.isArray(data.providers) ? data.providers : []);
       setActiveProviderId(String(data.active || ""));
-      if (typeof data.auto_approve_tools === "boolean") setAutoApprove(data.auto_approve_tools);
       if (data.ok === false) { setProviderError(String(data.detail || data.error || "provider_error")); return false; }
       return true;
     } catch (reason) { setProviderError(reason instanceof Error ? reason.message : String(reason)); return false; }
     finally { setProvidersBusy(false); }
   }
-  async function toggleAutoApprove(next: boolean): Promise<void> {
-    setAutoApprove(next);
-    try { await window.hymnix.config.set({ auto_approve_tools: next }); }
-    catch (reason) { setAutoApprove(!next); setStartupNote(reason instanceof Error ? reason.message : String(reason)); }
+  async function loadToolPolicy(): Promise<void> {
+    try {
+      const data = await window.hymnix.config.get();
+      const value = String((data?.values as Record<string, unknown>)?.tool_policy || "workspace");
+      setToolPolicy(value === "read" || value === "full" ? value : "workspace");
+    } catch { /* gateway not ready yet */ }
+  }
+  async function chooseToolPolicy(next: "read" | "workspace" | "full"): Promise<void> {
+    setPolicyMenu(false);
+    const previous = toolPolicy;
+    setToolPolicy(next);
+    try { await window.hymnix.config.set({ tool_policy: next }); }
+    catch (reason) { setToolPolicy(previous); setStartupNote(reason instanceof Error ? reason.message : String(reason)); }
   }
   function openProviderForm(id?: string): void {
     const existing = id ? providers.find((item) => item.id === id) : undefined;

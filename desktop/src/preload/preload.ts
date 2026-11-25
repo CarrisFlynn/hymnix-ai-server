@@ -15,6 +15,7 @@ const api: DesktopApi & { adminHistory: (adminKey: string, query?: AdminHistoryQ
     setAppearance: (mode: "light" | "dark" | "auto", backgroundColor: string) => ipcRenderer.invoke("window:appearance", { mode, backgroundColor }),
   },
   github: { stars: () => ipcRenderer.invoke("github:stars") },
+  changelog: { get: (): Promise<{ ok: boolean; text: string }> => ipcRenderer.invoke("changelog:get") },
   updates: { check: () => ipcRenderer.invoke("update:check") },
   bootstrap: () => ipcRenderer.invoke("app:bootstrap"),
   log: (message: string) => ipcRenderer.invoke("app:log", message),

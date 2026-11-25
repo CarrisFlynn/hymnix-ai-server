@@ -1,6 +1,21 @@
 export type Lang = "en" | "zh";
 
 export const zh: Record<string, string> = {
+  "Nothing to show yet": "暂无内容",
+  "The release notes ship with the app.": "更新日志随应用一起发布。",
+  "Added": "新增",
+  "Changed": "变更",
+  "Fixed": "修复",
+  "Tooling": "工程",
+  "Security": "安全",
+  "Removed": "移除",
+  "Read only": "仅可查看",
+  "Workspace writes": "工作区内修改",
+  "Full access": "完全权限",
+  "Read files and look things up. Nothing is changed or executed.": "读文件、查信息；不修改任何内容，也不执行命令。",
+  "Read and write inside the workspace. No commands, no network.": "可读写工作区内的文件；不执行命令、不联网。",
+  "Run commands, reach the network and call plugins.": "可执行命令、联网、调用插件。",
+  "Tool policy": "工具权限",
   "Unsorted": "未归类",
   "just now": "刚刚",
   "{n} min": "{n} 分钟",

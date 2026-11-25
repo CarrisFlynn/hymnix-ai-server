@@ -786,6 +786,16 @@ function registerCloudIpc(): void {
     }
     return {...payload, ok: payload.ok, online: payload.online, ready};
   });
+  ipcMain.handle("changelog:get", (event) => {
+    assertSender(event);
+    const candidates = app.isPackaged
+      ? [join(process.resourcesPath, "CHANGELOG.md")]
+      : [join(__dirname, "../../..", "CHANGELOG.md"), join(process.resourcesPath, "CHANGELOG.md")];
+    for (const file of candidates) {
+      try { return { ok: true, text: readFileSync(file, "utf8") }; } catch { /* try the next one */ }
+    }
+    return { ok: false, text: "" };
+  });
   ipcMain.handle("providers:list", async (event) => { assertSender(event); return adminJson("admin/providers"); });
   ipcMain.handle("providers:save", async (event, raw: unknown) => { assertSender(event); return adminJson("admin/providers", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(raw && typeof raw === "object" ? raw : {}) }); });
   ipcMain.handle("config:get", async (event) => { assertSender(event); return adminJson("admin/config", { method: "GET" }); });

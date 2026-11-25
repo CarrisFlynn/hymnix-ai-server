@@ -39,6 +39,10 @@
     ],
     "extraResources": [
       {
+        "from": "../CHANGELOG.md",
+        "to": "CHANGELOG.md"
+      },
+      {
         "from": "../cloudflared.exe",
         "to": "cloudflared.exe"
       },
