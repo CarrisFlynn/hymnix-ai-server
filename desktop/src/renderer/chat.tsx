@@ -118,9 +118,8 @@ export function Bubble({ message, turnIndex, messageIndex, busy = false, generat
   }
   const thinkingSeconds = message.reasoningMs ? Math.max(1, Math.round(message.reasoningMs / 1000)) : null;
   return <article className={(user ? "bubble user" : "bubble assistant") + (generating ? " generating" : "")} data-chat-turn={turnIndex}>
-    {!user && <img className="bubble-avatar brand-avatar" src={brandIcon} alt="" />}
     <div className="bubble-card">
-      {!user && <div className="bubble-meta"><strong>Hymnix Orbit</strong><span>{formatMessageTime(message.at)}</span>{message.tokensPerSecond ? <span className="bubble-rate" data-no-translate>{message.tokensPerSecond.toFixed(1)} tok/s</span> : null}</div>}
+      {!user && (message.tokensPerSecond || message.at) ? <div className="bubble-meta"><span>{formatMessageTime(message.at)}</span>{message.tokensPerSecond ? <span className="bubble-rate" data-no-translate>{message.tokensPerSecond.toFixed(1)} tok/s</span> : null}</div> : null}
       {message.reasoning ? <details className="bubble-think">
         <summary>{thinkingSeconds ? tf("Thought for {seconds} s", { seconds: String(thinkingSeconds) }) : t("Thinking process")} · {message.reasoning.length} {t("chars")}</summary>
         <pre>{message.reasoning}</pre>

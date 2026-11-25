@@ -2,6 +2,14 @@
 
 Only user-visible changes are listed. Internal refactors, test scaffolding and machine-specific paths are intentionally omitted.
 
+### Design pass — neutral surfaces at 14px (2026-11-25)
+
+- All nine presets now share one neutral surface system (near-white / near-black, hairline borders, no tinted pages); the preset only changes the accent colour. Accent is reserved for primary actions, focus, the active tab and the active level badge.
+- Base type is 14px, with 13px controls and 11-12px meta text; the type scale still multiplies by the text-size setting.
+- Rhythm is compact and consistent: 30px rows, 8px inline padding in the rail, 10px panel padding, 1px hairlines; nothing overlaps the composer or the page content any more.
+- The conversation list belongs to the Chat page: on Models, Sharing, Plugins, Settings, Monitor, Terminal, Changelog and Sponsor the list is hidden and the content takes the full width.
+- Page heads are light (17px title, one muted line, actions on the right) so content gets the vertical space.
+
 ## Unreleased — Codex-style shell and a real model picker (2026-11-25)
 
 ### Changed

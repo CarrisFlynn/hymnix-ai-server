@@ -326,6 +326,8 @@ function App() {
   const [providerError, setProviderError] = useState("");
   const [autoApprove, setAutoApprove] = useState(false);
   const [modelPopover, setModelPopover] = useState<"closed" | "root" | "models">("closed");
+  const [sessionSearchOpen, setSessionSearchOpen] = useState(false);
+  const [todayUsage, setTodayUsage] = useState<{ messages: number; tokens: number }>({ messages: 0, tokens: 0 });
   const [modelQuery, setModelQuery] = useState("");
   const [providerForm, setProviderForm] = useState<null | {
     id: string; label: string; kind: string; base_url: string; api_key: string; models: string[];
@@ -721,6 +723,18 @@ function App() {
     void window.hymnix.credentials?.get("adminKey").then((value) => { if (value) setAdminKey(value); }).catch(() => undefined);
   }, []);
   useEffect(() => { void loadProviders(); }, []);
+  // Sidebar footer: what this machine did today, straight from the saved sessions.
+  useEffect(() => {
+    const today = new Date().toDateString();
+    let messages = 0;
+    let tokens = 0;
+    for (const session of savedSessions) {
+      if (new Date(session.updatedAt).toDateString() !== today) continue;
+      messages += session.count || 0;
+      tokens += estimateTokens((session.messages || []).map((item) => item.content).join(" "));
+    }
+    setTodayUsage({ messages, tokens });
+  }, [savedSessions]);
   useEffect(() => { try { localStorage.setItem("hymnix.surface", surface); } catch { /* private mode */ } }, [surface]);
   // The surface sets the default working mode: Orbit is the coding agent.
   useEffect(() => { setComposerMode(surface === "orbit" ? "code" : "chat"); }, [surface]);
@@ -1702,37 +1716,24 @@ function App() {
       </div>
     </div>;
 
+    // Tool runs belong to the conversation, not a separate page: one collapsible
+    // row that stays quiet until there is something to show.
+    const toolCard = (toolCall.status !== "idle" || approvals.length > 0)
+      ? <details className="tool-card">
+          <summary><span className={"trace-dot " + toolCall.status} aria-hidden="true" />{t("Tool activity")}{approvals.length > 0 ? " · " + approvals.length + " " + t("pending approvals") : ""}</summary>
+          <div className="tool-card-body">
+            {toolCall.message ? toolCall.message + "\n" : ""}
+            {approvals.map((approval) => "• " + approval.tool + " · " + approval.risk).join("\n")}
+          </div>
+        </details>
+      : null;
+
     return <section className="chat-page">
-      <div className="chat-head">
-        <div className="chat-head-main">
-          {renamingSession
-            ? <form className="rename-session" onSubmit={(event) => { event.preventDefault(); commitRenameSession(); }}><input autoFocus value={renameDraft} onChange={(event) => setRenameDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setRenamingSession(false); }} aria-label={t("Conversation name")} /><button className="btn primary" type="submit">{t("Save name")}</button></form>
-            : <h1 title={t("Double-click to rename")} onDoubleClick={beginRenameSession}>{sessionName}</h1>}
-          <div className="chat-head-meta">
-            <span className={"status-pill " + (state === "ready" ? "success" : state === "error" ? "danger" : "neutral")}><span className="status-dot" />{t(state === "ready" ? "Ready" : state === "starting" ? "Starting" : state === "error" ? "Error" : "Limited")}</span>
-            <span className="meta-chip">{messages.length} {t("messages")}</span>
-            <span className="meta-chip">~{totalTokens} {t("tokens")}</span>
-            {elapsed && <span className="meta-chip">{elapsed}</span>}
-          </div>
-        </div>
-        <div className="chat-head-actions">
-          <div className="conversation-menu-wrap" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setConversationMenuOpen(false); }}>
-            <button type="button" className="btn ghost icon-button" aria-label={t("Conversation actions")} aria-haspopup="menu" aria-expanded={conversationMenuOpen} onClick={() => setConversationMenuOpen((value) => !value)}>⋯</button>
-            {conversationMenuOpen && <div className="conversation-menu" role="menu">
-              <button type="button" role="menuitem" onClick={beginRenameSession}>{t("Rename conversation")}</button>
-              <button type="button" role="menuitem" onClick={() => { toggleCurrentPin(); setConversationMenuOpen(false); }}>{t(savedSessions.find((item) => item.id === currentSessionId)?.pinned ? "Unpin conversation" : "Pin conversation")}</button>
-              <button type="button" role="menuitem" onClick={() => { exportChat(); setConversationMenuOpen(false); }}>{t("Export chat")}</button>
-              <hr />
-              <button type="button" role="menuitem" className="danger" onClick={() => { clearCurrentConversation(); setConversationMenuOpen(false); }}>{t("Clear conversation")}</button>
-            </div>}
-          </div>
-        </div>
-      </div>
       <nav className="chat-tabs" role="tablist" aria-label={t("Conversation views")}>
         {(["chat", "context", "trace"] as const).map((tab) => <button key={tab} type="button" role="tab" aria-selected={chatTab === tab} className={chatTab === tab ? "active" : ""} onClick={() => setChatTab(tab)}>{t(tab === "chat" ? "Chat" : tab === "context" ? "Context" : "Trace")}</button>)}
       </nav>
       {chatTab === "chat" && <>
-        <ChatViewport messages={messages} followSignal={followSignal} empty={emptyChat} busy={chatBusy} onEditMessage={editMessage} onRegenerateMessage={regenerateMessage} onDeleteMessage={deleteMessageTurn} onBranchMessage={branchFrom} onRetryMessage={retryMessage} />
+        <ChatViewport messages={messages} footer={toolCard} followSignal={followSignal} empty={emptyChat} busy={chatBusy} onEditMessage={editMessage} onRegenerateMessage={regenerateMessage} onDeleteMessage={deleteMessageTurn} onBranchMessage={branchFrom} onRetryMessage={retryMessage} />
         {messages.length > 0 && composer}
       </>}
       {chatTab === "context" && <div className="chat-tab-body">{contextPanel}</div>}
@@ -2541,20 +2542,48 @@ function App() {
     ? (activeProvider?.label || t("Cloud API"))
     : mode === "remote" ? (guestName || t("Remote host")) : t("Local model");
   const modelTitle = source === "cloud" ? (cloudModel || t("No model selected")) : (model || t("No model selected"));
+  const workspaceName = filesRoot ? filesRoot.split(/[\\/]/).filter(Boolean).pop() || t("Workspace") : t(workspace);
+  const titleLabel = chatView ? sessionName : t(active === "Gateway" ? "Sharing" : active);
+  const sessionRows = sessions
+    .slice()
+    .sort((left, right) => Number(!!right.pinned) - Number(!!left.pinned) || new Date(right.at).getTime() - new Date(left.at).getTime())
+    .filter((item) => !historyQuery.trim() || item.name.toLowerCase().includes(historyQuery.trim().toLowerCase()));
 
   return <div className={"app" + (terminalView ? " terminal-mode" : "") + (chatView ? " chat-mode" : "") + (sidebarCollapsed ? " rail-collapsed" : "")} data-lang={lang}>
     <div className="titlebar">
-      <button type="button" className="product-switch" onClick={() => setProductMenuOpen((value) => !value)} aria-expanded={productMenuOpen} aria-haspopup="menu">
-        <img src={brandIcon} alt="" />
-        <strong>{surface === "ai" ? t("Hymnix AI") : t("Hymnix Orbit")}</strong>
-        <Icon name="Chevron" />
-      </button>
-      <span className="titlebar-drag" />
-      <div className="titlebar-actions">
-        {previewOpen && <button type="button" className="preview-close" onClick={() => void closePreview()}>{t("Close preview")}</button>}
-        <button type="button" onClick={() => void window.hymnix.window.control("minimize")} aria-label={t("Minimize")}>–</button>
-        <button type="button" onClick={() => void window.hymnix.window.control("maximize")} aria-label={t("Maximize")}>▢</button>
-        <button type="button" className="close" onClick={requestClose} aria-label={t("Close")}>✕</button>
+      <div className="tb-left">
+        <button type="button" className="tb-icon" onClick={() => setSidebarCollapsed((value) => !value)} aria-label={t(sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar")} title={t(sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar")}>
+          <span aria-hidden="true">{sidebarCollapsed ? "»" : "«"}</span>
+        </button>
+        <button type="button" className="product-switch" onClick={() => setProductMenuOpen((value) => !value)} aria-expanded={productMenuOpen} aria-haspopup="menu">
+          <img src={brandIcon} alt="" />
+          <strong>{surface === "ai" ? t("Hymnix AI") : t("Hymnix Orbit")}</strong>
+          <Icon name="Chevron" />
+        </button>
+      </div>
+      <div className="tb-center">
+        <h1 className="tb-title" title={chatView ? t("Double-click to rename") : titleLabel} onDoubleClick={chatView ? beginRenameSession : undefined}>{titleLabel}</h1>
+        {chatView && <span className={"status-pill " + (state === "ready" ? "success" : state === "error" ? "danger" : "neutral")}><span className="status-dot" />{t(state === "ready" ? "Ready" : state === "starting" ? "Starting" : state === "error" ? "Error" : "Limited")}</span>}
+        {chatView && <span className="tb-meta">{messages.length} {t("messages")}</span>}
+        {chatView && <span className="tb-meta">~{estimateTokens(messages.map((item) => item.content).join(" "))} {t("tokens")}</span>}
+      </div>
+      <div className="tb-right">
+        {chatView && <div className="conversation-menu-wrap" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setConversationMenuOpen(false); }}>
+          <button type="button" className="tb-icon" aria-label={t("Conversation actions")} aria-haspopup="menu" aria-expanded={conversationMenuOpen} onClick={() => setConversationMenuOpen((value) => !value)}>⋯</button>
+          {conversationMenuOpen && <div className="conversation-menu" role="menu">
+            <button type="button" role="menuitem" onClick={beginRenameSession}>{t("Rename conversation")}</button>
+            <button type="button" role="menuitem" onClick={() => { toggleCurrentPin(); setConversationMenuOpen(false); }}>{t(savedSessions.find((item) => item.id === currentSessionId)?.pinned ? "Unpin conversation" : "Pin conversation")}</button>
+            <button type="button" role="menuitem" onClick={() => { exportChat(); setConversationMenuOpen(false); }}>{t("Export chat")}</button>
+            <hr />
+            <button type="button" role="menuitem" className="danger" onClick={() => { clearCurrentConversation(); setConversationMenuOpen(false); }}>{t("Clear conversation")}</button>
+          </div>}
+        </div>}
+        <div className="tb-window">
+          {previewOpen && <button type="button" className="preview-close" onClick={() => void closePreview()}>{t("Close preview")}</button>}
+          <button type="button" onClick={() => void window.hymnix.window.control("minimize")} aria-label={t("Minimize")}>–</button>
+          <button type="button" onClick={() => void window.hymnix.window.control("maximize")} aria-label={t("Maximize")}>▢</button>
+          <button type="button" className="close" onClick={requestClose} aria-label={t("Close")}>✕</button>
+        </div>
       </div>
       {productMenuOpen && <div className="product-menu" role="menu" onMouseLeave={() => setProductMenuOpen(false)}>
         {SURFACES.map((item) => <button key={item.id} type="button" role="menuitemradio" aria-checked={surface === item.id} className={surface === item.id ? "active" : ""} onClick={() => { setSurface(item.id); setProductMenuOpen(false); }}>
@@ -2565,56 +2594,56 @@ function App() {
       </div>}
     </div>
 
-    <nav className="rail" aria-label={t("NAVIGATION")}>
-      <button type="button" className="rail-new" onClick={createSession} title={t("New chat")}>
-        <Icon name="Plus" /><span className="rail-label">{t("New chat")}</span><kbd>Ctrl N</kbd>
+    <aside className="side" aria-label={t("NAVIGATION")}>
+      <button type="button" className="side-new" onClick={createSession} title={t("New chat")}>
+        <Icon name="Plus" /><span className="side-new-label">{t("New chat")}</span><kbd>Ctrl N</kbd>
       </button>
-      <div className="rail-nav">
-        {navGroups.map((group) => <div className="rail-group" key={group.title} role="group" aria-label={t(group.title)}>
-          <span className="rail-section">{t(group.title)}</span>
-          {group.items.map((item) => <button key={item} type="button" className={active === item ? "rail-item active" : "rail-item"} onClick={() => { setActive(item); if (item === "Chat") setChatTab("chat"); }} aria-current={active === item ? "page" : undefined} title={t(item === "Gateway" ? "Sharing" : item)}>
-            <Icon name={item} /><span className="rail-label">{t(item === "Gateway" ? "Sharing" : item)}</span>
-          </button>)}
-        </div>)}
+
+      <nav className="side-list side-nav" aria-label={t("Navigation")}>
+        {navGroups.flatMap((group) => group.items).map((item) => <button key={item} type="button" className={active === item ? "side-row active" : "side-row"} onClick={() => { setActive(item); if (item === "Chat") setChatTab("chat"); }} aria-current={active === item ? "page" : undefined} title={t(item === "Gateway" ? "Sharing" : item)}>
+          <Icon name={item} /><span className="side-row-label">{t(item === "Gateway" ? "Sharing" : item)}</span>
+        </button>)}
+      </nav>
+
+      <div className="side-workspace">
+        {sessionSearchOpen
+          ? <input className="ws-search" autoFocus value={historyQuery} onChange={(event) => setHistoryQuery(event.target.value)} onBlur={() => { if (!historyQuery.trim()) setSessionSearchOpen(false); }} onKeyDown={(event) => { if (event.key === "Escape") { setHistoryQuery(""); setSessionSearchOpen(false); } }} placeholder={t("Search conversations")} aria-label={t("Search conversations")} />
+          : <>
+            <button type="button" className="ws-btn" onClick={() => void chooseWorkspace()} title={filesRoot || t("Choose a workspace to browse files.")}>
+              <Icon name="Projects" /><span className="ws-name">{workspaceName}</span><Icon name="Chevron" />
+            </button>
+            <button type="button" className="ws-icon" onClick={() => setSessionSearchOpen(true)} aria-label={t("Search conversations")} title={t("Search conversations")}><Icon name="Search" /></button>
+            <button type="button" className="ws-icon" onClick={createSession} aria-label={t("New chat")} title={t("New chat")}><Icon name="Plus" /></button>
+          </>}
       </div>
-      <div className="rail-foot">
-        <button type="button" className={active === "Settings" ? "rail-item active" : "rail-item"} onClick={() => setActive("Settings")} aria-current={active === "Settings" ? "page" : undefined} title={t("Settings")}>
-          <Icon name="Settings" /><span className="rail-label">{t("Settings")}</span>
+
+      <div className="side-sessions">
+        {sessionRows.length === 0
+          ? <div className="side-empty">{sessions.length === 0 ? t("No sessions yet") : t("No conversations match your search")}</div>
+          : <>
+            <span className="side-group-label">{filesRoot ? workspaceName : t("Unsorted")} <em>{sessionRows.length}</em></span>
+            {sessionRows.slice(0, 60).map((item) => <button type="button" key={item.id} className={"side-session" + (item.id === currentSessionId && chatView ? " active" : "")} onClick={() => openSession(item.id)} title={(item.name || t("New chat")) + " · " + item.count + " " + t("messages")} aria-current={item.id === currentSessionId ? "true" : undefined}>
+              <span className="side-session-title">{item.name || t("New chat")}</span>
+              {item.pinned && <span className="side-session-pin" aria-hidden="true">✦</span>}
+            </button>)}
+            <button type="button" className="side-all" onClick={() => setActive("History")}>{t("See all")}</button>
+          </>}
+      </div>
+
+      <div className="side-foot">
+        {downloadOccupied && <button type="button" className="side-foot-row" onClick={() => { setActive("Models"); setModelsSection("local"); setModelsTab("Downloads"); }}>
+          <span className="download-ring" style={{ background: "conic-gradient(var(--accent-fill) " + (download?.completed != null && download?.total ? Math.floor(100 * download.completed / download.total) : 0) + "%, var(--sunken) 0)" }}><i /></span>
+          <span className="side-row-label">{download?.model}</span>
+        </button>}
+        <div className="side-usage" title={t("Today")}>{t("Today")} · {todayUsage.messages} {t("messages")} · ~{Math.round(todayUsage.tokens / 100) / 10}k {t("tokens")}</div>
+        <button type="button" className={active === "Settings" ? "side-row active" : "side-row"} onClick={() => setActive("Settings")} aria-current={active === "Settings" ? "page" : undefined} title={t("Settings")}>
+          <Icon name="Settings" /><span className="side-row-label">{t("Settings")}</span>
         </button>
-        <button type="button" className="rail-account" onClick={() => setWelcomeOpen(true)} title={t("Connection") + " · " + t(state)}>
+        <button type="button" className="side-account" onClick={() => setWelcomeOpen(true)} title={t("Connection") + " · " + t(state)}>
           <span className="avatar">{mode === "remote" ? "R" : "L"}</span>
-          <span className="rail-label"><strong>{mode === "local" ? t("Local mode") : t("Remote host")}</strong><small>{t(state)}</small></span>
+          <span className="side-row-label"><strong>{mode === "local" ? t("Local mode") : t("Remote host")}</strong><small>{t(state)}</small></span>
           <span className="dot account-dot" data-state={state} aria-hidden="true" />
         </button>
-        <button type="button" className="rail-collapse" onClick={() => setSidebarCollapsed((value) => !value)} aria-label={t(sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar")}>
-          <span aria-hidden="true">{sidebarCollapsed ? "›" : "‹"}</span>
-        </button>
-      </div>
-    </nav>
-
-    <aside className="sessions" aria-label={t("RECENT")}>
-      <div className="sessions-head">
-        <label className="sessions-search"><Icon name="Search" /><input value={historyQuery} onChange={(event) => setHistoryQuery(event.target.value)} placeholder={t("Search conversations")} aria-label={t("Search conversations")} /></label>
-        <button type="button" className="icon-button" onClick={createSession} aria-label={t("New chat")} data-tip={t("New chat")}><Icon name="Plus" /></button>
-      </div>
-      <div className="sessions-scroll">
-        {sessions.length === 0 ? <div className="sessions-empty">{t("No sessions yet")}</div> : [{ label: "Pinned", items: pinnedSessions }, { label: "Today", items: todaySessions }, { label: "Yesterday", items: yesterdaySessions }, { label: "Earlier", items: olderSessions }].filter((section) => section.items.length > 0).map((section) => {
-          const rows = section.items.filter((item) => !historyQuery.trim() || item.name.toLowerCase().includes(historyQuery.trim().toLowerCase())).slice(0, 40);
-          if (rows.length === 0) return null;
-          return <div className="sessions-group" key={section.label}>
-            <span className="sessions-label">{t(section.label)}</span>
-            {rows.map((item) => <button type="button" key={item.id} className={"session-row" + (item.id === currentSessionId && chatView ? " active" : "")} onClick={() => openSession(item.id)} title={(item.name || t("New chat")) + " · " + item.count + " " + t("messages")} aria-current={item.id === currentSessionId ? "true" : undefined}>
-              <span className="session-row-title">{item.name || t("New chat")}</span>
-              {item.pinned && <span className="session-row-pin" aria-hidden="true">✦</span>}
-            </button>)}
-          </div>;
-        })}
-      </div>
-      <div className="sessions-foot">
-        <button type="button" className="sessions-all" onClick={() => setActive("History")}>{t("See all")}</button>
-        {downloadOccupied && <button type="button" className="download-ring-wrap" onClick={() => { setActive("Models"); setModelsSection("local"); setModelsTab("Downloads"); }} aria-label={t("Model download progress")}>
-          <span className="download-ring" style={{ background: "conic-gradient(var(--accent-fill) " + (download?.completed != null && download?.total ? Math.floor(100 * download.completed / download.total) : 0) + "%, var(--sunken) 0)" }}><i /></span>
-        </button>}
       </div>
     </aside>
 

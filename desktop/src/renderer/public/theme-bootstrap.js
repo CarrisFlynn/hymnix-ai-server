@@ -18,7 +18,7 @@
     const legacyMode = themes[legacy] || "light";
     const theme = saved
       ? (activeMode === "dark" ? saved.darkTheme : saved.lightTheme)
-      : activeMode === "dark" ? (legacyMode === "dark" ? legacy : "graphite-gold") : (legacyMode === "light" ? legacy : "camellia-white");
+      : activeMode === "dark" ? (legacyMode === "dark" ? legacy : "cyan-dark") : (legacyMode === "light" ? legacy : "camellia-white");
     const root = document.documentElement;
     root.dataset.mode = activeMode;
     root.dataset.theme = themes[theme] === activeMode ? theme : activeMode === "dark" ? "graphite-gold" : "camellia-white";

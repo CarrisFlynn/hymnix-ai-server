@@ -5,9 +5,10 @@ import { t, tf } from "./i18n";
 const BOTTOM_GAP = 32;
 const TURN_OFFSET = 16;
 
-export function ChatViewport({ messages, empty, followSignal, busy = false, onEditMessage, onRegenerateMessage, onDeleteMessage, onBranchMessage, onRetryMessage }: {
+export function ChatViewport({ messages, empty, footer, followSignal, busy = false, onEditMessage, onRegenerateMessage, onDeleteMessage, onBranchMessage, onRetryMessage }: {
   messages: readonly ChatMessage[];
   empty: ReactNode;
+  footer?: ReactNode;
   followSignal: number;
   busy?: boolean;
   onEditMessage?: (index: number) => void;
@@ -109,6 +110,7 @@ export function ChatViewport({ messages, empty, followSignal, busy = false, onEd
           <Bubble message={message} messageIndex={index} busy={busy} generating={busy && index === messages.length - 1} onEdit={onEditMessage} onRegenerate={onRegenerateMessage} onDelete={onDeleteMessage} onBranch={onBranchMessage} onRetry={onRetryMessage} turnIndex={message.role === "user" ? index : undefined} />
         </div>;
       })}
+      {footer}
     </section>
     <span className="sr-only" aria-live="polite" role="status">{announcement}</span>
     {turns.length > 0 && <nav className="chat-turn-rail" aria-label={t("Conversation turns")}>

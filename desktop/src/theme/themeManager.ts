@@ -12,20 +12,20 @@ export type ThemeDefinition = {
 export type AppearancePreferences = { mode: AppearanceMode; lightTheme: string; darkTheme: string };
 
 export const THEMES: ThemeDefinition[] = [
-  { id: "camellia-white", mode: "light", label: "Camellia white", swatch: "#E72D48", bg: "#FDF7F7", surface: "#FFFFFF" },
-  { id: "deep-sea-blue", mode: "light", label: "Deep sea blue", swatch: "#122E8A", bg: "#F5EFEA", surface: "#FFFDFB" },
-  { id: "ink-green", mode: "light", label: "Ink green", swatch: "#236050", bg: "#FDFBEC", surface: "#FFFEF7" },
-  { id: "honey-crimson", mode: "light", label: "Honey crimson", swatch: "#9B0A11", bg: "#FFF8EA", surface: "#FFFDF8" },
-  { id: "cyan-dark", mode: "dark", label: "Cyan dark", swatch: "#00DFEA", bg: "#000000", surface: "#0C1314" },
-  { id: "orange-dark", mode: "dark", label: "Orange dark", swatch: "#FF812C", bg: "#000000", surface: "#121110" },
-  { id: "rog-red-black", mode: "dark", label: "ROG red black", swatch: "#C10000", bg: "#000000", surface: "#140B0B" },
-  { id: "neon-black", mode: "dark", label: "Neon black", swatch: "#00FE92", bg: "#000000", surface: "#0B130E" },
-  { id: "graphite-gold", mode: "dark", label: "Graphite gold", swatch: "#D4AF37", bg: "#151C27", surface: "#1F2937" },
+  { id: "camellia-white", mode: "light", label: "Camellia white", swatch: "#E72D48", bg: "#FEF5F6", surface: "#FFFFFF" },
+  { id: "deep-sea-blue", mode: "light", label: "Deep sea blue", swatch: "#122E8A", bg: "#F3F5F9", surface: "#FFFFFF" },
+  { id: "ink-green", mode: "light", label: "Ink green", swatch: "#236050", bg: "#F4F7F6", surface: "#FFFFFF" },
+  { id: "honey-crimson", mode: "light", label: "Honey crimson", swatch: "#9B0A11", bg: "#FAF3F3", surface: "#FFFFFF" },
+  { id: "cyan-dark", mode: "dark", label: "Silver Wing", swatch: "#00DFEA", bg: "#0A1011", surface: "#161F1F" },
+  { id: "orange-dark", mode: "dark", label: "Orange dark", swatch: "#FF812C", bg: "#110E0B", surface: "#201B18" },
+  { id: "rog-red-black", mode: "dark", label: "ROG red black", swatch: "#C10000", bg: "#0F0A0A", surface: "#1E1616" },
+  { id: "neon-black", mode: "dark", label: "Neon black", swatch: "#00FE92", bg: "#0A110E", surface: "#16201C" },
+  { id: "graphite-gold", mode: "dark", label: "Graphite gold", swatch: "#D4AF37", bg: "#100F0B", surface: "#1F1D18" },
 ];
 
 export const THEME_IDS = THEMES.map((theme) => theme.id);
 export const DEFAULT_THEME = "camellia-white";
-export const DEFAULT_DARK_THEME = "graphite-gold";
+export const DEFAULT_DARK_THEME = "cyan-dark";
 const APPEARANCE_KEY = "hymnix.appearance.v2";
 
 export function modeOf(id: string): ThemeMode {

@@ -1,6 +1,10 @@
 export type Lang = "en" | "zh";
 
 export const zh: Record<string, string> = {
+  "Unsorted": "未归类",
+  "Silver Wing": "银翼蓝",
+  "Navigation": "导航",
+  "pending approvals": "个待审批",
   "Add": "添加",
   "Add OpenAI, DeepSeek, Claude or any OpenAI-compatible endpoint.": "可以添加 OpenAI、DeepSeek、Claude，或任何兼容 OpenAI 的地址。",
   "Add a cloud provider": "添加云端供应商",

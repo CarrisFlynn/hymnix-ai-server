@@ -19,7 +19,7 @@ assert.ok(!renderer.includes('"ORBIT · "'), "title bar must not carry the old v
 assert.ok(main.includes('minWidth:800,minHeight:560'), "window must support the planned minimum dimensions");
 assert.ok(main.includes('"window:appearance"') && preload.includes('"window:appearance"'), "native window appearance must follow renderer theme selection");
 for (const view of ["Chat","History","Gateway","Models","Terminal","Monitor","Changelog","Support","Settings"]) assert.ok(renderer.includes(view), `renderer missing view ${view}`);
-for (const token of ['aria-label={t(group.title)}', 't("Message")']) assert.ok(renderer.includes(token), `renderer accessibility/name missing ${token}`);
+for (const token of ['aria-label={t("Navigation")}', 't("Message")', 'className="tb-title"']) assert.ok(renderer.includes(token), `renderer accessibility/name missing ${token}`);
 const chat = read("../src/renderer/chat-navigation.tsx");
 for (const token of ['aria-live="polite"', 'aria-current', 'Conversation turns']) assert.ok(chat.includes(token), `chat navigation missing ${token}`);
 assert.ok(chat.includes("messageDay") && read("../src/renderer/chat.tsx").includes("formatMessageTime"), "chat messages must group by date and display readable times");
