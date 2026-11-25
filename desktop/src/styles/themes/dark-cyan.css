@@ -1,7 +1,7 @@
 :root[data-theme="cyan-dark"] {
   /* Pure-black version: black canvas, one step of grey for the sidebar and cards,
      the cyan accent kept for actions and the active state. */
-  --bg:#000000; --sidebar:#0A0A0A; --surface:#111111; --raised:#171717; --sunken:#050505;
+  --bg:#000000; --sidebar:#121212; --surface:#111111; --raised:#171717; --sunken:#050505;
   --border:#242424; --border-strong:#7A7A7A;
   --text:#EDEDED; --muted:#A0A0A0; --faint:#808080;
   --accent:#00DFEA; --accent-fill:#00DFEA; --accent-fill-base:#00DFEA;

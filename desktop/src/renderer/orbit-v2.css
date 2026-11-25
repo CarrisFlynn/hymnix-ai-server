@@ -1774,3 +1774,33 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 
 /* Reserve the scrollbar gutter so every page's header has the same right edge. */
 .page, .view-page { scrollbar-gutter: stable; }
+
+/* ==========================================================================
+   Window surface: the caption strip and the sidebar are one continuous fill;
+   the content column is a rounded panel laid on top of it, so the divider is a
+   single smooth line with a 16px curve where the two meet.
+   ========================================================================== */
+
+.app { background: var(--sidebar); }
+.titlebar { background: var(--sidebar); border-bottom: 0; }
+.side { border-right: 0; background: transparent; }
+.main {
+  position: relative;
+  margin: 0 0 6px 0;
+  border: 1px solid var(--border);
+  border-right: 0;
+  border-radius: 16px 0 0 16px;
+  background: var(--bg);
+  overflow: hidden;
+}
+/* The panel's own header hairline would double the panel edge. */
+.page-head { margin-inline: -24px; }
+.statusbar { background: transparent; border-top: 0; color: var(--faint); }
+/* Terminal keeps the panel shape too. */
+.terminal-main { border-radius: 16px 0 0 16px; }
+
+/* The chat header already sits on the panel edge; only page heads bleed out. */
+.chat-head.page-head { margin: 0; padding: 0 24px; }
+.chat-head.page-head::before { display: none; }
+/* Keep the panel's top-left curve clear of the title. */
+.chat-head .chat-title { padding-left: 2px; }

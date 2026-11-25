@@ -1,7 +1,7 @@
 :root[data-theme="camellia-white"] {
   /* Pure-white version of the reference design: neutral surfaces, crimson only
      on actions, the active icon and the selected row. */
-  --bg:#FFFFFF; --sidebar:#F7F7F7; --surface:#FFFFFF; --raised:#FFFFFF; --sunken:#F5F5F5;
+  --bg:#FFFFFF; --sidebar:#F1F1F1; --surface:#FFFFFF; --raised:#FFFFFF; --sunken:#F5F5F5;
   --border:#E9E9E9; --border-strong:#8C8C8C;
   --text:#111111; --muted:#5A5A5A; --faint:#6E6E6E;
   --accent:#E72D48; --accent-fill:#D8233F; --accent-fill-base:#D8233F;
