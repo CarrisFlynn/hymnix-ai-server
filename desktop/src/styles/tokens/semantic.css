@@ -2,7 +2,7 @@
    Colour lives in src/styles/themes/. Old names in styles.css stay as the
    compatibility layer until Phase 1 moves components over. */
 :root {
-  --font-ui: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "Inter Local", Inter, "PingFang SC", system-ui, sans-serif;
+  --font-ui: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
   --font-mono: "JetBrains Mono Local", "JetBrains Mono", "Cascadia Mono", Consolas, "Microsoft YaHei UI", monospace;
 
   /* type scale */

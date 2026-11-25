@@ -8,12 +8,14 @@ const api: DesktopApi & { adminHistory: (adminKey: string, query?: AdminHistoryQ
   workspace: {
     choose: (): Promise<WorkspaceRoot | null> => ipcRenderer.invoke("files:choose-root"),
     current: (): Promise<WorkspaceRoot | null> => ipcRenderer.invoke("files:current"),
+    chooseCacheDir: (): Promise<{ selected: boolean; path: string }> => ipcRenderer.invoke("files:choose-cache-dir"),
   },
   window: {
     control: (action: "minimize" | "maximize" | "close" | "hide" | "restart") => ipcRenderer.invoke("window:control", action),
     setAppearance: (mode: "light" | "dark" | "auto", backgroundColor: string) => ipcRenderer.invoke("window:appearance", { mode, backgroundColor }),
   },
   github: { stars: () => ipcRenderer.invoke("github:stars") },
+  updates: { check: () => ipcRenderer.invoke("update:check") },
   bootstrap: () => ipcRenderer.invoke("app:bootstrap"),
   log: (message: string) => ipcRenderer.invoke("app:log", message),
   restartGateway: () => ipcRenderer.invoke("gateway:restart"),

@@ -11,6 +11,8 @@ export type ChatMessage = {
   reasoningMs?: number;
   /** Kept when a stream fails so the partial reply stays on screen. */
   error?: string;
+  /** Set when the user stopped the stream; the bubble keeps what arrived. */
+  stopped?: boolean;
   tokensPerSecond?: number;
 };
 
@@ -124,6 +126,11 @@ export function Bubble({ message, turnIndex, messageIndex, busy = false, generat
         <pre>{message.reasoning}</pre>
       </details> : null}
       <div className="bubble-body">{message.content ? <Markdown text={message.content} /> : message.error ? null : <p className="bubble-thinking">{t("Thinking...")}</p>}</div>
+      {message.stopped && !message.error && <div className="bubble-stopped" role="status">
+        <strong>{t("Stopped")}</strong>
+        <span>{t("This reply was stopped before it finished.")}</span>
+        {onRetry && <button type="button" className="panel-link" onClick={() => onRetry(messageIndex)}>{t("Retry")}</button>}
+      </div>}
       {message.error && <div className="bubble-error" role="alert">
         <span><strong>{t("Connection lost")}</strong>{message.error}</span>
         {onRetry && <button type="button" className="btn" onClick={() => onRetry(messageIndex)}>{t("Retry")}</button>}
@@ -133,7 +140,7 @@ export function Bubble({ message, turnIndex, messageIndex, busy = false, generat
         {user && onEdit && <button type="button" data-tip={t("Edit prompt")} aria-label={t("Edit prompt")} onClick={() => onEdit(messageIndex)}>✎</button>}
         <button type="button" data-tip={t(copied ? "Copied" : "Copy")} aria-label={t(copied ? "Copied" : "Copy message")} onClick={() => void copyMessage()}>{copied ? "✓" : "▢"}</button>
         {!user && onRegenerate && <button type="button" data-tip={t("Regenerate")} aria-label={t("Regenerate response")} disabled={busy} onClick={() => onRegenerate(messageIndex)}>↻</button>}
-        {!user && onBranch && <button type="button" data-tip={t("Branch from here")} aria-label={t("Branch from here")} onClick={() => onBranch(messageIndex)}>⑂</button>}
+        {!user && onBranch && <button type="button" data-tip={t("Branch from here")} aria-label={t("Branch from here")} disabled={busy} onClick={() => onBranch(messageIndex)}>⑂</button>}
         {onDelete && <button type="button" className="danger" data-tip={t("Delete turn")} aria-label={t("Delete turn")} onClick={() => onDelete(messageIndex)}>×</button>}
       </div>}
       {user && message.at && <span className="bubble-time">{formatMessageTime(message.at)}</span>}

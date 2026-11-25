@@ -64,6 +64,11 @@ Hymnix 将 Ollama 兼容模型接入一套完整的桌面工作流：对话、�
 - 聊天记录全量读取、可搜索、可导出；终端轨迹重启后仍在。
 - 明细见 [CHANGELOG.zh-CN.md](CHANGELOG.zh-CN.md) / [CHANGELOG.md](CHANGELOG.md)。
 
+## 1.3.3 桌面版实际包含什么
+
+Electron 桌面端是一个聚焦的工作区，不是功能目录。它只有 **七个页面**：对话、模型、共享与连接、插件、更新日志、赞助，以及给开发者用的监控与终端；设置页承载各类偏好。
+
+只存在于 Python 控制台版本（`server/hymnix_main.py`、`server/hxcore/`）的能力，在桌面端**没有入口**：文件 / 工具 / 审批 / 日志页、OCR 页、Git 加速与 diff 审查页。对应的网关接口仍在（`/api/tools`、`/admin/approvals`、插件、文件 API），缺的是驱动它们的页面。
 ## 功能
 
 ### 本地网关与 OpenAI 兼容接口

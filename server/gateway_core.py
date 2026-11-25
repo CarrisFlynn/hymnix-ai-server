@@ -10,6 +10,7 @@ import base64
 import hashlib
 import hmac
 import http.client
+import ipaddress
 import json
 import secrets
 import os
@@ -17,6 +18,7 @@ import socket
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import traceback
@@ -174,6 +176,84 @@ def _tools_to_text(tools):
 # 运行时设置（由服务端 UI 的「终端」页实时同步）
 RUNTIME = {"share_model": "", "billing_enabled": True, "daily_quota_tokens": 0}
 _IP_USAGE = {}
+
+# Only the desktop shell and loopback pages are allowed to read cross-origin.
+# Everything else gets no CORS header at all, which is what blocks a hostile web
+# page from reading /admin responses through DNS rebinding.
+CORS_ORIGIN_RE = re.compile(r"^(?:app://hymnix|http://(?:localhost|127\.0\.0\.1)(?::\d{1,5})?)$", re.IGNORECASE)
+
+
+def _sync_runtime(cfg):
+    """Mirror config-only quotas into RUNTIME.
+
+    The Tk console used to be the only writer, so a headless gateway started by
+    the desktop app never saw the configured daily quota and never enforced it.
+    """
+    try:
+        RUNTIME["daily_quota_tokens"] = max(0, int(cfg.get("daily_quota_tokens") or 0))
+    except (TypeError, ValueError):
+        RUNTIME["daily_quota_tokens"] = 0
+    RUNTIME["billing_enabled"] = bool(cfg.get("billing_enabled", True))
+    if not str(RUNTIME.get("share_model") or "").strip():
+        RUNTIME["share_model"] = str(cfg.get("default_model") or "").strip()
+    return RUNTIME
+
+
+def _checked_base_url(raw):
+    """Validate a provider base URL before it is stored or fetched.
+
+    Providers legitimately point at loopback (OpenClaw) or a LAN box, so private
+    addresses stay allowed. What must never happen is a link-local address such as
+    the 169.254.169.254 cloud metadata service, which is how an SSRF turns into a
+    credential theft, plus anything that is not plain http(s).
+    """
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    parsed = urllib.parse.urlsplit(text)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise ValueError("invalid_base_url")
+    if parsed.username or parsed.password:
+        raise ValueError("invalid_base_url")
+    host = parsed.hostname.strip().lower()
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    try:
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except OSError:
+        # Unresolvable: nothing to connect to, so no SSRF surface. The probe will
+        # surface the DNS failure to the user.
+        return text
+    for info in infos:
+        address = str(info[4][0]).split("%", 1)[0]
+        try:
+            ip = ipaddress.ip_address(address)
+        except ValueError:
+            raise ValueError("invalid_base_url")
+        if ip.is_link_local or ip.is_unspecified or ip.is_multicast or ip.is_reserved:
+            raise ValueError("blocked_base_url")
+    return text
+
+
+def _write_text_atomic(path, text):
+    """Replace a file through a fsynced sibling temp file.
+
+    A plain open(path, "w") truncates before writing, so an interrupted write
+    leaves the user with half a conversation log or half a source file.
+    """
+    directory = os.path.dirname(os.path.abspath(path)) or "."
+    fd, temp = tempfile.mkstemp(dir=directory, prefix=".hymnix-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp, path)
+    except BaseException:
+        try:
+            os.unlink(temp)
+        except OSError:
+            pass
+        raise
 
 
 def _today_str():
@@ -408,7 +488,7 @@ def _ensure_keys(cfg):
         cfg["host_password"] = secrets.token_urlsafe(9)
         changed = True
     if not str(cfg.get("admin_key") or "").strip():
-        cfg["admin_key"] = "HymnixAdmin-" + secrets.token_hex(6)
+        cfg["admin_key"] = "HymnixAdmin-" + secrets.token_hex(18)
         changed = True
     if changed:
         try:
@@ -427,7 +507,9 @@ def load_config():
                 cfg.update(json.load(f))
         except Exception as e:
             print("配置读取失败，使用默认配置:", e)
-    return _ensure_keys(cfg)
+    cfg = _ensure_keys(cfg)
+    _sync_runtime(cfg)
+    return cfg
 
 
 CFG = load_config()
@@ -1136,12 +1218,40 @@ class Handler(BaseHTTPRequestHandler):
                 return fwd
         return self.client_address[0]
 
+    def _direct_local(self):
+        """True only for a request that reached the loopback socket without a proxy.
+
+        A Cloudflare tunnel also connects from 127.0.0.1, so the socket address
+        alone cannot prove the caller is the desktop app on this machine.
+        cloudflared tags every forwarded request, and those markers disqualify it.
+        """
+        if self.client_address[0] not in ("127.0.0.1", "::1"):
+            return False
+        for header in ("CF-Connecting-IP", "CF-Ray", "CF-Visitor", "X-Forwarded-For", "X-Real-IP"):
+            if (self.headers.get(header) or "").strip():
+                return False
+        return True
+
+    def _cors_origin(self):
+        """Only the desktop shell and loopback pages may read our responses.
+
+        A wildcard here let any web page on the internet read /admin/* through a
+        DNS-rebinding trick, so the header is echoed from a list instead.
+        """
+        origin = (self.headers.get("Origin") or "").strip()
+        if origin and CORS_ORIGIN_RE.match(origin):
+            return origin
+        return ""
+
     def _json(self, code, obj, extra_headers=None):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Access-Control-Allow-Origin", "*")
+        origin = self._cors_origin()
+        if origin:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Headers", "Authorization, X-API-Key, X-Admin-Key, Content-Type")
         self.send_header("Cache-Control", "no-store")
         for k, v in (extra_headers or {}).items():
@@ -1188,6 +1298,11 @@ class Handler(BaseHTTPRequestHandler):
     # ---------- HTTP 动词 ----------
     # ---------- 一体化：主机身份 / 访客登录 / 公网隧道 ----------
     def _connect_verify(self):
+        # Guessing the share password is the cheapest way in, so failed attempts
+        # feed the same ban list the API key uses.
+        client = self._ip()
+        if banned(client):
+            return self._json(429, {"ok": False, "error": "too_many_attempts"})
         body = self._read_body()
         try:
             payload = json.loads(body.decode("utf-8", "ignore") or "{}")
@@ -1201,17 +1316,27 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(403, {"ok": False, "error": "remote_disabled"})
         expected_name = str(CFG.get("host_name") or "").strip()
         expected_password = str(CFG.get("host_password") or "")
-        if name and expected_name and name != expected_name:
-            return self._json(401, {"ok": False, "error": "name_mismatch"})
-        if not hmac.compare_digest(password.encode(), expected_password.encode()):
+        if not expected_password or not hmac.compare_digest(password.encode(), expected_password.encode()):
+            note_auth_failure(client)
+            log_event("connect_fail", ip=client, reason="bad_password")
             return self._json(401, {"ok": False, "error": "bad_password"})
+        if name and expected_name and name != expected_name:
+            note_auth_failure(client)
+            return self._json(401, {"ok": False, "error": "name_mismatch"})
         return self._json(200, {"ok": True, "name": expected_name, "token": API_KEY, "gateway": VERSION})
 
     def _admin_network(self):
+        # The share password used to be returned in plain text to anyone who asked.
+        # Hand it out only to the desktop app on this machine, and never to a
+        # request that came through the public tunnel.
+        password = str(CFG.get("host_password") or "")
+        reveal = "reveal=1" in (self.path or "") and self._direct_local()
         return self._json(200, {
             "ok": True,
             "host_name": CFG.get("host_name") or "",
-            "host_password": CFG.get("host_password") or "",
+            "host_password": password if reveal else "",
+            "host_password_masked": self._mask_key(password),
+            "has_password": bool(password),
             "allow_remote": bool(CFG.get("allow_remote", True)),
             "tunnel": read_tunnel_url(),
             "tunnel_running": TUNNEL_STATE.get("proc") is not None,
@@ -1294,6 +1419,7 @@ class Handler(BaseHTTPRequestHandler):
                     json.dump(CFG, handle, ensure_ascii=False, indent=2)
             except Exception:
                 pass
+            _sync_runtime(CFG)
             append_log("config-%s.jsonl" % _today(), {"t": time.strftime("%Y-%m-%d %H:%M:%S"), "changed": changed})
         return self._json(200, {"ok": True, "changed": changed, "rejected": rejected})
 
@@ -1331,7 +1457,10 @@ class Handler(BaseHTTPRequestHandler):
         if "kind" in payload:
             cloud["kind"] = _cloud_kind(payload.get("kind"))
         if "base_url" in payload:
-            cloud["base_url"] = str(payload.get("base_url") or "").strip()
+            try:
+                cloud["base_url"] = _checked_base_url(payload.get("base_url"))
+            except ValueError as exc:
+                return self._json(400, {"ok": False, "error": str(exc)})
         if "model" in payload:
             cloud["model"] = str(payload.get("model") or "").strip()
         if "agent_id" in payload:
@@ -1365,6 +1494,10 @@ class Handler(BaseHTTPRequestHandler):
         model = str(cloud.get("model") or "")
         if not base:
             return self._json(400, {"ok": False, "error": "base_url_missing"})
+        try:
+            _checked_base_url(base)
+        except ValueError as exc:
+            return self._json(400, {"ok": False, "error": str(exc)})
         url = _cloud_url(base, "/models")
         headers = {"Accept": "application/json"}
         if key:
@@ -1431,9 +1564,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_OPTIONS(self):
         self.send_response(204)
-        self.send_header("Access-Control-Allow-Origin", "*")
+        origin = self._cors_origin()
+        if origin:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Authorization, X-API-Key, X-Admin-Key, Content-Type")
+        self.send_header("Access-Control-Max-Age", "600")
         self.send_header("Content-Length", "0")
         self.end_headers()
 
@@ -1453,6 +1590,15 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
         try:
+            # One gate for the whole admin surface. Every handler below assumes the
+            # caller already proved the admin key, so a newly added route cannot be
+            # published without authentication by forgetting a check.
+            if path.startswith("/admin/") and not self._admin_ok():
+                with LOCK:
+                    STATS["auth_fail"] += 1
+                note_auth_failure(self._ip())
+                log_event("admin_auth_fail", ip=self._ip(), path=path)
+                return self._json(401, {"ok": False, "error": "admin_key_required"})
             if path == "/api/tools":
                 if method != "GET":
                     return self._json(405, {"ok": False, "error": "method_not_allowed"})
@@ -1512,18 +1658,15 @@ class Handler(BaseHTTPRequestHandler):
                 if HEALTH_CACHE["payload"] and _now - HEALTH_CACHE["at"] < 5:
                     return self._json(200, HEALTH_CACHE["payload"])
                 st = upstream_status()
-                return self._json(200, {"ok": True, "gateway": VERSION,
-                                        "tunnel": read_tunnel_url(),
-                                        "ollama": st["online"],
-                                        "models": len(st["models"]),
-                                        "clients_online": sum(1 for c in clients_snapshot() if c["online"]),
-                                        "uptime_s": int(time.time() - START_TS)})
-                HEALTH_CACHE["payload"] = {"ok": True, "gateway": VERSION, "tunnel": read_tunnel_url(),
-                                           "ollama": st["online"], "models": len(st["models"]),
-                                           "clients_online": sum(1 for c in clients_snapshot() if c["online"]),
-                                           "uptime_s": int(time.time() - START_TS)}
-                HEALTH_CACHE["at"] = time.time()
-                return self._json(200, HEALTH_CACHE["payload"])
+                payload = {"ok": True, "gateway": VERSION,
+                           "tunnel": read_tunnel_url(),
+                           "ollama": st["online"],
+                           "models": len(st["models"]),
+                           "clients_online": sum(1 for c in clients_snapshot() if c["online"]),
+                           "uptime_s": int(time.time() - START_TS)}
+                HEALTH_CACHE["payload"] = payload
+                HEALTH_CACHE["at"] = _now
+                return self._json(200, payload)
             if path == "/admin" or path == "/admin/":
                 return self._serve_dashboard()
             if path.startswith("/admin/"):
@@ -1570,12 +1713,15 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(401, {"ok": False, "error": "unauthorized"})
         try:
             raw = self._read_bounded_json(16384)
-            request_id = raw.get("request_id")
+            # Accept both spellings: the desktop app used to send requestId while
+            # this handler only read request_id, which rejected every call.
+            request_id = raw.get("request_id", raw.get("requestId"))
             name = raw.get("tool")
             args = raw.get("args", {})
             if (not isinstance(request_id, str) or not re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", request_id)
                     or not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", name)
-                    or not isinstance(args, dict) or set(raw) - {"request_id", "tool", "args"}):
+                    or not isinstance(args, dict)
+                    or set(raw) - {"request_id", "requestId", "tool", "args"}):
                 return self._json(400, {"ok": False, "error": "invalid_request"})
             if len(json.dumps(args, ensure_ascii=False).encode("utf-8")) > 8192:
                 return self._json(413, {"ok": False, "error": "arguments_too_large"})
@@ -1851,49 +1997,60 @@ class Handler(BaseHTTPRequestHandler):
         files = sorted(_glob.glob(os.path.join(LOG_DIR, "conversations-*.jsonl")))
         if date and date != "all":
             files = [x for x in files if date in os.path.basename(x)]
-        keep_all, removed = [], []
+        removed = []
+        pending = []          # (path, surviving lines) collected before any write
         for fpath in files:
             keep = []
+            changed = False
             try:
-                for line in open(fpath, encoding="utf-8", errors="ignore"):
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        rec = json.loads(line)
-                    except Exception:
-                        keep.append(line)
-                        continue
-                    hit = True
-                    if ip and str(rec.get("ip", "")) != ip:
-                        hit = False
-                    if hit and kw:
-                        blob = json.dumps({k: rec.get(k) for k in ("messages", "reply", "thinking", "tool_calls")},
-                                          ensure_ascii=False).lower()
-                        hit = kw in blob
-                    if hit:
-                        removed.append(rec)
-                    else:
-                        keep.append(line)
+                with open(fpath, encoding="utf-8", errors="ignore") as handle:
+                    for line in handle:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            rec = json.loads(line)
+                        except Exception:
+                            keep.append(line)
+                            continue
+                        hit = True
+                        if ip and str(rec.get("ip", "")) != ip:
+                            hit = False
+                        if hit and kw:
+                            blob = json.dumps({k: rec.get(k) for k in ("messages", "reply", "thinking", "tool_calls")},
+                                              ensure_ascii=False).lower()
+                            hit = kw in blob
+                        if hit:
+                            removed.append(rec)
+                            changed = True
+                        else:
+                            keep.append(line)
             except Exception:
                 continue
-            if apply and len(keep) != sum(1 for _ in open(fpath, encoding="utf-8", errors="ignore")):
-                if removed:
-                    with open(fpath, "w", encoding="utf-8") as fh:
-                        for ln in keep:
-                            fh.write(ln + "\n")
+            if changed:
+                pending.append((fpath, keep))
         result = {"matched": len(removed), "apply": apply}
         if apply and removed:
+            # Archive before touching the originals: if the archive write fails the
+            # records stay in place instead of disappearing with the temp file.
             arch_dir = os.path.join(LOG_DIR, "archive")
             os.makedirs(arch_dir, exist_ok=True)
             arch = os.path.join(arch_dir, "removed-%s.jsonl" % datetime.now().strftime("%Y%m%d-%H%M%S"))
             try:
-                with open(arch, "w", encoding="utf-8") as fh:
-                    for rec in removed:
-                        fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                _write_text_atomic(arch, "".join(json.dumps(rec, ensure_ascii=False) + "\n" for rec in removed))
                 result["archived"] = arch
             except Exception as e:
                 result["archive_error"] = str(e)
+                result["apply"] = False
+                return self._json(200, result)
+            failed = []
+            for fpath, keep in pending:
+                try:
+                    _write_text_atomic(fpath, "".join(line + "\n" for line in keep))
+                except Exception:
+                    failed.append(os.path.basename(fpath))
+            if failed:
+                result["rewrite_error"] = failed
             with LOCK:
                 RECENT.clear()
             load_recent_history()
@@ -2511,7 +2668,14 @@ class Handler(BaseHTTPRequestHandler):
         log_event("server_message", target=target, text=text[:200])
         return self._json(200, {"queued": 1, "target": target})
 
+    # Ollama management verbs are reachable through the authenticated admin
+    # endpoints only; a share guest holds the plain API key and must not be able
+    # to pull or delete models with it.
+    PROXY_BLOCKED_PREFIXES = ("/api/pull", "/api/push", "/api/delete", "/api/create", "/api/copy", "/api/blobs")
+
     def _proxy(self, method, path, query):
+        if any(path == prefix or path.startswith(prefix + "/") for prefix in self.PROXY_BLOCKED_PREFIXES):
+            return self._json(403, {"ok": False, "error": {"code": "admin_only", "message": "model management requires the admin key"}})
         ban = banned(self._ip())
         if ban:
             return self._json(429, {"error": "too many attempts, try again later"})
@@ -2683,7 +2847,10 @@ class Handler(BaseHTTPRequestHandler):
                 elif nonstream_content_type.lower().split(";", 1)[0].strip() == "application/json" and "charset=" not in nonstream_content_type.lower():
                     nonstream_content_type += "; charset=utf-8"
                 self.send_header("Content-Type", nonstream_content_type)
-            self.send_header("Access-Control-Allow-Origin", "*")
+            _origin = self._cors_origin()
+            if _origin:
+                self.send_header("Access-Control-Allow-Origin", _origin)
+                self.send_header("Vary", "Origin")
             self.end_headers()
             self.close_connection = True
             if stream_mode:

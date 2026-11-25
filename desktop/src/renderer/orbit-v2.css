@@ -1,13 +1,10 @@
-@font-face { font-family: "Inter Local"; src: url("./assets/fonts/Inter-400.woff2") format("woff2"); font-weight: 400; font-display: swap; }
-@font-face { font-family: "Inter Local"; src: url("./assets/fonts/Inter-500.woff2") format("woff2"); font-weight: 500; font-display: swap; }
-@font-face { font-family: "Inter Local"; src: url("./assets/fonts/Inter-600.woff2") format("woff2"); font-weight: 600; font-display: swap; }
-@font-face { font-family: "JetBrains Mono Local"; src: url("./assets/fonts/JetBrainsMono-400.woff2") format("woff2"); font-weight: 400; font-display: swap; }
-@font-face { font-family: "JetBrains Mono Local"; src: url("./assets/fonts/JetBrainsMono-600.woff2") format("woff2"); font-weight: 600; font-display: swap; }
+/* Fonts live in src/styles/base.css only: the five rules that used to sit here
+   were byte-identical copies and shipped twice in the bundle. */
 
 :root {
   color-scheme: light;
   font-family: var(--font-ui);
-  font-size: calc(14px * var(--ui-text-scale, 1));
+  font-size: calc(14px * var(--text-scale, 1));
   background: var(--bg); color: var(--text);
   --ink: var(--text); --ink-soft: var(--muted);
   --line: var(--border); --line-strong: var(--border-strong); --surface-sunken: var(--sunken);
@@ -18,7 +15,21 @@
   --sidebar-width: 256px; --inspector-width: 304px;
 }
 :root[data-mode="dark"] { color-scheme: dark; }
-:root[data-soften-accent="true"] { --accent-fill: color-mix(in srgb, var(--accent-fill) 72%, var(--surface)); --accent-hover: color-mix(in srgb, var(--accent-hover) 72%, var(--surface)); }
+/* Soften accent must mix from the theme's declared base colour. Referring to
+   --accent-fill here made the custom property reference itself, which is
+   invalid at computed-value time and wiped the background off every primary
+   button, switch, check mark, badge and progress bar. */
+:root[data-soften-accent="true"] {
+  /* Softening desaturates towards the neutral text colour. Mixing towards the
+     surface instead brightened the fill on light themes and dropped the label
+     under 4.5:1 (camellia reached 3.37:1); a neutral of similar lightness keeps
+     the label readable in all nine themes. */
+  --accent-fill: color-mix(in srgb, var(--accent-fill-base) 78%, var(--text));
+  --accent-hover: color-mix(in srgb, var(--accent-hover-base) 78%, var(--text));
+  --accent-pressed: color-mix(in srgb, var(--accent-pressed, var(--accent-fill-base)) 82%, var(--text));
+}
+/* Fallbacks for tokens a theme may not define. */
+:root { --term-success: var(--success); --term-warning: var(--warning); --term-error: var(--danger); }
 * { box-sizing: border-box; }
 html, body, #root { width: 100%; height: 100%; min-width: 0; min-height: 0; margin: 0; }
 body { overflow: hidden; background: var(--bg); color: var(--text); font-family: var(--font-ui); font-size: var(--fs-body); line-height: var(--lh-latin); }
@@ -50,7 +61,7 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 .titlebar-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 3px; -webkit-app-region: no-drag; }
 .titlebar-actions button { width: 34px; height: 28px; border: 0; border-radius: 6px; background: transparent; color: var(--text); }
 .titlebar-actions button:hover { background: var(--highlight); }
-.titlebar-actions button.close:hover { background: var(--danger); color: white; }
+.titlebar-actions button.close:hover { background: var(--danger); color: var(--surface); }
 
 /* Sidebar
    Vertical rhythm is a five-part flex column: brand, new chat, workspace, the
@@ -292,7 +303,9 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 .btn.primary:hover:not(:disabled) { border-color: var(--accent-hover); background: var(--accent-hover); }
 .btn.ghost { border-color: transparent; background: transparent; color: var(--muted); }
 .btn.danger { color: var(--danger); }
-.btn:disabled { cursor: not-allowed; opacity: .48; }
+/* Disabled controls are exempt from WCAG contrast, but at .48 the label on a
+   light theme almost vanished. .58 keeps it obviously inactive and still legible. */
+.btn:disabled { cursor: not-allowed; opacity: .58; }
 .inspect { grid-column: 3; grid-row: 2; display: flex; min-width: 0; min-height: 0; flex-direction: column; gap: 8px; overflow: auto; padding: 18px 14px; border-left: 1px solid var(--border); background: var(--surface); }
 .inspect.collapsed { display: none; }
 .inspect > label { margin: 6px 0 0; color: var(--faint); font-size: calc(10px * var(--text-scale, 1)); font-weight: 600; letter-spacing: .1em; }
@@ -487,9 +500,12 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 .term-bars b { background: var(--term-prompt) !important; }
 .term-pill { border-color: var(--border) !important; color: var(--term-muted) !important; }
 .term-pill b, .term-text { color: var(--term-fg) !important; }
-.term-tag.sys { color: var(--success) !important; }
+/* Page-level status colours are tuned for the page background; on the dark
+   console they only reached 3.0-3.5:1 in the four light themes. */
+.term-tag.sys { color: var(--term-success) !important; }
 .term-tag.out { color: var(--term-fg) !important; }
-.term-tag.err { color: var(--danger) !important; }
+.term-tag.warn { color: var(--term-warning) !important; }
+.term-tag.err { color: var(--term-error) !important; }
 .term-text.dim { color: var(--term-muted) !important; }
 .term-model select, .term-input input, .term-bridge-connection input { border-color: var(--border-strong) !important; background: var(--term-bg) !important; color: var(--term-fg) !important; }
 .term-btn, .term-exec { border-color: var(--accent-fill) !important; background: var(--accent-fill) !important; color: var(--on-accent) !important; }
@@ -515,22 +531,32 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 .shell[data-lang="zh"] { font-family: var(--font-ui); line-height: var(--lh-cjk); }
 
 @media (max-width: 1279px) {
+  /* Below this width the inspector becomes a drawer. It used to float over the
+     conversation, covering the model picker, the composer and the last replies;
+     the main column now gives the drawer its own space. */
+  .shell.chat-mode { --inspect-drawer: min(340px, 38vw); }
   .shell.chat-mode.inspector-open { grid-template-columns: var(--sidebar-width) minmax(0, 1fr); }
-  .shell.chat-mode .inspect { position: absolute; z-index: 20; top: 42px; right: 0; bottom: 0; display: none; width: min(340px, 38vw); box-shadow: -14px 0 30px rgba(0,0,0,.12); }
+  .shell.chat-mode .inspect { position: absolute; z-index: 20; top: 42px; right: 0; bottom: 0; display: none; width: var(--inspect-drawer); border-left: 1px solid var(--border-strong); box-shadow: -14px 0 30px color-mix(in srgb, var(--text) 14%, transparent); }
   .shell.chat-mode.inspector-open .inspect { display: flex; }
+  .shell.chat-mode.inspector-open .main { margin-right: var(--inspect-drawer); }
   .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 1023px) {
+  /* Icon rail. Hiding the *text nodes* rather than setting font-size: 0 keeps a
+     label from wrapping into a vertical column inside the 42px buttons. */
   .shell { --sidebar-width: 68px; }
   .shell.chat-mode.inspector-open { grid-template-columns: 68px minmax(0, 1fr); }
-  .shell.chat-mode .inspect { width: min(360px, 88vw); }
+  .shell.chat-mode { --inspect-drawer: min(320px, 52vw); }
   .shell .side { align-items: center; padding: 14px 7px; }
-  .shell .brand > span, .shell .brand .collapse-sidebar, .shell .side-label, .shell .side-section-heading, .shell .workspace:not(:hover), .shell .new kbd, .shell .account > span:nth-child(2), .shell .side-status { font-size: 0; }
+  .shell .brand-text, .shell .collapse-sidebar, .shell .side-label, .shell .side-section-heading,
+  .shell .nav-text, .shell .new-text, .shell .new kbd, .shell .workspace-name, .shell .workspace-caret,
+  .shell .account-text, .shell .side-status, .shell .side-recent, .shell .side-text-action { display: none; }
   .shell .session-section { display: none; }
-  .shell .brand { padding: 0; }
-  .shell .new { width: 42px; justify-content: center; padding: 0; font-size: 0; }
-  .shell .new > span { font-size: calc(20px * var(--text-scale, 1)); }
-  .shell .workspace, .shell .nav { width: 42px; min-height: 38px; justify-content: center; padding: 0; font-size: 0; }
+  .shell .brand { justify-content: center; padding: 0; }
+  .shell .new { width: 42px; min-height: 38px; justify-content: center; padding: 0; }
+  .shell .new > .new-plus { font-size: calc(20px * var(--text-scale, 1)); }
+  .shell .workspace { width: 42px; min-height: 38px; justify-content: center; padding: 0; }
+  .shell .nav { width: 42px; min-height: 38px; justify-content: center; padding: 0; }
   .shell .nav svg { width: 17px; height: 17px; }
   .shell .nav-group { align-items: center; }
   .shell .side-footer { width: 100%; align-items: center; }
@@ -540,7 +566,7 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
   .workspace-header { padding-inline: 18px; }
   .model-table-head, .model-table-row { grid-template-columns: minmax(100px, 1fr) 92px auto; gap: 6px; }
 }
-@media (max-width: 680px) {
+@media (max-width: 860px) {
   .titlebar { gap: 7px; padding-left: 9px; }
   .titlebar-brand strong, .titlebar-brand small { display: none; }
   .title-search { width: min(230px, 44vw); }
@@ -618,7 +644,7 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 
 .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 .btn.tonal { border-color: color-mix(in srgb, var(--accent-fill) 26%, var(--border)); background: var(--accent-soft); color: var(--accent-text); font-weight: 500; }
-.btn.tonal:hover:not(:disabled) { border-color: color-mix(in srgb, var(--accent-fill) 44%, var(--border)); background: color-mix(in srgb, var(--accent-soft) 74%, var(--accent-fill)); }
+.btn.tonal:hover:not(:disabled) { border-color: color-mix(in srgb, var(--accent-fill) 44%, var(--border)); background: color-mix(in srgb, var(--accent-soft) 74%, var(--accent-fill)); color: var(--text); }
 .btn.link { min-height: 26px; padding: 3px 2px; border-color: transparent; background: transparent; color: var(--accent-text); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--accent-text) 40%, transparent); text-underline-offset: 3px; }
 .btn.link:hover:not(:disabled) { border-color: transparent; background: transparent; text-decoration-color: currentColor; }
 .btn.icon { width: 36px; min-width: 36px; flex: 0 0 auto; padding: 0; font-size: calc(15px * var(--text-scale, 1)); }
@@ -717,7 +743,7 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 /* -------------------------------------------------------------- error panel */
 
 .error-panel { display: flex; align-items: flex-start; gap: 10px; margin: 10px 0; padding: 11px 12px; border: 1px solid color-mix(in srgb, var(--danger) 34%, var(--border)); border-radius: 8px; background: var(--danger-soft); color: var(--danger); }
-.error-panel-icon { display: grid; width: 18px; height: 18px; flex: 0 0 18px; margin-top: 1px; place-items: center; border-radius: 50%; background: var(--danger); color: var(--on-accent); font-size: calc(12px * var(--text-scale, 1)); font-weight: 700; }
+.error-panel-icon { display: grid; width: 18px; height: 18px; flex: 0 0 18px; margin-top: 1px; place-items: center; border-radius: 50%; background: var(--danger); color: var(--surface); font-size: calc(12px * var(--text-scale, 1)); font-weight: 700; }
 .error-panel-copy { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 2px; }
 .error-panel-copy strong { font-size: calc(13px * var(--text-scale, 1)); font-weight: 600; }
 .error-panel-copy span { color: color-mix(in srgb, var(--danger) 78%, var(--text)); font-size: calc(12px * var(--text-scale, 1)); line-height: 1.5; }
@@ -894,7 +920,7 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 /* ------------------------------------------------- brand signatures & ROG */
 
 .avatar.brand { color: var(--accent-text); }
-.model-chip { padding: 2px 7px; border: 1px solid var(--border); border-radius: 999px; background: var(--sunken); color: var(--muted); font-family: var(--font-mono); font-size: calc(11px * var(--text-scale, 1)); }
+.model-chip { max-width: 100%; padding: 2px 7px; border: 1px solid var(--border); border-radius: 999px; background: var(--sunken); color: var(--muted); font-family: var(--font-mono); font-size: calc(11px * var(--text-scale, 1)); overflow-wrap: anywhere; }
 
 /* ROG Red Black is the only theme with a chamfered, machined corner. */
 :root[data-theme="rog-red-black"] .btn.primary,
@@ -926,7 +952,7 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 :root[data-text-scale="large"] .nav-text,
 :root[data-text-scale="large"] .side-label { overflow-wrap: anywhere; }
 
-@media (max-width: 680px) {
+@media (max-width: 860px) {
   .sharing-summary { flex-direction: column; align-items: stretch; }
   .public-link { flex-basis: auto; }
   .welcome-card.onboarding { width: 96vw; padding: 16px; }
@@ -958,3 +984,25 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 .sidebar-collapsed .download-ring-wrap small { display: none; }
 /* The preview's surface block is white on light themes; a hairline keeps it visible. */
 .theme-preview i:first-child { border: 1px solid color-mix(in srgb, var(--text) 22%, transparent); }
+
+/* ==========================================================================
+   Phase 2 additions: composer context chips, the stopped-reply note, and the
+   settings appearance row. Semantic tokens only.
+   ========================================================================== */
+
+.composer-context { display: inline-flex; min-width: 0; align-items: center; gap: 5px; }
+.composer-chip { display: inline-flex; max-width: 230px; align-items: center; gap: 5px; padding: 3px 9px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg); color: var(--muted); font-size: calc(11px * var(--text-scale, 1)); white-space: nowrap; }
+.composer-chip:hover { border-color: var(--border-strong); background: var(--highlight); color: var(--text); }
+.composer-chip .chip-label { overflow: hidden; text-overflow: ellipsis; }
+.composer-chip.is-empty { border-style: dashed; border-color: var(--warning); color: var(--warning); }
+.composer-dot { width: 6px; height: 6px; flex: 0 0 6px; border-radius: 50%; background: var(--warning); }
+.composer-dot[data-state="ready"] { background: var(--success); }
+.composer-dot[data-state="error"] { background: var(--danger); }
+.composer-dot[data-state="connecting"] { background: var(--muted); }
+
+.bubble-stopped { display: flex; align-items: center; gap: 8px; margin-top: 8px; padding: 6px 10px; border: 1px dashed var(--border-strong); border-radius: 8px; color: var(--muted); font-size: calc(12px * var(--text-scale, 1)); }
+.bubble-stopped strong { color: var(--text); font-weight: 600; }
+
+@media (max-width: 1010px) {
+  .composer-context { display: none; }
+}

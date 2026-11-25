@@ -1,8 +1,7 @@
-/* Phase 0 · bundled fonts. Local files only: a desktop app must not depend on a CDN.
-   The faces are declared now and wired into --font-ui/--font-mono; body text keeps the
-   old stack until Phase 1 flips components over, so Phase 0 stays pixel-identical. */
-@font-face { font-family: "Inter Local"; font-weight: 400; font-style: normal; font-display: swap; src: url("../renderer/assets/fonts/Inter-400.woff2") format("woff2"); }
-@font-face { font-family: "Inter Local"; font-weight: 500; font-style: normal; font-display: swap; src: url("../renderer/assets/fonts/Inter-500.woff2") format("woff2"); }
-@font-face { font-family: "Inter Local"; font-weight: 600; font-style: normal; font-display: swap; src: url("../renderer/assets/fonts/Inter-600.woff2") format("woff2"); }
-@font-face { font-family: "JetBrains Mono Local"; font-weight: 400; font-style: normal; font-display: swap; src: url("../renderer/assets/fonts/JetBrainsMono-400.woff2") format("woff2"); }
-@font-face { font-family: "JetBrains Mono Local"; font-weight: 600; font-style: normal; font-display: swap; src: url("../renderer/assets/fonts/JetBrainsMono-600.woff2") format("woff2"); }
+/* Fonts. The UI deliberately uses the Windows text face (1.3.3 changelog): Segoe UI
+   Variable Text with Microsoft YaHei UI for Chinese. Inter used to be bundled for
+   parity with the design plan, but the 500 and 600 files were byte-identical copies
+   of the 400 file, and the family was never reachable in the stack anyway, so it was
+   240 KB of dead payload. Only the mono face is bundled now: JetBrains Mono has no
+   Windows default and it is first in --font-mono, so it really is used. */
+@font-face { font-family: "JetBrains Mono Local"; font-weight: 400 700; font-style: normal; font-display: swap; src: url("../renderer/assets/fonts/JetBrainsMono-400.woff2") format("woff2"); }

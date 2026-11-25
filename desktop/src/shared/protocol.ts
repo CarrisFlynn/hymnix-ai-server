@@ -320,6 +320,8 @@ export type FileReadResponse = {
 export type WorkspaceApi = {
   choose: () => Promise<WorkspaceRoot | null>;
   current: () => Promise<WorkspaceRoot | null>;
+  /** Pick a folder for the download cache without touching the workspace root. */
+  chooseCacheDir: () => Promise<{ selected: boolean; path: string }>;
 };
 
 export type FilesApi = {
@@ -568,6 +570,7 @@ export type DesktopApi = {
   system: SystemApi;
   credentials: CredentialsApi;
   github: { stars: () => Promise<{ ok: boolean; stars: number | null }> };
+  updates: { check: () => Promise<{ ok: boolean; current?: string; version?: string; url?: string; newer?: boolean; error?: string }> };
   cloud: CloudApi;
   provider: ProviderApi;
   config: ConfigApi;

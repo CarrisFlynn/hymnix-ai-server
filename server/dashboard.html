@@ -103,8 +103,11 @@
 
 <script>
 var $ = function(s){ return document.querySelector(s); };
-var KEY = new URLSearchParams(location.search).get('key') || localStorage.getItem('hymnix_admin_key') || '';
-if (KEY) { localStorage.setItem('hymnix_admin_key', KEY); }
+// The admin key stays in this page's memory only. It used to be written to
+// localStorage, where any injected script and any later visitor of this origin
+// could read it back; open the dashboard with ?key= to authenticate.
+var KEY = new URLSearchParams(location.search).get('key') || '';
+try { localStorage.removeItem('hymnix_admin_key'); } catch (e) { /* storage disabled */ }
 var OPEN = new Set();
 var LAST = [];
 function ESC(s){

@@ -1,7 +1,7 @@
 /* Hymnix Orbit design system: one scale, one grid, explicit borders. */
 :root {
   color-scheme: light;
-  font-family: "Inter", "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif;
+  font-family: var(--font-ui);
   color: var(--ink);
   background: var(--surface-sunken);
   /* Colour tokens live in src/styles/themes/*.css (Phase 1). */

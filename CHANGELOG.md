@@ -2,6 +2,59 @@
 
 Only user-visible changes are listed. Internal refactors, test scaffolding and machine-specific paths are intentionally omitted.
 
+## Unreleased — 1.3.3 patch round (2026-11-25)
+
+A hardening and repair pass over the 1.3.3 shell: the security chain in the gateway, the interaction bugs the Claude-style layout introduced, the contrast and theme defects the design gates missed, and the first visible layout work of the 2.0 plan.
+
+### Security
+
+- Every `/admin/*` route now authenticates before dispatch, so no handler can be published without the admin key.
+- `/admin/network` no longer returns the share password in plain text; only a direct loopback caller that already proved the admin key can reveal it, and requests arriving through the public tunnel never can.
+- CORS is an allowlist (`app://hymnix`, loopback pages) instead of `*`, which closes the DNS-rebinding read path.
+- Share-password guessing now feeds the same ban list as API keys, and the default admin key is 144 bits instead of 48.
+- Guest API keys can no longer reach model management (`/api/pull`, `/api/delete`, `/api/create`, `/api/copy`, `/api/blobs`).
+- Cloud provider base URLs are validated: `http(s)` only, and link-local metadata addresses are rejected.
+- The terminal no longer resolves the shell through `PATH` (`shell: true` removed), only runs inside the selected workspace, and kills the whole process tree on cancel and on quit.
+- The dashboard keeps the admin key in page memory instead of `localStorage`.
+
+### Fixed
+
+- Unloading the model that is producing a reply no longer loops forever: the confirmation path bypasses the busy guard instead of re-opening the dialog.
+- Branching from a reply stops the running stream, so tokens can no longer be appended to the new conversation.
+- "Choose cache folder" uses its own picker and no longer repoints the workspace root, the file browser or the terminal.
+- The tunnel Restart button really restarts; the main process used to map everything except "stop" to "start".
+- Tool calls and the approval list speak the same field names as the gateway; the approval list tolerates the gateway's snake_case.
+- `/health` actually fills its five-second cache; the assignment used to sit after an unconditional return.
+- Conversation cleanup archives first and truncates second, and both writes are atomic.
+- Diff application writes through a temp file and `os.replace`, so an interrupted write cannot truncate a source file.
+- Daily quota set in the config now reaches the headless gateway, so the 429 limit works in the desktop build.
+- Plugins: a dunder-attribute block stops the `__subclasses__` escape, and a trace-hook deadline actually interrupts runaway plugin code instead of merely abandoning the wait.
+
+### Appearance and layout
+
+- Soften accent no longer references its own custom property (which wiped the background off every primary button, switch, badge and progress bar); it now desaturates towards the theme's text colour and stays above 4.5:1.
+- First launch no longer flashes white: the theme bootstrap is a blocking classic script, and the window is created with the last resolved background colour.
+- Auto appearance is reachable again from Settings (Light / Dark / Auto), and choosing a theme of the other mode still wins explicitly.
+- Light / Dark / Auto, text size, density and reduce-motion now apply before the first paint, so the layout no longer reflows on boot.
+- The close-button hover, the terminal SYS/WRN/ERR tags, the tonal button hover and the error-panel icon meet WCAG AA in all nine themes.
+- The chat inspector becomes a drawer that reserves its own width below 1280 px instead of covering the composer and the last replies.
+- Below 1023 px the sidebar is a clean icon rail: labels are removed instead of wrapping into vertical columns.
+- The composer shows the current model and reasoning effort as chips, so neither lives only in the inspector.
+- A stopped reply keeps what arrived and shows "Stopped" with Retry.
+- The Windows text face is used throughout; the duplicated, unreachable Inter and duplicate mono weights (240 KB of dead payload) are gone.
+- Two unreachable 680 px media queries were retargeted to the reachable 860 px band.
+
+### Added
+
+- A real in-app update check (Settings → About) that reads the latest GitHub release and compares versions.
+- Guests can disconnect and return to local mode from Sharing & connections.
+
+### Tooling
+
+- The contrast gate now checks 31 pairs per theme, including the console tags, the close-button hover, the tonal hover and pressed states, and parses `color-mix()` with real sRGB interpolation.
+- The token gate also rejects named colours (`white`, `black`), which is how a hard-coded close-button label slipped through.
+- Visual baselines regenerated for all nine themes.
+
 ## 1.3.3 — 2026-11-24
 
 ### Added

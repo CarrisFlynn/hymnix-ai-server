@@ -82,12 +82,17 @@ The 1.3.0 release is not a skin change. The whole delivery model was rebuilt:
 
 ## What's new in 1.2.0
 
-- A full local AI workbench: 17 pages covering chat, terminal, monitoring, cloud endpoints, plugins, tools, crash reports, history, sessions, files, diffs, approvals, usage, OCR and git.
+- A full local AI workbench: chat, terminal, monitoring, cloud endpoints, plugins, history, sessions, tools, files, diffs, approvals, usage, OCR and git. The desktop 1.3.3 shell exposes the first eight of those; the rest live in the console build.
 - Plugin kernel with manifests, permission allowlists and lifecycle controls; built-in tools plus MCP (stdio/HTTP) with approval gates.
 - Multi-session history, context compression, file tree and search, hunk-level diff apply and rollback.
 - Per-request usage and cost visibility, cloud hub, git acceleration, and a hardened one-click update path.
 - English-first interface with Chinese, French, Russian and Spanish; full high-DPI rendering.
 
+## What the 1.3.3 desktop build actually ships
+
+The Electron app is a focused workspace, not a catalogue of pages. It ships **seven pages**: Chat, Models, Sharing & connections, Plugins, Changelog and Sponsor, plus Monitor and Terminal for developers; Settings is the shell for preferences.
+
+Capabilities that exist only in the Python console build (`server/hymnix_main.py`, `server/hxcore/`) are **not reachable from the desktop UI**: the Files/Tools/Approvals/Logs pages, the OCR page, the Git proxy and the diff review pages. The gateway side is still there (`/api/tools`, `/admin/approvals`, plugins, the files API); what is missing is a page to drive them.
 ## Features
 
 ### Local gateway and OpenAI-compatible API

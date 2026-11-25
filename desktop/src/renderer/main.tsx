@@ -20,7 +20,7 @@ import { estimateTokens, parseSlashCommand, classifyConnectError, downloadBytes 
 declare global { interface Window { hymnix: DesktopApi } }
 
 type Message = ChatMessage;
-type Entry = { time: string; tag: "sys" | "out" | "err"; text: string };
+type Entry = { time: string; tag: "sys" | "out" | "err" | "warn"; text: string };
 type LocalChatSession = { id: string; name: string; createdAt: string; updatedAt: string; count: number; model: string; draft: string; messages: Message[]; pinned: boolean };
 type ModelInfo = { name: string; loaded?: boolean };
 type ToolInfo = ToolDescriptor;
@@ -278,6 +278,7 @@ function App() {
   const [qrOpen, setQrOpen] = useState(false);
   const [savedHosts, setSavedHosts] = useState<SavedHost[]>(readSavedHosts);
   const [shareTest, setShareTest] = useState<{ state: "idle" | "testing" | "ok" | "fail"; message: string; category?: string }>({ state: "idle", message: "" });
+  const [updateState, setUpdateState] = useState<{ status: "idle" | "checking" | "current" | "available" | "error"; detail: string; url: string }>({ status: "idle", detail: "", url: "" });
   const [savedFlash, setSavedFlash] = useState(false);
   const transport = useRef<{ startedAt: number; chars: number; reasoningStartedAt: number | null; reasoningMs: number }>({ startedAt: 0, chars: 0, reasoningStartedAt: null, reasoningMs: 0 });
   const composerRef = useRef<HTMLTextAreaElement>(null);
@@ -296,6 +297,7 @@ function App() {
   const [tunnelUrl, setTunnelUrl] = useState("");
   const [tunnelState, setTunnelState] = useState("off");
   const [tunnelLog, setTunnelLog] = useState<string[]>([]);
+  const tunnelLogRef = useRef<string[]>([]);
   const [guestName, setGuestName] = useState("");
   const [guestPassword, setGuestPassword] = useState("");
   const [netBusy, setNetBusy] = useState(false);
@@ -713,11 +715,21 @@ function App() {
       if (mod && event.shiftKey && key === "c") { event.preventDefault(); void copyLastReply(); return; }
       if (mod && event.shiftKey && key === "e") { event.preventDefault(); exportChat(); return; }
       if (mod && /^[1-5]$/.test(key)) { event.preventDefault(); setActive(["Chat", "Models", "Gateway", "Monitor", "Terminal"][Number(key) - 1]); return; }
-      if (event.key === "Escape" && requestRef.current) cancel();
+      if (event.key === "Escape") {
+        // One Escape is one layer. The shortcut sheet promises "close or stop",
+        // but only three dialogs ever listened.
+        if (qrOpen) { event.preventDefault(); setQrOpen(false); return; }
+        if (conversationMenuOpen) { event.preventDefault(); setConversationMenuOpen(false); return; }
+        if (renamingSession) { event.preventDefault(); setRenamingSession(false); return; }
+        if (previewOpen) { event.preventDefault(); void closePreview(); return; }
+        if (stopShareConfirm) { event.preventDefault(); setStopShareConfirm(false); return; }
+        if (inspectorOpen && active === "Chat") { event.preventDefault(); setInspectorOpen(false); return; }
+        if (requestRef.current) { event.preventDefault(); cancel(); return; }
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [active, clearAllConfirm, modelDeleteTarget, pluginDeleteTarget]);
+  }, [active, clearAllConfirm, modelDeleteTarget, pluginDeleteTarget, qrOpen, conversationMenuOpen, renamingSession, previewOpen, stopShareConfirm, inspectorOpen]);
   useEffect(() => {
     if (!messages.length && !draft.trim() && !savedSessions.some((item) => item.id === currentSessionId)) return;
     const timer = window.setTimeout(() => {
@@ -969,6 +981,9 @@ function App() {
     void send(messages[userIndex].content, messages.slice(0, userIndex));
   }
   function branchFrom(index: number): void {
+    // Branching replaces the conversation, so the previous stream must stop:
+    // its deltas only carry a request id and would append to the new session.
+    cancel();
     persistCurrentSession();
     const branch = messages.slice(0, index + 1);
     const now = new Date().toISOString();
@@ -980,8 +995,21 @@ function App() {
     setToast({ message: t("Branched into a new conversation") });
     window.setTimeout(() => setToast(null), 2400);
   }
-  function cancel() { if (requestRef.current) { window.hymnix.gateway.cancelChat(requestRef.current); requestRef.current = null; setChatBusy(false); } }
+  function cancel() {
+    if (!requestRef.current) return;
+    window.hymnix.gateway.cancelChat(requestRef.current);
+    requestRef.current = null;
+    setChatBusy(false);
+    // Leave a visible marker: a stopped reply used to look like a truncated one
+    // with no way to tell it apart from a finished answer.
+    setMessages((current) => {
+      const last = current[current.length - 1];
+      if (!last || last.role !== "assistant" || last.error) return current;
+      return current.map((item, index) => index === current.length - 1 ? { ...item, stopped: item.stopped || !item.content ? true : item.stopped, tokensPerSecond: undefined } : item);
+    });
+  }
   function editMessage(index: number): void {
+    if (requestRef.current) return;
     const message = messages[index];
     if (!message || message.role !== "user") return;
     setEditingMessageIndex(index); setDraft(message.content); window.setTimeout(() => composerRef.current?.focus(), 0);
@@ -994,6 +1022,7 @@ function App() {
     void send(messages[userIndex].content, messages.slice(0, userIndex));
   }
   function deleteMessageTurn(index: number): void {
+    if (requestRef.current) return;
     const previous = messages;
     let start = index;
     while (start > 0 && messages[start].role !== "user") start--;
@@ -1016,9 +1045,11 @@ function App() {
   }
   useEffect(() => { resizeComposer(); }, [draft, active]);
 
-  async function modelAction(action: "start" | "stop" | "delete", name: string) {
+  async function modelAction(action: "start" | "stop" | "delete", name: string, force = false) {
     // Unloading the model that is producing the current reply is destructive; ask first.
-    if (action === "stop" && chatBusy && model === name) { setUnloadTarget(name); return; }
+    // The confirmation path passes force, because cancel() only schedules a state
+    // update: reading chatBusy again in the same tick re-opened the dialog forever.
+    if (!force && action === "stop" && chatBusy && model === name) { setUnloadTarget(name); return; }
     setModelBusy(name); setModelNote("");
     try { if (action === "start") await window.hymnix.models.start(name); if (action === "stop") await window.hymnix.models.stop(name); if (action === "delete") await window.hymnix.models.remove(name); await loadModels(); }
     catch (reason) { setModelNote(reason instanceof Error ? reason.message : String(reason)); }
@@ -1029,7 +1060,7 @@ function App() {
     if (!name) return;
     setUnloadTarget(null);
     cancel();
-    await modelAction("stop", name);
+    await modelAction("stop", name, true);
   }
   async function pullModelByName(name: string, resume = false): Promise<"complete" | "paused" | "cancelled" | "failed" | "busy" | "remote"> {
     if (remoteActive()) return "remote";
@@ -1193,7 +1224,7 @@ function App() {
         termOut("sys", tf("Local reply bridge is on. Pending replies: {count}", { count: String(result.pending ?? 0) }));
       } else if (action === "inbox") {
         if (result.replies?.length) setBridgeReplies(result.replies);
-        else termOut("sys", t("No new bridge replies."));
+        else { setBridgeReplies([]); termOut("sys", t("No new bridge replies.")); }
       }
     } catch (reason) {
       termOut("err", reason instanceof Error ? reason.message : String(reason));
@@ -1463,6 +1494,15 @@ function App() {
               <button type="button" className={composerMode === "chat" ? "active" : ""} aria-pressed={composerMode === "chat"} onClick={() => setComposerMode("chat")}>{t("Chat")}</button>
               <button type="button" className={composerMode === "code" ? "active" : ""} aria-pressed={composerMode === "code"} onClick={() => setComposerMode("code")}>{t("Code")}</button>
             </div>
+              <span className="composer-context">
+                <button type="button" className={"composer-chip" + (source === "cloud" ? (cloudModel ? "" : " is-empty") : (model ? "" : " is-empty"))} onClick={() => setInspectorOpen(true)} title={t("Chat settings")} aria-label={t("Chat settings")}>
+                  <span className="composer-dot" data-state={state === "ready" ? "ready" : state === "error" ? "error" : "connecting"} aria-hidden="true" />
+                  <span className="chip-label">{source === "cloud" ? (cloudModel || t("Choose a model")) : (model || t("Choose a model"))}</span>
+                </button>
+                <button type="button" className="composer-chip" onClick={() => setInspectorOpen(true)} title={t("Reasoning")} aria-label={t("Reasoning")}>
+                  <span className="chip-label">{t("Reasoning")} · {t(effort === "low" ? "Low" : effort === "high" ? "High" : "Medium")}</span>
+                </button>
+              </span>
               <span className="composer-hint">{t(enterSwaps ? "Shift+Enter to send · Enter for new line" : "Enter to send · Shift+Enter for new line")}</span>
             </div>
             <div>
@@ -1535,7 +1575,10 @@ function App() {
   }
   function renderTerminal() {
     const hints = [t("↑ history"), "Tab " + t("complete"), t("scroll to inspect")].join(" · ");
-    const visibleTermEntries = termEntries.filter((item) => (terminalFilter === "All" || (terminalFilter === "Error" ? item.tag === "err" : terminalFilter === "Info" ? item.tag !== "err" : item.tag === "sys")) && (!terminalSearch.trim() || item.text.toLowerCase().includes(terminalSearch.trim().toLowerCase())));
+    // System rows that carry a warning are promoted to their own level, otherwise
+    // the Warn filter had nothing to match and showed system chatter instead.
+    const levelOf = (item: Entry): Entry["tag"] => item.tag === "err" ? "err" : item.tag === "warn" ? "warn" : item.tag === "sys" && /warn|警告|deprecat/i.test(item.text) ? "warn" : item.tag;
+    const visibleTermEntries = termEntries.filter((item) => (terminalFilter === "All" || levelOf(item) === (terminalFilter === "Info" ? "out" : terminalFilter === "Warn" ? "warn" : terminalFilter === "Error" ? "err" : "sys")) && (!terminalSearch.trim() || item.text.toLowerCase().includes(terminalSearch.trim().toLowerCase())));
     return <section className="term-shell">
       <div className="term-head"><span className="term-title">HYMNIX ORBIT <i>//</i> TERMINAL</span><span className="term-clock">{stamp()}<i className="term-bars"><b /><b /><b /><b /></i></span></div>
       <div className="term-status">
@@ -1565,7 +1608,7 @@ function App() {
       <div className="term-logbar"><span className="term-log-title">SYS.LOG <small>{visibleTermEntries.length} {t("entries")}</small></span><div className="term-logfilters">{["All", "Info", "Warn", "Error"].map((filter) => <button className={terminalFilter === filter ? "active" : ""} key={filter} onClick={() => setTerminalFilter(filter)}>{t(filter)}</button>)}</div><input ref={terminalSearchRef} className="term-search" type="search" value={terminalSearch} onChange={(event) => setTerminalSearch(event.target.value)} placeholder={tf("Search logs · {shortcut}", { shortcut: "Ctrl+F" })} aria-label={t("Search logs")} /><span className="term-logactions"><button className="term-link" onClick={() => void navigator.clipboard?.writeText(visibleTermEntries.map((item) => item.time + "  " + item.tag.toUpperCase() + "  " + item.text).join("\n"))}>{t("Copy")}</button><button className="term-link" onClick={() => { setTermEntries([]); setBridgeReplies([]); }}>{t("Clear")}</button></span></div>
       <div className="term-body">
         {visibleTermEntries.length === 0 ? <div className="term-line"><span className="term-time">--:--:--.---</span><span className="term-tag sys">SYS</span><span className="term-text dim">{termEntries.length ? t("No entries match these filters") : t("No output yet")}</span></div>
-          : visibleTermEntries.map((item, index) => <div className="term-line" key={index}><span className="term-time">{item.time}</span><span className={"term-tag " + item.tag}>{item.tag.toUpperCase()}</span><span className="term-text">{item.text}</span></div>)}
+          : visibleTermEntries.map((item, index) => { const level = levelOf(item); return <div className="term-line" key={index}><span className="term-time">{item.time}</span><span className={"term-tag " + level}>{level.toUpperCase()}</span><span className="term-text">{item.text}</span></div>; })}
         {bridgeReplies.length > 0 && <section className="term-bridge-replies" aria-label={t("External replies")}>
           {bridgeReplies.map((reply, index) => <div key={index} className="term-line">
             <span className="term-time">{new Date(reply.receivedAt).toLocaleTimeString()}</span>
@@ -1655,6 +1698,14 @@ function App() {
         {shareTest.state === "ok" && <p className="panel-note success-text" role="status">✓ {shareTest.message}</p>}
         <div className="favourite-row"><button className="btn tonal" onClick={rememberHost} disabled={!serverBase.trim()}>{t("Save to favourites")}</button>{savedHosts.length > 0 && <span className="hint">{savedHosts.length} {t("saved hosts")}</span>}</div>
         {savedHosts.length > 0 && <div className="host-list">{savedHosts.map((host) => <div className="host-row" key={host.url}><button className="panel-link" onClick={() => { setServerBase(host.url); setGuestName(host.name); }}><strong>{host.name}</strong><small>{host.url}</small></button><button className="btn ghost" onClick={() => forgetHost(host.url)}>{t("Remove")}</button></div>)}</div>}
+        <div className="setting-row">
+          <label>{t("This computer")}<span className="hint">{mode === "remote" ? tf("Chats run on {host}.", { host: serverBase || t("the friend's computer") }) : t("Chats run on this computer.")}</span></label>
+          <div className="controls">
+            {mode === "remote"
+              ? <button type="button" className="btn danger" onClick={disconnectGuest}>{t("Disconnect and use this computer")}</button>
+              : <button type="button" className="btn" disabled>{t("Chats run on this computer.")}</button>}
+          </div>
+        </div>
         <p className="subtitle">{mode === "remote" ? t("Connected: chats run on the friend's hardware.") : t("Not connected. Chats run locally.")}</p>
       </div>}
 
@@ -1666,7 +1717,7 @@ function App() {
         <div className="setting-row"><label>{t("Server address")}</label><div className="controls"><input value={cloudBase} onChange={(event) => setCloudBase(event.target.value)} placeholder={providerPreset(providerKind).base} /></div></div>
         <div className="setting-row"><label>{t("Model")}</label><div className="controls"><input value={cloudModel} onChange={(event) => setCloudModel(event.target.value)} placeholder={providerPreset(providerKind).model} /><button className="btn" onClick={() => void fetchProviderModels()} disabled={providerBusy}>{t("Fetch models")}</button></div></div>
         {providerKind === "openclaw" && <div className="setting-row"><label>{t("Agent")}<span className="hint">{t("gateway agent id, main by default")}</span></label><div className="controls"><input value={agentId} onChange={(event) => setAgentId(event.target.value)} placeholder="main" /></div></div>}
-        {providerKind === "anthropic" && <div className="setting-row"><label>{t("Max output tokens")}<span className="hint">{t("Anthropic requires a ceiling for every turn.")}</span></label><div className="controls"><input type="number" min={256} max={64000} step={256} value={providerMaxTokens || 8192} onChange={(event) => setProviderMaxTokens(Number(event.target.value) || 0)} /></div></div>}
+        {providerKind === "anthropic" && <div className="setting-row"><label>{t("Max output tokens")}<span className="hint">{t("Anthropic requires a ceiling for every turn.")}</span></label><div className="controls"><input type="number" min={256} max={64000} step={256} value={providerMaxTokens || ""} placeholder="8192" onChange={(event) => setProviderMaxTokens(Math.max(0, Math.floor(Number(event.target.value) || 0)))} /></div></div>}
         {providerModels.length > 0 && <div className="chip-row">{providerModels.slice(0, 24).map((name) => <button className={"chip " + (cloudModel === name ? "active" : "")} key={name} onClick={() => setCloudModel(name)}>{name}</button>)}</div>}
         <div className="setting-row"><label>{t("API key")}</label><div className="controls"><input type="password" value={cloudKey} onChange={(event) => setCloudKey(event.target.value)} placeholder={cloudMasked || t(providerPreset(providerKind).keyHint)} /><button className="btn" onClick={() => void saveCloud()}>{t("Save")}</button><button className="btn" onClick={() => void testCloud()} disabled={providerBusy}>{providerBusy ? t("Testing...") : t("Test")}</button></div></div>
         <p className="hint">{t("Keys are stored in the Windows credential vault when the system supports it.")}</p>
@@ -1864,8 +1915,12 @@ function App() {
     window.setTimeout(() => setSavedFlash(false), 1600);
   }
   async function chooseCacheDir() {
-    try { const root: any = await window.hymnix.workspace.choose(); if (root?.path) await setSetting("cacheDir", root.path); }
-    catch { /* cancelled */ }
+    // Uses its own picker: the workspace picker also repointed the file browser
+    // root and the terminal working directory at the cache folder.
+    try {
+      const picked = await window.hymnix.workspace.chooseCacheDir();
+      if (picked?.selected && picked.path) await setSetting("cacheDir", picked.path);
+    } catch { /* cancelled */ }
   }
   async function openPreview(target: string) {
     if (uiSettings.previewMode === "browser") { await window.hymnix.system.openExternal(/^https?:/i.test(target) ? target : "file:///" + target.replace(/\\/g, "/")); return; }
@@ -1952,11 +2007,13 @@ function App() {
     setTunnelState(String(payload?.state || "off"));
     setTunnelUrl(String(payload?.url || ""));
     const nextLog: string[] = Array.isArray(payload?.log) ? payload.log.slice(-12) : [];
-    setTunnelLog((previous) => {
-      const fresh = nextLog.filter((line) => !previous.includes(line));
-      if (fresh.length) setTermEntries((current) => [...current, ...fresh.map((line) => ({ time: stamp(), tag: "sys" as const, text: "[tunnel] " + line }))]);
-      return nextLog;
-    });
+    // Diff against the previous snapshot held in a ref. Doing it inside the state
+    // updater pushed terminal rows from a render-time function, which StrictMode
+    // ran twice and duplicated every tunnel line.
+    const fresh = nextLog.filter((line) => !tunnelLogRef.current.includes(line));
+    tunnelLogRef.current = nextLog;
+    setTunnelLog(nextLog);
+    if (fresh.length) setTermEntries((current) => [...current, ...fresh.map((line) => ({ time: stamp(), tag: "sys" as const, text: "[tunnel] " + line }))]);
   }
   async function pollTunnel() {
     try { applyTunnel(await window.hymnix.network.tunnelStatus()); }
@@ -1971,6 +2028,34 @@ function App() {
     try { applyTunnel(await window.hymnix.network.tunnel(action)); }
     catch (reason) { setNetError(reason instanceof Error ? reason.message : String(reason)); }
     finally { setNetBusy(false); }
+  }
+  function disconnectGuest(): void {
+    // Guests had no way back: setMode("remote") was the only transition in the
+    // whole file, so a wrong host meant restarting the app.
+    cancel();
+    setMode("local");
+    setApiKey("");
+    setShareTest({ state: "idle", message: "" });
+    setToast({ message: t("Using this computer again") });
+    window.setTimeout(() => setToast(null), 2400);
+    void loadHealth(true);
+  }
+  async function checkUpdates(): Promise<void> {
+    setUpdateState({ status: "checking", detail: t("Checking..."), url: "" });
+    try {
+      const result = await window.hymnix.updates.check();
+      if (!result.ok) {
+        setUpdateState({ status: "error", detail: result.error || t("Could not check for updates."), url: "" });
+        return;
+      }
+      if (result.newer && result.version) {
+        setUpdateState({ status: "available", detail: tf("Version {version} is available.", { version: result.version }), url: result.url || "" });
+      } else {
+        setUpdateState({ status: "current", detail: tf("You are on the latest version ({version}).", { version: result.current || __APP_VERSION__ }), url: "" });
+      }
+    } catch (reason) {
+      setUpdateState({ status: "error", detail: reason instanceof Error ? reason.message : String(reason), url: "" });
+    }
   }
   async function guestConnect(): Promise<boolean> {
     setNetBusy(true); setNetError("");
@@ -2062,7 +2147,9 @@ function App() {
           <div className="setting-row"><label>{t("Language")}<span className="hint">English / 中文</span></label><div className="controls segmented"><button className={lang === "en" ? "active" : ""} onClick={() => changeLang("en")}>English</button><button className={lang === "zh" ? "active" : ""} onClick={() => changeLang("zh")}>中文</button></div></div>
           <div className="setting-row"><label>{t("Workspace")}</label><div className="controls"><input value={workspace} onChange={(event) => setWorkspace(event.target.value)} aria-label={t("Workspace name")} /></div></div>
         </div>}
-        {settingsSection === "Appearance" && <><div className="card">{head("Appearance", "Appearance")}<div className="theme-gallery-section"><div className="gallery-heading"><strong>{t("Light themes")}</strong><small>4</small></div><div className="theme-gallery">{themeCards("light")}</div></div><div className="theme-gallery-section"><div className="gallery-heading"><strong>{t("Dark themes")}</strong><small>5</small></div><div className="theme-gallery">{themeCards("dark")}</div></div>
+        {settingsSection === "Appearance" && <><div className="card">{head("Appearance", "Appearance")}
+          <div className="setting-row"><label>{t("Appearance mode")}<span className="hint">{t("Auto follows the Windows light and dark setting.")}</span></label><div className="controls segmented" role="group" aria-label={t("Appearance mode")}><button className={appearanceMode === "light" ? "active" : ""} aria-pressed={appearanceMode === "light"} onClick={() => changeAppearanceMode("light")}>{t("Light")}</button><button className={appearanceMode === "dark" ? "active" : ""} aria-pressed={appearanceMode === "dark"} onClick={() => changeAppearanceMode("dark")}>{t("Dark")}</button><button className={appearanceMode === "auto" ? "active" : ""} aria-pressed={appearanceMode === "auto"} onClick={() => changeAppearanceMode("auto")}>{t("Auto")}</button></div></div>
+          <div className="theme-gallery-section"><div className="gallery-heading"><strong>{t("Light themes")}</strong><small>4</small></div><div className="theme-gallery">{themeCards("light")}</div></div><div className="theme-gallery-section"><div className="gallery-heading"><strong>{t("Dark themes")}</strong><small>5</small></div><div className="theme-gallery">{themeCards("dark")}</div></div>
           <div className="setting-row"><label>{t("Density")}<span className="hint">{t("Choose the spacing of rows and controls.")}</span></label><div className="controls segmented"><button className={density === "comfortable" ? "active" : ""} onClick={() => setDensityPreference("comfortable")}>{t("Comfortable")}</button><button className={density === "compact" ? "active" : ""} onClick={() => setDensityPreference("compact")}>{t("Compact")}</button></div></div>
           <div className="setting-row"><label>{t("Text size")}<span className="hint">{t("Scales every label, message and menu.")}</span></label><div className="controls scale-control"><input type="range" min="90" max="150" step="5" value={textScale} onChange={(event) => setTextScalePreference(Number(event.target.value))} aria-label={t("Text size")} /><output>{textScale}%</output></div></div>
           <div className="setting-row"><label>{t("Reduce motion")}<span className="hint">{t("Use fades instead of movement.")}</span></label><div className="controls"><button className={"switch" + (reduceMotion ? " on" : "")} aria-label={t("Reduce motion")} aria-pressed={reduceMotion} onClick={() => setMotionPreference(!reduceMotion)}><span /></button></div></div>
@@ -2076,7 +2163,7 @@ function App() {
         </div>}
         {settingsSection === "Sharing and security" && <div className="card settings-link-card">{head("Sharing and security", "Sharing and security")}<p className="subtitle">{t("Configure host sharing, connections and cloud provider credentials.")}</p><button className="btn primary" onClick={() => { setActive("Gateway"); setGatewayTab("Host"); }}>{t("Open sharing settings")}</button></div>}
                 {settingsSection === "Shortcuts" && <div className="card">{head("Shortcuts", "Shortcuts")}<div className="setting-row"><label>{t("Send with Shift+Enter")}<span className="hint">{t("Swap the Enter and Shift+Enter behaviour.")}</span></label><div className="controls"><button type="button" className={"switch" + (enterSwaps ? " on" : "")} aria-pressed={enterSwaps} aria-label={t("Send with Shift+Enter")} onClick={() => setEnterSwaps((value) => !value)}><span /></button></div></div><div className="shortcut-list">{[["Ctrl+N", "New session"], ["Ctrl+L", "Focus message composer"], ["Ctrl+B", "Toggle sidebar"], ["Ctrl+.", "Toggle inspector"], ["Ctrl+,", "Open settings"], ["Ctrl+/", "Open the shortcut sheet"], ["Ctrl+1–5", "Navigate primary pages"], ["Ctrl+Shift+C", "Copy last reply"], ["Ctrl+Shift+E", "Export chat"], [enterSwaps ? "Shift+Enter" : "Enter", "Send message"], [enterSwaps ? "Enter" : "Shift+Enter", "New line"], ["↑", "Edit the last message"], ["Esc", "Close or stop"]].map(([shortcut, action]) => <div key={shortcut}><kbd>{shortcut}</kbd><span>{t(action)}</span></div>)}</div></div>}
-        {settingsSection === "About" && <div className="card">{head("About", "About")}<div className="about-brand"><img src={brandIcon} alt="" /><span><strong>Hymnix Orbit</strong><small>{__APP_VERSION__} · Hymnix Studio</small></span></div><div className="setting-row"><label>{t("Updates")}</label><div className="controls"><button className="btn" onClick={() => void window.hymnix.system.openExternal("https://github.com/CarrisFlynn/hymnix-ai-server/releases")}>{t("View releases")}</button></div></div><div className="setting-row"><label>{t("Help")}</label><div className="controls"><button className="btn" onClick={() => setActive("Support")}>{t("Sponsor")}</button><button className="btn ghost" onClick={() => setActive("Changelog")}>{t("Changelog")}</button><button className="btn ghost" onClick={() => setActive("DesignLab")}>{t("Component gallery")}</button></div></div></div>}
+        {settingsSection === "About" && <div className="card">{head("About", "About")}<div className="about-brand"><img src={brandIcon} alt="" /><span><strong>Hymnix Orbit</strong><small>{__APP_VERSION__} · Hymnix Studio</small></span></div><div className="setting-row"><label>{t("Updates")}<span className="hint">{updateState.detail || tf("Installed version {version}", { version: __APP_VERSION__ })}</span></label><div className="controls"><button className="btn" onClick={() => void checkUpdates()} disabled={updateState.status === "checking"}>{t(updateState.status === "checking" ? "Checking..." : "Check for updates")}</button>{updateState.status === "available" && updateState.url && <button className="btn primary" onClick={() => void window.hymnix.system.openExternal(updateState.url)}>{t("Open download page")}</button>}<button className="btn ghost" onClick={() => void window.hymnix.system.openExternal("https://github.com/CarrisFlynn/hymnix-ai-server/releases")}>{t("View releases")}</button></div></div><div className="setting-row"><label>{t("Help")}</label><div className="controls"><button className="btn" onClick={() => setActive("Support")}>{t("Sponsor")}</button><button className="btn ghost" onClick={() => setActive("Changelog")}>{t("Changelog")}</button><button className="btn ghost" onClick={() => setActive("DesignLab")}>{t("Component gallery")}</button></div></div></div>}
       </div></div>
     </section>;
   }
@@ -2201,7 +2288,7 @@ function App() {
         <h2 id="whats-new-title">{tf("What's new in {version}", { version: __APP_VERSION__ })}</h2>
         <ul className="md-li">
           <li>{t("Nine themes with Auto following Windows, and a preview gallery in Settings.")}</li>
-          <li>{t("Command palette (Ctrl+K), new shortcuts, and a shortcut sheet.")}</li>
+          <li>{t("A shortcut sheet in Settings, plus Alt+← back navigation on every page.")}</li>
           <li>{t("Autosaved conversations with search, pinning, branching and undo.")}</li>
           <li>{t("First-run setup, token speed while generating, and inline retry when a connection drops.")}</li>
           <li>{t("Sharing shows a QR code and the people connected to this computer.")}</li>

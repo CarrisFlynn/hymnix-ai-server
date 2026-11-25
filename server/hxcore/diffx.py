@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from hxcore.paths import root_dir
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -179,8 +180,27 @@ def apply(path, patch_text, *, backup=True, max_bytes=50*1024*1024, chunk_hunks=
             detail = "patch=%s; backup=%s" % (patch_name, os.path.relpath(backup_path, ROOT))
             _log_rollback(detail, rel, round_tag=round_tag)
             _BACKUP_TARGETS[os.path.abspath(backup_path)] = target
-        with open(target, "w", encoding="utf-8", newline="") as handle:
-            handle.write("".join(updated))
+        # Replace through a fsynced sibling temp file. Opening the target for
+        # writing truncates it first, so a crash mid-write used to leave the
+        # user with a half-written source file.
+        directory = os.path.dirname(target) or "."
+        fd, temp = tempfile.mkstemp(dir=directory, prefix=".hymnix-diff-", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+                handle.write("".join(updated))
+                handle.flush()
+                os.fsync(handle.fileno())
+            try:
+                shutil.copymode(target, temp)
+            except OSError:
+                pass
+            os.replace(temp, target)
+        except BaseException:
+            try:
+                os.unlink(temp)
+            except OSError:
+                pass
+            raise
     except OSError as exc:
         result = dict(empty); result["error"] = str(exc); return result
     return {"ok": True, "applied": len(hunks), "files": [os.path.relpath(target, ROOT)],

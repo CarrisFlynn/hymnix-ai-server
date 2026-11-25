@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
-import ast, builtins, hashlib, json, os, re, shutil, time, traceback, threading
+import ast, builtins, hashlib, json, os, re, shutil, sys, time, traceback, threading
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 if __name__ == "__main__":
     import sys
@@ -17,6 +17,11 @@ _IMPORTS = {"math","time","datetime","json","re","statistics","collections","ite
 _LOCK=threading.RLock(); _PERMISSIONS_LOCK=threading.RLock(); _LOADED={}; _ERRORS=[]
 _EXECUTOR=ThreadPoolExecutor(max_workers=4, thread_name_prefix="hymnix-plugin")
 _TIMEOUT=float(os.environ.get("HX_PLUGIN_TIMEOUT", "3"))
+# Attribute names a plugin has no business touching: they are the documented way
+# out of an exec() sandbox (walk __subclasses__ and reach the host interpreter).
+_FORBIDDEN_ATTRS={"__class__","__base__","__bases__","__subclasses__","__mro__","__globals__","__builtins__","__code__","__closure__","__dict__","__getattribute__","__import__","__loader__","__spec__","__reduce__","__reduce_ex__"}
+class _PluginTimeout(BaseException):
+    """Raised inside plugin frames so a plugin cannot swallow its own deadline."""
 _UI_HOOKS={"toast":None}
 def set_ui_hooks(toast=None):
     _UI_HOOKS["toast"] = toast if callable(toast) else None
@@ -251,6 +256,10 @@ def load(pid):
         path=os.path.realpath(os.path.join(row["path"],m["entry"]))
         with open(path,encoding="utf-8") as f:source=f.read()
         tree=ast.parse(source, path)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and node.attr in _FORBIDDEN_ATTRS:
+                _err(pid,"load","plugin_sandbox_escape:"+node.attr)
+                return {"ok":False,"error":"plugin_sandbox_escape","detail":node.attr}
         code=compile(tree,path,"exec")
         perms=set(m["permissions"]); ns={"__builtins__":dict(_SAFE,__import__=_imp(perms)),"__name__":"__plugin__"}
         if any(isinstance(n, ast.While) and isinstance(n.test, ast.Constant) and n.test.value is True for n in ast.walk(tree)):
@@ -281,14 +290,29 @@ def load(pid):
             if "hook" not in m["capabilities"] or name not in ("on_start","on_message","on_shutdown") or not callable(handler): raise PermissionError("hook capability required")
             registrations.append(pid+".hook."+name); return registrations[-1]
         def run_plugin():
-            exec(code,ns,ns); hook=ns.get("on_load")
-            api={"toast":toast,"register_tool":register_tool,"register_command":register_command,"register_page":register_page,"register_hook":register_hook}
-            if callable(hook):hook(api)
-            for name in ("on_start","on_message","on_shutdown"):
-                if callable(ns.get(name)) and "hook" in m["capabilities"]: register_hook(name,ns[name])
+            # A thread cannot be killed from outside, so the deadline is enforced
+            # from inside: the trace hook runs between plugin lines and raises once
+            # the budget is gone, which actually stops the plugin instead of merely
+            # abandoning the wait for it.
+            deadline=time.monotonic()+_TIMEOUT
+            def watchdog(frame,event,arg):
+                if time.monotonic()>deadline: raise _PluginTimeout()
+                return watchdog
+            sys.settrace(watchdog)
+            try:
+                exec(code,ns,ns); hook=ns.get("on_load")
+                api={"toast":toast,"register_tool":register_tool,"register_command":register_command,"register_page":register_page,"register_hook":register_hook}
+                if callable(hook):hook(api)
+                for name in ("on_start","on_message","on_shutdown"):
+                    if callable(ns.get(name)) and "hook" in m["capabilities"]: register_hook(name,ns[name])
+            finally:
+                sys.settrace(None)
         future=_EXECUTOR.submit(run_plugin)
         try: future.result(timeout=_TIMEOUT)
         except FutureTimeoutError:
+            _err(pid,"load","plugin_timeout")
+            return {"ok":False,"error":"plugin_timeout"}
+        except _PluginTimeout:
             _err(pid,"load","plugin_timeout")
             return {"ok":False,"error":"plugin_timeout"}
         _LOADED[pid]={"path":path,"namespace":ns,"tools":registrations};return {"ok":True,"error":""}

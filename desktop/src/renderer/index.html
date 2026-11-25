@@ -3,11 +3,13 @@
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="theme-color" content="#fffafa">
+    <meta name="theme-color" content="#FDF7F7">
     <meta name="description" content="Hymnix Orbit - scheduler and local gateway workspace">
     <link rel="icon" type="image/png" href="./assets/hymnix-red-white-star.png">
     <title>Hymnix Orbit</title>
-    <script type="module" src="./theme-bootstrap.js"></script>
+    <!-- Blocking, non-module: theme, density and text scale are on the root element
+         before the first paint, so the window never flashes white or reflows. -->
+    <script type="text/javascript" src="./theme-bootstrap.js"></script>
   </head>
   <body>
     <div id="root"></div>

@@ -42,13 +42,26 @@ for (const file of walk(src)) {
     for (const match of code.matchAll(/var\(\s*--p-[a-z0-9-]+/g)) {
       failures.push(`${relative(root, file).replace(/\\/g, "/")}:${index + 1}  raw primitive ${match[0]}`);
     }
+    // Named colours are just as hard-coded as a hex value and the hex scan used to
+    // miss them entirely: the close button shipped "color: white" on a red fill at
+    // 2.78:1 in five dark themes and the gate stayed green.
+    for (const declaration of code.split(";")) {
+      const colon = declaration.indexOf(":");
+      if (colon < 0) continue;
+      const property = declaration.slice(0, colon).trim();
+      if (!/(?:^|[\s-])(?:color|background|background-color|border-color|outline-color|fill|stroke|box-shadow)(?:\s|$)/i.test(property)) continue;
+      const value = declaration.slice(colon + 1);
+      for (const match of value.matchAll(/\b(white|black)\b/gi)) {
+        failures.push(`${relative(root, file).replace(/\\/g, "/")}:${index + 1}  named colour ${match[1]}`);
+      }
+    }
   });
 }
 
 if (failures.length) {
   console.error(`Design-token check failed (${failures.length}):`);
   for (const line of failures) console.error("  " + line);
-  console.error("\nMove colours into desktop/src/styles/themes/*.css and reference semantic tokens.");
+  console.error("\nMove colours into desktop/src/styles/themes/*.css and reference semantic tokens (--text, --surface, --on-accent, --term-*).");
   process.exit(1);
 }
 console.log(`Design-token check passed: ${checked} component stylesheets use semantic tokens only.`);

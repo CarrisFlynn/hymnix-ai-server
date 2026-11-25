@@ -2,7 +2,7 @@
   --bg:#151C27; --sidebar:#0F151E; --surface:#1F2937; --raised:#2A3546; --sunken:#111822;
   --border:#2F3B4D; --border-strong:#61748F;
   --text:#F4EFE3; --muted:#A9B1BD; --faint:#8591A1;
-  --accent:#D4AF37; --accent-fill:#D4AF37; --accent-hover:#E2C158; --accent-pressed:#B8952A;
+  --accent:#D4AF37; --accent-fill:#D4AF37; --accent-fill-base:#D4AF37; --accent-hover:#E2C158;--accent-hover-base:#E2C158; --accent-pressed:#B8952A;
   --on-accent:#1A1405; --accent-text:#D4AF37; --accent-soft:#2B2615; --highlight:#3A3319;
   --accent-bright:#FFD799;
   --term-bg:var(--bg); --term-fg:var(--text); --term-muted:var(--muted); --term-prompt:var(--accent-text);
@@ -16,5 +16,5 @@
   --ok-050:var(--success-soft); --ok-line:var(--success); --ok-700:var(--success);
   --keycap-hi:rgba(255,255,255,.06); --keycap-shade:rgba(0,0,0,.70); --keycap-ring:rgba(255,255,255,.05);
   --keycap-inset-shade:rgba(0,0,0,.90); --keycap-inset-hi:rgba(255,255,255,.09);
-  --keycap-led-glow:rgba(212,175,55,.55); --keycap-lift:rgba(0,0,0,.68); --keycap-lift-hi:rgba(255,255,255,.07);
+  --keycap-led-glow:rgba(212,175,55,.55); --keycap-lift:rgba(0,0,0,.68); --keycap-lift-hi:rgba(255,255,255,.07);--term-success:#3DDC97;--term-warning:#FFB84D;--term-error:#FF6B6B;
 }

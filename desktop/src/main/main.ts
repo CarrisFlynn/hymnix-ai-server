@@ -1,5 +1,5 @@
 import {app,BrowserWindow,Menu,Notification,Tray,WebContentsView,dialog,ipcMain,net,nativeTheme,protocol,safeStorage,screen,session,shell} from "electron";
-import {basename,extname,join,relative,resolve,sep} from "node:path";
+import {basename,extname,isAbsolute,join,relative,resolve,sep} from "node:path";
 import {pathToFileURL} from "node:url";
 import {GatewayLifecycle} from "./gateway-lifecycle";
 import {existsSync,realpathSync,statfsSync,statSync,readdirSync,readFileSync,writeFileSync,mkdirSync} from "node:fs";
@@ -15,11 +15,14 @@ type AppSettings = {
   betaChannel: boolean; runAtStartup: boolean; dpiScaling: boolean; startFullscreen: boolean;
   autoUpdate: boolean; smoothScroll: boolean; gpuAcceleration: boolean; cacheDir: string;
   previewMode: "inapp" | "browser";
+  // The window is created before the renderer can tell us which theme is active,
+  // so the last resolved appearance is stored here and reused as its first paint.
+  appearanceMode: "light" | "dark" | "auto"; windowBackground: string;
 };
 const DEFAULT_SETTINGS: AppSettings = {
   betaChannel: false, runAtStartup: false, dpiScaling: false, startFullscreen: false,
   autoUpdate: true, smoothScroll: true, gpuAcceleration: true, cacheDir: "",
-  previewMode: "inapp"
+  previewMode: "inapp", appearanceMode: "auto", windowBackground: ""
 };
 function settingsPath(): string { return join(app.getPath("userData"), "orbit-settings.json"); }
 /** Electron resolves the cache folder at runtime; the bundled type union omits it. */
@@ -170,8 +173,20 @@ function readUtf8Bounded(path: string): string { let bytes: Buffer; try { bytes=
 function registerFilesIpc(): void {
   ipcMain.handle("files:choose-root", async (event) => { assertSender(event); const result=await dialog.showOpenDialog(mainWindow ?? BrowserWindow.getFocusedWindow()!,{properties:["openDirectory","createDirectory"]}); if(result.canceled||!result.filePaths[0]) return {selected:Boolean(selectedFilesRoot),path:selectedFilesRoot}; try { const root=realpathSync(result.filePaths[0]); if(!statSync(root).isDirectory()) throw new Error(); selectedFilesRoot=root; return {selected:true,path:root}; } catch { throw filesError("invalid_root","Selected root is not a directory"); } });
   ipcMain.handle("files:current", (event) => { assertSender(event); return {selected:Boolean(selectedFilesRoot),path:selectedFilesRoot}; });
+  // Choosing where downloads are cached must not silently repoint the workspace,
+  // which is also the file browser root and the terminal cwd.
+  ipcMain.handle("files:choose-cache-dir", async (event) => {
+    assertSender(event);
+    const result = await dialog.showOpenDialog(mainWindow ?? BrowserWindow.getFocusedWindow()!, { properties: ["openDirectory", "createDirectory"] });
+    if (result.canceled || !result.filePaths[0]) return { selected: false, path: "" };
+    try {
+      const dir = realpathSync(result.filePaths[0]);
+      if (!statSync(dir).isDirectory()) throw new Error();
+      return { selected: true, path: dir };
+    } catch { throw filesError("invalid_root", "Selected folder is not a directory"); }
+  });
   ipcMain.handle("files:tree", (event, raw: unknown) => { assertSender(event); const v=raw&&typeof raw==="object"?raw as Record<string,unknown>:{}; if(v.path!==undefined && (typeof v.path!=="string" || v.path!=="." && !v.path.trim())) throw filesError("invalid_path","Path must be relative"); const start=v.path===undefined||v.path==="."?filesRootOrThrow():validateFilePath(v.path); const depth=parseFileLimit(v.depth,1,fileLimits.treeDepth,"depth",0); const limit=parseFileLimit(v.limit,100,fileLimits.treeLimit,"limit"); const results:{name:string;rel:string;isDir:boolean;size:number;mtime:number;ext:string}[]=[]; const walk=(dir:string,d:number) => { if(results.length>=limit||d>depth)return; let entries; try{entries=readdirSync(dir,{withFileTypes:true});}catch{throw filesError("read_failed","Unable to read directory");} for(const e of entries){if(results.length>=limit)break; const full=join(dir,e.name); let real:string; try{real=realpathSync(full);}catch{continue;} try{const root=filesRootOrThrow(); const rr=relative(root,real); if(rr.startsWith(".."+sep)||rr==="..")continue; const rel=rr.replaceAll(sep,"/"); results.push(fileEntry(real,root)); if(e.isDirectory())walk(real,d+1);}catch{} } }; walk(start,0); return {ok:true,results,count:results.length}; });
-  ipcMain.handle("files:search", (event, raw: unknown) => { assertSender(event); if(!raw||typeof raw!=="object")throw filesError("invalid_request","Search request must be an object"); const v=raw as Record<string,unknown>; if(typeof v.query!=="string"||!v.query)throw filesError("missing_required","query is required"); if(v.query.length>200)throw filesError("query_too_long","query exceeds 200 characters"); const limit=parseFileLimit(v.limit,50,fileLimits.searchLimit,"limit"); if(v.path!==undefined && (typeof v.path!=="string" || v.path!=="." && !v.path.trim())) throw filesError("invalid_path","Path must be relative"); const start=v.path===undefined||v.path==="."?filesRootOrThrow():validateFilePath(v.path); const include=typeof v.include==="string"?v.include:null; const results:{rel:string;line:number;text:string}[]=[]; const walk=(dir:string) => {if(results.length>=limit)return; let entries;try{entries=readdirSync(dir,{withFileTypes:true});}catch{return;}for(const e of entries){if(results.length>=limit)break;const full=join(dir,e.name);let real;try{real=realpathSync(full);}catch{continue;}const rel=relative(filesRootOrThrow(),real).replaceAll(sep,"/");if(e.isDirectory())walk(real);else if((!include||rel.includes(include))){let text;try{text=readUtf8Bounded(real);}catch(error){if(error instanceof Error && error.message.includes("too_large")) continue; continue;}const index=text.indexOf(v.query as string); if(index>=0){const line=text.slice(0,index).split(/\r?\n/).length; results.push({rel,line,text:text.split(/\r?\n/)[line-1]??""});}}}};walk(start);return {ok:true,count:results.length,results}; });
+  ipcMain.handle("files:search", (event, raw: unknown) => { assertSender(event); if(!raw||typeof raw!=="object")throw filesError("invalid_request","Search request must be an object"); const v=raw as Record<string,unknown>; if(typeof v.query!=="string"||!v.query)throw filesError("missing_required","query is required"); if(v.query.length>200)throw filesError("query_too_long","query exceeds 200 characters"); const limit=parseFileLimit(v.limit,50,fileLimits.searchLimit,"limit"); if(v.path!==undefined && (typeof v.path!=="string" || v.path!=="." && !v.path.trim())) throw filesError("invalid_path","Path must be relative"); const start=v.path===undefined||v.path==="."?filesRootOrThrow():validateFilePath(v.path); const include=typeof v.include==="string"?v.include:null; const results:{rel:string;line:number;text:string}[]=[]; const walk=(dir:string) => {if(results.length>=limit)return; let entries;try{entries=readdirSync(dir,{withFileTypes:true});}catch{return;}for(const e of entries){if(results.length>=limit)break;const full=join(dir,e.name);let real;try{real=realpathSync(full);}catch{continue;}const rootReal=filesRootOrThrow();const guard=relative(rootReal,real);if(guard.startsWith(".."+sep)||guard===".."||isAbsolute(guard))continue;const rel=guard.replaceAll(sep,"/");if(e.isDirectory())walk(real);else if((!include||rel.includes(include))){let text;try{text=readUtf8Bounded(real);}catch(error){if(error instanceof Error && error.message.includes("too_large")) continue; continue;}const index=text.indexOf(v.query as string); if(index>=0){const line=text.slice(0,index).split(/\r?\n/).length; results.push({rel,line,text:text.split(/\r?\n/)[line-1]??""});}}}};walk(start);return {ok:true,count:results.length,results}; });
   ipcMain.handle("files:read", (event, raw: unknown) => { assertSender(event); if(!raw||typeof raw!=="object")throw filesError("invalid_request","Read request must be an object"); const v=raw as Record<string,unknown>; const path=validateFilePath(v.path); const start=parseFileLimit(v.start,1,Number.MAX_SAFE_INTEGER,"start"); const lines=parseFileLimit(v.lines,100,fileLimits.readLines,"lines"); const text=readUtf8Bounded(path); const all=text.split(/\r?\n/); const end=Math.min(all.length,start+lines-1); return {ok:true,path:relative(filesRootOrThrow(),path).replaceAll(sep,"/"),start,end,total:all.length,text:all.slice(start-1,end).join("\n")}; });
 }
 function registerGatewayIpc(): void {
@@ -272,6 +287,19 @@ registerFilesIpc();
 const terminalChannels = { start:"terminal:start", cancel:"terminal:cancel", output:"terminal:output", complete:"terminal:complete" } as const;
 const terminalProcesses = new Map<string, ChildProcess>();
 const terminalBridge = new TerminalBridge();
+function realpathSyncSafe(target: string): string { try { return realpathSync(target); } catch { return resolve(target); } }
+// A shell spawns its own children (npm, python, git). Killing only the shell
+// leaves them running, so the whole tree is taken down on Windows.
+function killProcessTree(child: ChildProcess): void {
+  if (process.platform === "win32" && child.pid) {
+    try { spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], { windowsHide: true, stdio: "ignore" }); return; } catch { /* fall through */ }
+  }
+  try { child.kill(); } catch { /* already gone */ }
+}
+function stopAllTerminals(): void {
+  for (const child of terminalProcesses.values()) killProcessTree(child);
+  terminalProcesses.clear();
+}
 function registerTerminalIpc(): void {
   ipcMain.handle("terminal:bridge", (event, action: unknown) => {
     assertSender(event);
@@ -284,9 +312,28 @@ function registerTerminalIpc(): void {
     if (!raw || typeof raw !== "object") throw new Error("Invalid terminal request");
     const value = raw as Record<string, unknown>;
     const command = required(value.command, "command");
+    if (command.length > 4000 || /[\r\n]/.test(command)) throw new Error("Invalid terminal command");
     const requestId = "t" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-    const cwd = typeof value.cwd === "string" && value.cwd.trim() ? value.cwd : process.cwd();
-    const child = spawn(command, [], { cwd, shell: true, windowsHide: true, env: { ...process.env } });
+    // The renderer only ever runs commands inside the workspace it picked. The
+    // old code accepted any cwd from the renderer and never read the policy
+    // field, so a compromised renderer could run inside any folder on the disk.
+    const requested = typeof value.cwd === "string" && value.cwd.trim() ? resolve(value.cwd) : null;
+    let cwd = process.cwd();
+    if (selectedFilesRoot) {
+      const rootReal = realpathSyncSafe(selectedFilesRoot);
+      cwd = requested ?? rootReal;
+      const inside = relative(rootReal, realpathSyncSafe(cwd));
+      if (!inside || inside.startsWith(".." + sep) || inside === ".." || isAbsolute(inside)) cwd = rootReal;
+      try { if (!statSync(cwd).isDirectory()) cwd = rootReal; } catch { cwd = rootReal; }
+    }
+    // With no workspace chosen the renderer cannot pick a directory at all: the
+    // command runs in the app process directory, as it always did.
+
+    // Run through the platform shell, but never let the renderer choose the
+    // executable: shell true resolved whatever PATH offered first.
+    const shellExe = process.platform === "win32" ? (process.env.ComSpec || "cmd.exe") : "/bin/sh";
+    const shellArgs = process.platform === "win32" ? ["/d", "/s", "/c", '"' + command + '"'] : ["-c", command];
+    const child = spawn(shellExe, shellArgs, { cwd, windowsHide: true, windowsVerbatimArguments: process.platform === "win32", env: { ...process.env } });
     terminalProcesses.set(requestId, child);
     const send = (stream: "stdout" | "stderr", chunk: string) => { if (!event.sender.isDestroyed()) event.sender.send(terminalChannels.output, { id: requestId, stream, text: chunk }); };
     child.stdout?.on("data", (data: Buffer) => send("stdout", data.toString()));
@@ -295,7 +342,7 @@ function registerTerminalIpc(): void {
     child.once("exit", (code: number | null) => { terminalProcesses.delete(requestId); if (!event.sender.isDestroyed()) event.sender.send(terminalChannels.complete, { id: requestId, code, signal: null }); });
     return { id: requestId };
   });
-  ipcMain.on(terminalChannels.cancel, (event, requestId: unknown) => { assertSender(event); if (typeof requestId !== "string") return; const child = terminalProcesses.get(requestId); if (!child) return; try { child.kill(); } catch { /* already gone */ } });
+  ipcMain.on(terminalChannels.cancel, (event, requestId: unknown) => { assertSender(event); if (typeof requestId !== "string") return; const child = terminalProcesses.get(requestId); if (!child) return; killProcessTree(child); terminalProcesses.delete(requestId); });
 }
 
 // ---------- model management ----------
@@ -326,9 +373,30 @@ function parseToolCallResponse(payload: unknown): unknown {
 }
 function parseApprovalListResponse(payload: unknown): unknown {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new Error(JSON.stringify({code:"approval_schema_error",message:"Approval response must be an object"}));
-  const value=payload as Record<string,unknown>; if(typeof value.ok!=="boolean"||!Array.isArray(value.approvals)||typeof value.count!=="number"||!Number.isInteger(value.count)||value.count!==value.approvals.length) throw new Error(JSON.stringify({code:"approval_schema_error",message:"Invalid approval list response"}));
-  for(const item of value.approvals){if(!item||typeof item!=="object"||Array.isArray(item))throw new Error(JSON.stringify({code:"approval_schema_error",message:"Invalid approval record"})); const record=item as Record<string,unknown>; for(const key of ["id","requestId","tool","risk","createdAt","expiresAt"]){if(typeof record[key]!=="string"||!(record[key] as string))throw new Error(JSON.stringify({code:"approval_schema_error",message:"Invalid approval record field: "+key}));} if(!record.argsRedacted||typeof record.argsRedacted!=="object"||Array.isArray(record.argsRedacted)||!Array.isArray(record.reasons))throw new Error(JSON.stringify({code:"approval_schema_error",message:"Invalid approval record details"}));}
-  return value;
+  const value=payload as Record<string,unknown>;
+  if(typeof value.ok!=="boolean"||!Array.isArray(value.approvals)) throw new Error(JSON.stringify({code:"approval_schema_error",message:"Invalid approval list response"}));
+  // The gateway speaks snake_case (request_id / args / created_at); the renderer
+  // speaks camelCase. Normalising here keeps one vocabulary on each side instead
+  // of failing the whole list with approval_schema_error.
+  const text = (raw: unknown): string => (typeof raw === "string" ? raw : typeof raw === "number" ? String(raw) : "");
+  const approvals = value.approvals.map((item) => {
+    if(!item||typeof item!=="object"||Array.isArray(item)) throw new Error(JSON.stringify({code:"approval_schema_error",message:"Invalid approval record"}));
+    const record=item as Record<string,unknown>;
+    const row = {
+      id: text(record.id),
+      requestId: text(record.requestId ?? record.request_id),
+      tool: text(record.tool),
+      risk: text(record.risk) || "unknown",
+      createdAt: text(record.createdAt ?? record.created_at),
+      expiresAt: text(record.expiresAt ?? record.expires_at),
+      argsRedacted: (record.argsRedacted ?? record.args) as unknown,
+      reasons: record.reasons,
+    };
+    for(const key of ["id","requestId","tool","createdAt","expiresAt"] as const){ if(!row[key]) throw new Error(JSON.stringify({code:"approval_schema_error",message:"Invalid approval record field: "+key})); }
+    if(!row.argsRedacted||typeof row.argsRedacted!=="object"||Array.isArray(row.argsRedacted)||!Array.isArray(row.reasons)) throw new Error(JSON.stringify({code:"approval_schema_error",message:"Invalid approval record details"}));
+    return row;
+  });
+  return { ok: value.ok, approvals, count: approvals.length };
 }
 function parseApprovalDecisionResponse(payload: unknown): unknown {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new Error(JSON.stringify({code:"approval_schema_error",message:"Approval decision response must be an object"})); const value=payload as Record<string,unknown>; if(typeof value.ok!=="boolean"||typeof value.id!=="string"||!value.id||value.decision!=="approved"&&value.decision!=="denied") throw new Error(JSON.stringify({code:"approval_schema_error",message:"Invalid approval decision response"})); if(value.error!==undefined&&(!value.error||typeof value.error!=="object"||Array.isArray(value.error)||typeof (value.error as Record<string,unknown>).message!=="string")) throw new Error(JSON.stringify({code:"approval_schema_error",message:"Invalid approval decision error"})); return value;
@@ -338,7 +406,7 @@ async function toolsJson(path: string, init: RequestInit, keyHeader: "X-API-Key"
 }
 function registerToolsIpc(): void {
   ipcMain.handle("tools:list", async (event): Promise<ReturnType<typeof parseToolsResponse>> => { assertSender(event); const url=gatewayUrl(gatewayBase(),"api/tools"); const response=await fetch(url,{method:"GET",signal:AbortSignal.timeout(5000),headers:{Accept:"application/json","X-API-Key":localApiKey()}}); if (!response.ok) { const body=await response.json().catch(() => null); throw new Error(JSON.stringify(errorPayload(response.status,body,"Gateway tools HTTP "+response.status))); } let payload: unknown; try { payload=await response.json(); } catch { throw new Error(JSON.stringify({code:"tools_schema_error",message:"Tools response must be valid JSON"})); } return parseToolsResponse(payload); });
-  ipcMain.handle("tools:call", async (event, raw: unknown) => { assertSender(event); if(!raw||typeof raw!=="object"||Array.isArray(raw)) throw new Error(JSON.stringify({code:"invalid_request",message:"Tool call request must be an object"})); const value=raw as Record<string,unknown>; if(typeof value.requestId!=="string"||!value.requestId.trim()||typeof value.tool!=="string"||!value.tool.trim()||!value.args||typeof value.args!=="object"||Array.isArray(value.args)) throw new Error(JSON.stringify({code:"invalid_request",message:"Invalid tool call request"})); const payload=await toolsJson("api/tools/call",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({requestId:value.requestId,tool:value.tool,args:value.args})},"X-API-Key","Tool call"); return parseToolCallResponse(payload); });
+  ipcMain.handle("tools:call", async (event, raw: unknown) => { assertSender(event); if(!raw||typeof raw!=="object"||Array.isArray(raw)) throw new Error(JSON.stringify({code:"invalid_request",message:"Tool call request must be an object"})); const value=raw as Record<string,unknown>; if(typeof value.requestId!=="string"||!value.requestId.trim()||typeof value.tool!=="string"||!value.tool.trim()||!value.args||typeof value.args!=="object"||Array.isArray(value.args)) throw new Error(JSON.stringify({code:"invalid_request",message:"Invalid tool call request"})); const payload=await toolsJson("api/tools/call",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({request_id:value.requestId,tool:value.tool,args:value.args})},"X-API-Key","Tool call"); return parseToolCallResponse(payload); });
   ipcMain.handle("tools:pending", async (event) => { assertSender(event); return parseApprovalListResponse(await toolsJson("admin/approvals",{method:"GET"},"X-Admin-Key","Approval list")); });
   for(const decision of ["approve","deny"] as const) ipcMain.handle("tools:"+decision, async (event, rawId: unknown) => { assertSender(event); if(typeof rawId!=="string"||!rawId.trim()||rawId.length>256||/[\/\0]/.test(rawId)) throw new Error(JSON.stringify({code:"invalid_request",message:"Invalid approval id"})); const payload=await toolsJson("admin/approvals/"+encodeURIComponent(rawId),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({decision})},"X-Admin-Key","Approval decision"); return parseApprovalDecisionResponse(payload); });
 }
@@ -439,7 +507,7 @@ function registerNetworkIpc(): void {
     if (!response.ok || !payload || payload.ok !== true) { const error = errorPayload(response.status, payload, "Connection failed"); throw new Error(JSON.stringify(error)); }
     return payload;
   });
-  ipcMain.handle(netChannels.network, async (event) => { assertSender(event); return adminJson("admin/network"); });
+  ipcMain.handle(netChannels.network, async (event) => { assertSender(event); return adminJson("admin/network?reveal=1"); });
   ipcMain.handle(netChannels.networkSave, async (event, raw: unknown) => { assertSender(event); return adminJson("admin/network", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(raw && typeof raw === "object" ? raw : {}) }); });
   ipcMain.handle(netChannels.tunnelStatus, async (event) => { assertSender(event); return adminJson("admin/tunnel", { method: "GET" }); });
   ipcMain.handle(netChannels.get, async (event, raw: unknown) => {
@@ -459,7 +527,13 @@ function registerNetworkIpc(): void {
     if (!response.ok) throw new Error(JSON.stringify(errorPayload(response.status, payload, "Remote " + path + " HTTP " + response.status)));
     return payload ?? {};
   });
-  ipcMain.handle(netChannels.tunnel, async (event, action: unknown) => { assertSender(event); return adminJson("admin/tunnel", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ action: action === "stop" ? "stop" : "start" }) }); });
+  ipcMain.handle(netChannels.tunnel, async (event, action: unknown) => {
+    assertSender(event);
+    // Restart was collapsed into "start", and start short-circuits while the
+    // process is alive, so the Restart button reported success and changed nothing.
+    const verb = action === "stop" || action === "restart" ? action : "start";
+    return adminJson("admin/tunnel", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ action: verb }) });
+  });
   // Who is currently connected to this computer. Shown in Sharing so a stranger
   // in the list can be disconnected without stopping the whole share.
   ipcMain.handle(netChannels.clients, async (event) => {
@@ -623,7 +697,10 @@ let previewView: WebContentsView | null = null;
 function previewBounds(win: BrowserWindow): Electron.Rectangle {
   const { width, height } = win.getContentBounds();
   const paneWidth = Math.max(360, Math.round(width * 0.45));
-  return { x: width - paneWidth, y: 40, width: paneWidth, height: height - 40 };
+  // The title bar is 42px tall; starting the preview at 40px left it two pixels
+  // under the drag strip, which made the top of the page unclickable.
+  const top = 42;
+  return { x: width - paneWidth, y: top, width: paneWidth, height: height - top };
 }
 function closePreview(): void {
   if (!previewView) return;
@@ -640,6 +717,30 @@ function registerSettingsIpc(): void {
       const data = await response.json() as { stargazers_count?: number };
       return { ok: true, stars: typeof data.stargazers_count === "number" ? data.stargazers_count : null };
     } catch { return { ok: false, stars: null }; }
+  });
+  // A real update check instead of opening the releases page and calling it done.
+  ipcMain.handle("update:check", async (event) => {
+    assertSender(event);
+    try {
+      const response = await fetch("https://api.github.com/repos/CarrisFlynn/hymnix-ai-server/releases/latest", {
+        headers: { Accept: "application/vnd.github+json", "User-Agent": "Hymnix-Orbit" },
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!response.ok) return { ok: false, error: "GitHub returned HTTP " + response.status };
+      const data = await response.json() as { tag_name?: string; html_url?: string; name?: string };
+      const latest = String(data.tag_name || data.name || "").replace(/^v/i, "").trim();
+      const current = app.getVersion();
+      const parse = (value: string): number[] => value.split(/[^0-9]+/).filter(Boolean).slice(0, 3).map((part) => Number(part) || 0);
+      const left = parse(latest), right = parse(current);
+      let newer = false;
+      for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+        const a = left[index] ?? 0, b = right[index] ?? 0;
+        if (a !== b) { newer = a > b; break; }
+      }
+      return { ok: true, current, version: latest, url: typeof data.html_url === "string" ? data.html_url : "", newer };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
   });
   ipcMain.handle("gateway:restart", (event) => { assertSender(event); return gateway.restart(); });
 ipcMain.handle("app:log", async (event, message: unknown) => { assertSender(event); bootLog("renderer: " + String(message).slice(0, 400)); return true; });
@@ -784,6 +885,9 @@ ipcMain.handle("window:appearance", (event, raw: unknown) => {
   if (typeof input.backgroundColor !== "string" || !/^#[\da-f]{6}$/i.test(input.backgroundColor)) return { ok: false };
   nativeTheme.themeSource = input.mode === "auto" ? "system" : input.mode;
   win.setBackgroundColor(input.backgroundColor);
+  // Stored so the next launch paints the window in the user's theme before the
+  // renderer has had a chance to run (this is what caused the white flash).
+  writeSettings({ appearanceMode: input.mode, windowBackground: input.backgroundColor });
   return { ok: true };
 });
 ipcMain.handle("shell:open", async (event, raw: unknown) => { assertSender(event); const url = typeof raw === "string" ? raw.trim() : ""; if (!/^https?:\/\//i.test(url)) throw new Error("Only http(s) links are allowed"); await shell.openExternal(url); return { ok: true }; });
@@ -800,7 +904,9 @@ function createWindow(){
   const icon = app.isPackaged
     ? join(process.resourcesPath, "assets", "hymnix-red-white-star.png")
     : join(productRoot, "desktop", "src", "renderer", "assets", "hymnix-red-white-star.png");
-  const win=new BrowserWindow({width:1440,height:900,minWidth:800,minHeight:560,frame:false,titleBarStyle:"hidden",fullscreen:readSettings().startFullscreen,backgroundColor:nativeTheme.shouldUseDarkColors?"#151c27":"#fdf7f7",...(existsSync(icon)?{icon}:{}),webPreferences:{preload:join(__dirname,"../preload/preload.js"),contextIsolation:true,sandbox:true,nodeIntegration:false,webSecurity:true}});win.webContents.setWindowOpenHandler(()=>({action:"deny"}));win.webContents.on("will-navigate",(event,url)=>{if(!isAllowedRendererUrl(url))event.preventDefault()});void win.loadURL(rendererUrl);mainWindow=win;
+  const bootAppearance = readSettings();
+  const storedBackground = /^#[\da-f]{6}$/i.test(bootAppearance.windowBackground) ? bootAppearance.windowBackground : "";
+  const win=new BrowserWindow({width:1440,height:900,minWidth:800,minHeight:560,frame:false,titleBarStyle:"hidden",fullscreen:bootAppearance.startFullscreen,backgroundColor:storedBackground || (nativeTheme.shouldUseDarkColors?"#151c27":"#fdf7f7"),...(existsSync(icon)?{icon}:{}),webPreferences:{preload:join(__dirname,"../preload/preload.js"),contextIsolation:true,sandbox:true,nodeIntegration:false,webSecurity:true}});win.webContents.setWindowOpenHandler(()=>({action:"deny"}));win.webContents.on("will-navigate",(event,url)=>{if(!isAllowedRendererUrl(url))event.preventDefault()});void win.loadURL(rendererUrl);mainWindow=win;
   win.webContents.on("did-start-loading", () => terminalBridge.stop());
   win.webContents.on("did-fail-load", (_event, code, description, url, isMainFrame) => { if (isMainFrame) bootLog(`renderer load failed code=${code} description=${description} url=${url}`); });
   win.webContents.on("did-finish-load", () => bootLog("renderer finished loading"));
@@ -817,7 +923,7 @@ if (!bootSettings.gpuAcceleration) { try { app.disableHardwareAcceleration(); } 
 const userDataDir = app.getPath("userData");
 const defaultCacheDir = join(userDataDir, "Cache");
 try { const cacheDir = bootSettings.cacheDir || defaultCacheDir; mkdirSync(cacheDir, { recursive: true }); app.setPath("cache", cacheDir); } catch { /* ignore */ }
-app.whenReady().then(async()=>{if (!hasInstanceLock) return; const bootT0=Date.now();bootLog("boot start");Menu.setApplicationMenu(null);protocol.handle("app",(request)=>{ const url=new URL(request.url); const relative=decodeURIComponent(url.pathname).replace(/^\/+/, "")||"index.html"; const target=join(rendererRoot,relative); if(!target.startsWith(rendererRoot)) return new Response("Forbidden",{status:403}); return net.fetch(pathToFileURL(target).toString()); });session.defaultSession.webRequest.onHeadersReceived((details,callback)=>callback({responseHeaders:{...details.responseHeaders,"Content-Security-Policy":["default-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:*; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'"]}}));bootLog("pre-window t=" + (Date.now()-bootT0)); createWindow(); bootLog("window created t=" + (Date.now()-bootT0)); void gateway.start();app.on("activate",()=>{if(BrowserWindow.getAllWindows().length===0)createWindow();});}).catch((error)=>{console.error(error);app.quit();});
+app.whenReady().then(async()=>{if (!hasInstanceLock) return; const bootT0=Date.now();bootLog("boot start");Menu.setApplicationMenu(null);protocol.handle("app",(request)=>{ const url=new URL(request.url); const relativePath=decodeURIComponent(url.pathname).replace(/^\/+/, "")||"index.html"; const target=join(rendererRoot,relativePath); const relCheck=relative(rendererRoot,target); if(!relCheck||relCheck.startsWith(".."+sep)||relCheck===".."||isAbsolute(relCheck)) return new Response("Forbidden",{status:403}); return net.fetch(pathToFileURL(target).toString()); });session.defaultSession.webRequest.onHeadersReceived((details,callback)=>callback({responseHeaders:{...details.responseHeaders,"Content-Security-Policy":["default-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:*; img-src 'self' data:; font-src 'self'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'"]}}));bootLog("pre-window t=" + (Date.now()-bootT0)); createWindow(); bootLog("window created t=" + (Date.now()-bootT0)); void gateway.start();app.on("activate",()=>{if(BrowserWindow.getAllWindows().length===0)createWindow();});}).catch((error)=>{console.error(error);app.quit();});
 let allowQuit = false;
 let quitCleanup: Promise<void> | undefined;
 app.on("before-quit", (event) => {
@@ -825,6 +931,7 @@ app.on("before-quit", (event) => {
   event.preventDefault();
   if (quitCleanup) return;
   terminalBridge.stop();
+  stopAllTerminals();
   for (const controller of chatControllers.values()) controller.abort();
   chatControllers.clear();
   quitCleanup = gateway.stop().catch((error: unknown) => bootLog("gateway shutdown failed: " + String(error))).finally(() => {
