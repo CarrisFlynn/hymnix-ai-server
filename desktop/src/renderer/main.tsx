@@ -124,6 +124,17 @@ function normalizeProviderKind(value: unknown): ProviderKind {
 }
 function providerPreset(kind: ProviderKind) { return PROVIDER_PRESETS.find((item) => item.kind === kind) || PROVIDER_PRESETS[0]; }
 
+function relativeTime(iso?: string): string {
+  if (!iso) return "";
+  const value = new Date(iso).getTime();
+  if (Number.isNaN(value)) return "";
+  const minutes = Math.round((Date.now() - value) / 60000);
+  if (minutes < 1) return t("just now");
+  if (minutes < 60) return tf("{n} min", { n: String(minutes) });
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return tf("{n} h", { n: String(hours) });
+  return tf("{n} d", { n: String(Math.round(hours / 24)) });
+}
 function stamp(): string { return new Date().toISOString(); }
 function formatDuration(seconds: number | undefined): string {
   if (seconds == null || !Number.isFinite(seconds)) return "—";
@@ -1735,6 +1746,15 @@ function App() {
       {chatTab === "chat" && <>
         <ChatViewport messages={messages} footer={toolCard} followSignal={followSignal} empty={emptyChat} busy={chatBusy} onEditMessage={editMessage} onRegenerateMessage={regenerateMessage} onDeleteMessage={deleteMessageTurn} onBranchMessage={branchFrom} onRetryMessage={retryMessage} />
         {messages.length > 0 && composer}
+        {messages.length > 0 && <div className="composer-meta">
+          <span>{messages.length} {t("messages")}</span>
+          <span aria-hidden="true">·</span>
+          <span>~{estimateTokens(messages.map((item) => item.content).join(" "))} {t("tokens")}</span>
+          <span aria-hidden="true">·</span>
+          <span>{modelTitle}</span>
+          <span aria-hidden="true">·</span>
+          <span>{sourceLabel}</span>
+        </div>}
       </>}
       {chatTab === "context" && <div className="chat-tab-body">{contextPanel}</div>}
       {chatTab === "trace" && <div className="chat-tab-body">{tracePanel}</div>}
@@ -2595,47 +2615,48 @@ function App() {
     </div>
 
     <aside className="side" aria-label={t("NAVIGATION")}>
-      <button type="button" className="side-new" onClick={createSession} title={t("New chat")}>
-        <Icon name="Plus" /><span className="side-new-label">{t("New chat")}</span><kbd>Ctrl N</kbd>
+      <button type="button" className="side-new" onClick={createSession}>
+        <Icon name="Plus" /><span className="side-new-label">{t("New chat")}</span>
       </button>
 
-      <nav className="side-list side-nav" aria-label={t("Navigation")}>
+      <nav className="side-nav" aria-label={t("Navigation")}>
         {navGroups.flatMap((group) => group.items).map((item) => <button key={item} type="button" className={active === item ? "side-row active" : "side-row"} onClick={() => { setActive(item); if (item === "Chat") setChatTab("chat"); }} aria-current={active === item ? "page" : undefined} title={t(item === "Gateway" ? "Sharing" : item)}>
           <Icon name={item} /><span className="side-row-label">{t(item === "Gateway" ? "Sharing" : item)}</span>
         </button>)}
       </nav>
 
       <div className="side-workspace">
-        {sessionSearchOpen
-          ? <input className="ws-search" autoFocus value={historyQuery} onChange={(event) => setHistoryQuery(event.target.value)} onBlur={() => { if (!historyQuery.trim()) setSessionSearchOpen(false); }} onKeyDown={(event) => { if (event.key === "Escape") { setHistoryQuery(""); setSessionSearchOpen(false); } }} placeholder={t("Search conversations")} aria-label={t("Search conversations")} />
-          : <>
-            <button type="button" className="ws-btn" onClick={() => void chooseWorkspace()} title={filesRoot || t("Choose a workspace to browse files.")}>
-              <Icon name="Projects" /><span className="ws-name">{workspaceName}</span><Icon name="Chevron" />
-            </button>
-            <button type="button" className="ws-icon" onClick={() => setSessionSearchOpen(true)} aria-label={t("Search conversations")} title={t("Search conversations")}><Icon name="Search" /></button>
-            <button type="button" className="ws-icon" onClick={createSession} aria-label={t("New chat")} title={t("New chat")}><Icon name="Plus" /></button>
-          </>}
+        <div className="ws-head">
+          <span className="ws-label">{t("Workspace")}</span>
+          <button type="button" className="ws-icon" onClick={() => setSessionSearchOpen((value) => !value)} aria-label={t("Search conversations")} title={t("Search conversations")}><Icon name="Search" /></button>
+          <button type="button" className="ws-icon" onClick={() => void chooseWorkspace()} aria-label={t("Choose a workspace to browse files.")} title={t("Choose a workspace to browse files.")}><Icon name="Projects" /></button>
+          <button type="button" className="ws-icon" onClick={createSession} aria-label={t("New chat")} title={t("New chat")}><Icon name="Plus" /></button>
+        </div>
+        {sessionSearchOpen && <input className="ws-search" autoFocus value={historyQuery} onChange={(event) => setHistoryQuery(event.target.value)} onBlur={() => { if (!historyQuery.trim()) setSessionSearchOpen(false); }} onKeyDown={(event) => { if (event.key === "Escape") { setHistoryQuery(""); setSessionSearchOpen(false); } }} placeholder={t("Search conversations")} aria-label={t("Search conversations")} />}
+        <button type="button" className="ws-item" onClick={() => void chooseWorkspace()} title={filesRoot || t("Choose a workspace to browse files.")}>
+          <Icon name="Projects" /><span className="ws-name">{workspaceName}</span>
+        </button>
       </div>
 
       <div className="side-sessions">
         {sessionRows.length === 0
           ? <div className="side-empty">{sessions.length === 0 ? t("No sessions yet") : t("No conversations match your search")}</div>
           : <>
-            <span className="side-group-label">{filesRoot ? workspaceName : t("Unsorted")} <em>{sessionRows.length}</em></span>
-            {sessionRows.slice(0, 60).map((item) => <button type="button" key={item.id} className={"side-session" + (item.id === currentSessionId && chatView ? " active" : "")} onClick={() => openSession(item.id)} title={(item.name || t("New chat")) + " · " + item.count + " " + t("messages")} aria-current={item.id === currentSessionId ? "true" : undefined}>
+            {sessionRows.slice(0, 40).map((item) => <button type="button" key={item.id} className={"side-session" + (item.id === currentSessionId && chatView ? " active" : "")} onClick={() => openSession(item.id)} title={(item.name || t("New chat")) + " · " + item.count + " " + t("messages")} aria-current={item.id === currentSessionId ? "true" : undefined}>
               <span className="side-session-title">{item.name || t("New chat")}</span>
+              <span className="side-session-time">{relativeTime(item.at)}</span>
               {item.pinned && <span className="side-session-pin" aria-hidden="true">✦</span>}
             </button>)}
-            <button type="button" className="side-all" onClick={() => setActive("History")}>{t("See all")}</button>
+            {sessionRows.length > 40 && <button type="button" className="side-all" onClick={() => setActive("History")}>{tf("Show the other {count}", { count: String(sessionRows.length - 40) })}</button>}
           </>}
       </div>
 
       <div className="side-foot">
-        {downloadOccupied && <button type="button" className="side-foot-row" onClick={() => { setActive("Models"); setModelsSection("local"); setModelsTab("Downloads"); }}>
-          <span className="download-ring" style={{ background: "conic-gradient(var(--accent-fill) " + (download?.completed != null && download?.total ? Math.floor(100 * download.completed / download.total) : 0) + "%, var(--sunken) 0)" }}><i /></span>
-          <span className="side-row-label">{download?.model}</span>
-        </button>}
-        <div className="side-usage" title={t("Today")}>{t("Today")} · {todayUsage.messages} {t("messages")} · ~{Math.round(todayUsage.tokens / 100) / 10}k {t("tokens")}</div>
+        <div className="side-usage" title={t("Today")}>
+          <span className="side-usage-head"><span>{t("Today")}</span><span>{todayUsage.messages} {t("messages")}</span></span>
+          <span className="side-usage-bar" aria-hidden="true"><i style={{ width: Math.min(100, Math.max(2, todayUsage.tokens / 40)) + "%" }} /></span>
+          <span className="side-usage-head"><span /> <span>~{(Math.round(todayUsage.tokens / 100) / 10).toFixed(1)}k {t("tokens")}</span></span>
+        </div>
         <button type="button" className={active === "Settings" ? "side-row active" : "side-row"} onClick={() => setActive("Settings")} aria-current={active === "Settings" ? "page" : undefined} title={t("Settings")}>
           <Icon name="Settings" /><span className="side-row-label">{t("Settings")}</span>
         </button>

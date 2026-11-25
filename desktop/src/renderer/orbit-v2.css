@@ -1414,3 +1414,193 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 .btn.tonal { color: var(--accent-text); }
 /* Reading area sits directly on the themed canvas; the user bubble is the only card. */
 .canvas { background: transparent; }
+
+/* ==========================================================================
+   Reference rhythm
+   The first pass under-did the sidebar and over-did the empty space around the
+   reading column. These overrides follow the proportions of the DeepSeek Harness
+   window: 296px sidebar, 40px rows, 52px caption, 800px reading column, 16px
+   composer with a quiet meta line underneath.
+   ========================================================================== */
+
+.app { --side-width: 296px; grid-template-rows: 52px minmax(0, 1fr) 24px; }
+.titlebar { gap: 12px; padding: 0 8px 0 10px; }
+.tb-title { max-width: 46%; font-size: calc(18px * var(--text-scale, 1)); font-weight: 600; }
+.titlebar .status-pill { padding: 2px 9px; font-size: calc(11px * var(--text-scale, 1)); }
+.tb-meta { font-size: calc(12px * var(--text-scale, 1)); }
+.tb-icon { width: 30px; height: 30px; }
+.tb-window button { width: 34px; height: 30px; }
+
+.side { gap: 4px; padding: 10px 10px 8px; }
+.side-new { justify-content: center; height: 40px; gap: 8px; border-radius: 10px; font-size: calc(15px * var(--text-scale, 1)); font-weight: 500; }
+.side-new svg { width: 17px; height: 17px; flex: 0 0 17px; }
+.side-nav { gap: 2px; padding: 8px 0 2px; }
+.side-row { height: 40px; gap: 11px; padding: 0 10px; border-radius: 8px; font-size: calc(15px * var(--text-scale, 1)); font-weight: 450; }
+.side-row svg { width: 18px; height: 18px; flex: 0 0 18px; stroke-width: 1.5; }
+
+.side-workspace { margin-top: 8px; padding-top: 8px; }
+.ws-head { display: flex; height: 28px; align-items: center; gap: 2px; }
+.ws-label { flex: 1 1 auto; padding-left: 10px; color: var(--faint); font-size: calc(12px * var(--text-scale, 1)); font-weight: 500; }
+.ws-icon { width: 26px; height: 26px; flex: 0 0 26px; border-radius: 6px; }
+.ws-item { display: flex; width: 100%; height: 34px; align-items: center; gap: 9px; margin-top: 2px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text); text-align: left; font-size: calc(14.5px * var(--text-scale, 1)); font-weight: 500; }
+.ws-item:hover { background: var(--highlight); }
+.ws-item svg { width: 17px; height: 17px; flex: 0 0 17px; fill: none; stroke: var(--accent-text); stroke-width: 1.6; }
+.ws-search { height: 32px; margin: 2px 0; font-size: calc(13.5px * var(--text-scale, 1)); }
+
+.side-sessions { gap: 1px; padding: 2px 0 8px; }
+.side-session { height: 38px; gap: 8px; padding: 0 10px; border-radius: 8px; font-size: calc(14.5px * var(--text-scale, 1)); }
+.side-session-time { margin-left: auto; color: var(--faint); font-size: calc(11.5px * var(--text-scale, 1)); white-space: nowrap; }
+.side-session.active .side-session-time { color: var(--accent-text); }
+.side-all { margin: 4px 10px 0; font-size: calc(13px * var(--text-scale, 1)); }
+.side-empty { padding: 10px; font-size: calc(13.5px * var(--text-scale, 1)); }
+
+.side-foot { gap: 3px; padding-top: 8px; }
+.side-usage { display: flex; flex-direction: column; gap: 4px; margin-bottom: 2px; padding: 7px 10px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+.side-usage-head { display: flex; justify-content: space-between; color: var(--muted); font-size: calc(11.5px * var(--text-scale, 1)); font-variant-numeric: tabular-nums; }
+.side-usage-bar { height: 4px; overflow: hidden; border-radius: 2px; background: var(--sunken); }
+.side-usage-bar i { display: block; height: 100%; border-radius: 2px; background: linear-gradient(90deg, var(--accent-fill), color-mix(in srgb, var(--accent-fill) 55%, var(--warning))); }
+.side-account { height: 40px; gap: 10px; padding: 0 10px; }
+.side-account .avatar { width: 28px; height: 28px; flex: 0 0 28px; font-size: calc(11px * var(--text-scale, 1)); }
+.side-account .side-row-label strong { font-size: calc(13.5px * var(--text-scale, 1)); }
+.side-account .side-row-label small { font-size: calc(11px * var(--text-scale, 1)); }
+
+.chat-tabs { gap: 22px; padding: 0 32px; }
+.chat-tabs button { padding: 11px 0 12px; font-size: calc(15px * var(--text-scale, 1)); font-weight: 450; }
+.canvas { padding: 26px 40px 20px; }
+.canvas article.bubble { width: min(800px, 100%); padding: 9px 0; }
+.bubble-body p { font-size: calc(15px * var(--text-scale, 1)); line-height: 1.75; }
+.bubble.user .bubble-card { padding: 10px 14px; border-radius: 14px; }
+.bubble-meta { margin-bottom: 4px; font-size: calc(11.5px * var(--text-scale, 1)); }
+.bubble-actions button { width: 26px; height: 25px; }
+.tool-card { width: min(800px, 100%); margin: 8px auto; border-radius: 10px; }
+
+.composer { width: min(800px, calc(100% - 48px)); margin: 8px auto 6px; padding: 12px 12px 8px; border-radius: 16px; }
+.composer textarea { min-height: 56px; padding: 6px 6px 4px; font-size: calc(15px * var(--text-scale, 1)); line-height: 1.6; }
+.composer-bar { gap: 6px; padding-top: 8px; }
+.cb-icon { width: 30px; height: 30px; flex: 0 0 30px; }
+.cb-chip { height: 30px; padding: 0 10px; border-radius: 8px; font-size: calc(13px * var(--text-scale, 1)); }
+.cb-model-source { font-size: calc(11.5px * var(--text-scale, 1)); }
+.cb-level { font-size: calc(10.5px * var(--text-scale, 1)); }
+.composer-send { width: 34px; height: 34px; flex: 0 0 34px; font-size: calc(16px * var(--text-scale, 1)); }
+.composer-meta { display: flex; justify-content: center; gap: 8px; padding: 0 0 12px; color: var(--faint); font-size: calc(11.5px * var(--text-scale, 1)); font-variant-numeric: tabular-nums; }
+
+/* Pages keep the same breath: 760 column, 16px card padding, 8px gaps. */
+.page, .view-page { padding: 20px 28px 32px; }
+.page-head { margin-bottom: 14px; }
+.card { padding: 14px 16px; border-radius: 10px; margin-bottom: 10px; }
+.setting-row { min-height: 36px; padding: 5px 0; }
+.chat-tab-body { padding: 20px 32px 28px; }
+
+@media (max-width: 1200px) { .app { --side-width: 268px; } }
+@media (max-width: 1024px) { .app { --side-width: 56px; } .tb-title { max-width: 60%; } }
+@media (max-width: 900px) {
+  .canvas { padding: 18px 16px 14px; }
+  .chat-tabs { padding: 0 16px; gap: 18px; }
+  .composer { width: calc(100% - 24px); }
+  .page, .view-page { padding: 14px 16px 24px; }
+}
+
+/* The workspace block is a column: label row, optional search, workspace item. */
+.side-workspace { flex-direction: column; align-items: stretch; gap: 2px; }
+.ws-head { height: 24px; }
+.ws-label { flex: 1 1 auto; min-width: 0; padding-left: 10px; font-size: calc(11.5px * var(--text-scale, 1)); white-space: nowrap; }
+.ws-icon { width: 22px; height: 22px; flex: 0 0 22px; border-radius: 5px; }
+.ws-icon svg { width: 12px; height: 12px; }
+.ws-item { height: 32px; margin-top: 0; font-size: calc(14px * var(--text-scale, 1)); }
+.ws-item svg { width: 16px; height: 16px; flex: 0 0 16px; }
+.ws-search { height: 30px; font-size: calc(13px * var(--text-scale, 1)); }
+
+/* One type scale, no runaway sizes: 14px UI, 15px reading, 11-12px meta. */
+.side-new, .side-row { font-size: calc(14px * var(--text-scale, 1)); }
+.side-session { font-size: calc(14px * var(--text-scale, 1)); }
+.side-session-time { font-size: calc(11px * var(--text-scale, 1)); }
+.chat-tabs button { font-size: calc(14px * var(--text-scale, 1)); }
+.tb-title { font-size: calc(15px * var(--text-scale, 1)); font-weight: 600; }
+.tb-meta { font-size: calc(11.5px * var(--text-scale, 1)); }
+.titlebar .status-pill { font-size: calc(10.5px * var(--text-scale, 1)); }
+.bubble-body p { font-size: calc(15px * var(--text-scale, 1)); line-height: 1.72; }
+.composer textarea { font-size: calc(14px * var(--text-scale, 1)); }
+.cb-chip { font-size: calc(12.5px * var(--text-scale, 1)); height: 28px; }
+.side-account .side-row-label strong { font-size: calc(13px * var(--text-scale, 1)); }
+.side-account .side-row-label small { font-size: calc(11px * var(--text-scale, 1)); }
+
+/* Role-based type sizes: conversation content, code, terminal — each independent,
+   exactly like the reference app's three font-size settings. */
+.bubble-body p,
+.bubble-body li,
+.bubble-body h4,
+.bubble-body h5,
+.md-li,
+.bubble-think pre { font-size: var(--content-font-size) !important; line-height: 1.72; }
+.code-block pre { font-size: var(--code-font-size) !important; line-height: 1.6; }
+.bubble-body code { font-size: calc(var(--code-font-size) + 1px) !important; }
+.code-head span, .code-actions .code-copy { font-size: calc(var(--code-font-size) + 1px) !important; }
+.term-line, .term-hint, .term-input input, .term-model select, .term-logfilters button, .term-search, .term-link, .term-pill, .term-body, .term-log-title { font-size: var(--terminal-font-size) !important; }
+.term-time, .term-tag { font-size: calc(var(--terminal-font-size) - 1px) !important; }
+
+/* ==========================================================================
+   Hard-applied reference metrics
+   Every number below is taken from the DeepSeek Harness source (SidebarRoot /
+   AppFrame / theme tokens), not invented: sidebar 280 with 6/8 padding, a 38px
+   New-session bar at radius 12, 36px navigation and session rows, 14px type,
+   hairline borders, 40px tab row, 16px composer radius.
+   ========================================================================== */
+
+.app { --side-width: 280px; grid-template-rows: 48px minmax(0, 1fr) 24px; }
+.titlebar { gap: 10px; padding: 0 6px 0 8px; border-bottom: 1px solid var(--border); }
+.tb-left { gap: 4px; }
+.tb-title { max-width: 46%; font-size: calc(16px * var(--text-scale, 1)); font-weight: 600; letter-spacing: -.01em; }
+.tb-meta { font-size: calc(12px * var(--text-scale, 1)); color: var(--faint); }
+.titlebar .status-pill { padding: 1px 8px; font-size: calc(11px * var(--text-scale, 1)); background: transparent; }
+.tb-icon { width: 28px; height: 28px; border-radius: 8px; }
+.tb-window { gap: 0; margin-left: 4px; }
+.tb-window button { width: 34px; height: 28px; border-radius: 0; }
+
+.side { gap: 0; padding: 6px 8px; }
+.side-new { height: 38px; margin: 0 3px 6px; border-radius: 12px; border-width: 1px; font-size: calc(14px * var(--text-scale, 1)); font-weight: 500; }
+.side-new svg { width: 16px; height: 16px; flex: 0 0 16px; }
+.side-nav { gap: 0; padding: 0; }
+.side-row { height: 36px; gap: 10px; padding: 0 10px; border-radius: 8px; font-size: calc(14px * var(--text-scale, 1)); font-weight: 450; }
+.side-row svg { width: 18px; height: 18px; flex: 0 0 18px; stroke-width: 1.5; }
+.side-row.active { font-weight: 500; }
+.side-row.active::before { content: ""; position: absolute; }
+.side-row { position: relative; }
+
+.side-workspace { margin-top: 10px; padding-top: 10px; gap: 2px; }
+.ws-head { height: 28px; gap: 1px; }
+.ws-label { padding-left: 10px; font-size: calc(12px * var(--text-scale, 1)); font-weight: 500; }
+.ws-icon { width: 26px; height: 26px; flex: 0 0 26px; border-radius: 6px; }
+.ws-item { height: 34px; padding: 0 10px; border-radius: 8px; font-size: calc(14px * var(--text-scale, 1)); }
+.side-sessions { gap: 0; padding: 2px 0 6px; }
+.side-session { height: 36px; padding: 0 10px; border-radius: 8px; font-size: calc(14px * var(--text-scale, 1)); font-weight: 450; }
+.side-session-time { font-size: calc(11px * var(--text-scale, 1)); color: var(--faint); }
+.side-group-label { font-size: calc(11px * var(--text-scale, 1)); }
+
+.side-usage { padding: 8px 10px; border-radius: 10px; background: var(--surface); }
+.side-account { height: 38px; padding: 0 10px; border-radius: 8px; }
+.side-account .avatar { width: 26px; height: 26px; flex: 0 0 26px; }
+
+.chat-tabs { height: 40px; gap: 20px; padding: 0 24px; }
+.chat-tabs button { padding: 0; font-size: calc(14px * var(--text-scale, 1)); font-weight: 450; }
+.chat-tabs button.active { font-weight: 600; }
+.canvas { padding: 24px 32px 18px; }
+.canvas article.bubble { width: min(800px, 100%); padding: 8px 0; }
+.bubble-body p { font-size: var(--content-font-size); line-height: 1.7; }
+.bubble.user .bubble-card { padding: 9px 13px; border-radius: 12px; }
+.composer { width: min(800px, calc(100% - 48px)); padding: 12px 12px 8px; border-radius: 16px; }
+.composer textarea { min-height: 54px; padding: 6px 6px 4px; font-size: var(--content-font-size); line-height: 1.65; }
+.cb-chip { height: 28px; border-radius: 8px; font-size: calc(12.5px * var(--text-scale, 1)); }
+.composer-send { width: 32px; height: 32px; flex: 0 0 32px; border-radius: 50%; }
+.composer-meta { font-size: calc(11.5px * var(--text-scale, 1)); }
+.chat-tab-body { padding: 18px 32px 26px; }
+
+.page, .view-page { padding: 18px 24px 30px; }
+.page-head { margin-bottom: 12px; }
+.page-head h2 { font-size: calc(16px * var(--text-scale, 1)); }
+.page-head p { font-size: calc(12px * var(--text-scale, 1)); }
+.card { padding: 12px 14px; border-radius: 10px; margin-bottom: 8px; }
+.setting-row { min-height: 34px; padding: 4px 0; }
+.section-tabs { margin-bottom: 10px; }
+.section-tabs button { padding: 4px 8px 8px; }
+
+.statusbar { height: 24px; gap: 14px; font-size: calc(11px * var(--text-scale, 1)); }

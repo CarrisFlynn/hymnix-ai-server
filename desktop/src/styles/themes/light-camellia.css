@@ -1,12 +1,13 @@
 :root[data-theme="camellia-white"] {
-  /* One base colour + one accent: sidebar 14%, canvas 5%, cards white. */
-  --bg:#FEF5F6; --sidebar:#FCE2E5; --surface:#FFFFFF; --raised:#FFFFFF; --sunken:#F5E8EA;
-  --border:#E6C1C6; --border-strong:#9D525D;
-  --text:#1A1A1A; --muted:#555555; --faint:#666666;
+  /* Pure-white version of the reference design: neutral surfaces, crimson only
+     on actions, the active icon and the selected row. */
+  --bg:#FFFFFF; --sidebar:#F7F7F7; --surface:#FFFFFF; --raised:#FFFFFF; --sunken:#F5F5F5;
+  --border:#E9E9E9; --border-strong:#8C8C8C;
+  --text:#111111; --muted:#5A5A5A; --faint:#6E6E6E;
   --accent:#E72D48; --accent-fill:#D8233F; --accent-fill-base:#D8233F;
   --accent-hover:#CB1F3A; --accent-hover-base:#CB1F3A; --accent-pressed:#B01A33;
-  --on-accent:#FFFFFF; --accent-text:#C81F3B; --accent-soft:#FCE2E5; --highlight:#FDEAED;
-  --term-bg:#1A1114; --term-fg:#F4E9EB; --term-muted:#A8959A; --term-prompt:#FF6B81;
-  --success:#1B7A57; --success-soft:#E3F3EA; --warning:#A25C00; --warning-soft:#FFF0D6; --danger:#C0262D; --danger-soft:#FDE4E2;
+  --on-accent:#FFFFFF; --accent-text:#C81F3B; --accent-soft:#FDEEF0; --highlight:#F2F2F2;
+  --term-bg:#141414; --term-fg:#F2F2F2; --term-muted:#9A9A9A; --term-prompt:#FF8A97;
+  --success:#1B7A57; --success-soft:#E9F5EE; --warning:#A25C00; --warning-soft:#FFF4E0; --danger:#C0262D; --danger-soft:#FDEAE8;
   --term-success:#4ADE80; --term-warning:#FBBF24; --term-error:#FF8A8A;
 }

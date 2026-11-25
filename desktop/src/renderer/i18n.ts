@@ -2,6 +2,12 @@ export type Lang = "en" | "zh";
 
 export const zh: Record<string, string> = {
   "Unsorted": "未归类",
+  "just now": "刚刚",
+  "{n} min": "{n} 分钟",
+  "{n} h": "{n} 小时",
+  "{n} d": "{n} 天",
+  "Show the other {count}": "展开其余 {count} 个会话",
+
   "Silver Wing": "银翼蓝",
   "Navigation": "导航",
   "pending approvals": "个待审批",

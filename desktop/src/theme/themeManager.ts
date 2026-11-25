@@ -12,11 +12,11 @@ export type ThemeDefinition = {
 export type AppearancePreferences = { mode: AppearanceMode; lightTheme: string; darkTheme: string };
 
 export const THEMES: ThemeDefinition[] = [
-  { id: "camellia-white", mode: "light", label: "Camellia white", swatch: "#E72D48", bg: "#FEF5F6", surface: "#FFFFFF" },
+  { id: "camellia-white", mode: "light", label: "Camellia white", swatch: "#E72D48", bg: "#FFFFFF", surface: "#FFFFFF" },
   { id: "deep-sea-blue", mode: "light", label: "Deep sea blue", swatch: "#122E8A", bg: "#F3F5F9", surface: "#FFFFFF" },
   { id: "ink-green", mode: "light", label: "Ink green", swatch: "#236050", bg: "#F4F7F6", surface: "#FFFFFF" },
   { id: "honey-crimson", mode: "light", label: "Honey crimson", swatch: "#9B0A11", bg: "#FAF3F3", surface: "#FFFFFF" },
-  { id: "cyan-dark", mode: "dark", label: "Silver Wing", swatch: "#00DFEA", bg: "#0A1011", surface: "#161F1F" },
+  { id: "cyan-dark", mode: "dark", label: "Silver Wing", swatch: "#00DFEA", bg: "#000000", surface: "#111111" },
   { id: "orange-dark", mode: "dark", label: "Orange dark", swatch: "#FF812C", bg: "#110E0B", surface: "#201B18" },
   { id: "rog-red-black", mode: "dark", label: "ROG red black", swatch: "#C10000", bg: "#0F0A0A", surface: "#1E1616" },
   { id: "neon-black", mode: "dark", label: "Neon black", swatch: "#00FE92", bg: "#0A110E", surface: "#16201C" },

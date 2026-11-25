@@ -1,12 +1,13 @@
 :root[data-theme="cyan-dark"] {
-  /* One base colour + one accent: black base, sidebar one step up, accent on the edges. */
-  --bg:#0A1011; --sidebar:#111E1F; --surface:#161F1F; --raised:#1B2B2B; --sunken:#050505;
-  --border:#1C5254; --border-strong:#49B4B9;
-  --text:#EDEDED; --muted:#ADADAD; --faint:#8E8E8E;
+  /* Pure-black version: black canvas, one step of grey for the sidebar and cards,
+     the cyan accent kept for actions and the active state. */
+  --bg:#000000; --sidebar:#0A0A0A; --surface:#111111; --raised:#171717; --sunken:#050505;
+  --border:#242424; --border-strong:#7A7A7A;
+  --text:#EDEDED; --muted:#A0A0A0; --faint:#808080;
   --accent:#00DFEA; --accent-fill:#00DFEA; --accent-fill-base:#00DFEA;
   --accent-hover:#33E8F1; --accent-hover-base:#33E8F1; --accent-pressed:#00C4CE;
-  --on-accent:#000000; --accent-text:#00DFEA; --accent-soft:#104143; --highlight:#112B2D;
-  --term-bg:var(--bg); --term-fg:var(--text); --term-muted:var(--muted); --term-prompt:var(--accent-text);
+  --on-accent:#001416; --accent-text:#00DFEA; --accent-soft:#0C2326; --highlight:#161616;
+  --term-bg:#000000; --term-fg:#EDEDED; --term-muted:#808080; --term-prompt:#00DFEA;
   --success:#3DDC97; --success-soft:#0E2A20; --warning:#FFB84D; --warning-soft:#2A2110; --danger:#FF6B6B; --danger-soft:#2A1414;
   --term-success:#3DDC97; --term-warning:#FFB84D; --term-error:#FF6B6B;
 }
