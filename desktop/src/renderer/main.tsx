@@ -289,9 +289,6 @@ function App() {
   // Claude-style layout: the conversation owns the width, settings are a toggle.
   // The right-hand inspector is gone: model and reasoning live in the composer,
   // telemetry in the status bar and the Context tab.
-  const [welcomeOpen, setWelcomeOpen] = useState(() => { try { return localStorage.getItem("hymnix.welcome") !== "1"; } catch { return true; } });
-  const [welcomeStep, setWelcomeStep] = useState(0);
-  const [welcomeSkipped, setWelcomeSkipped] = useState<string[]>([]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => { try { return localStorage.getItem("hymnix.sidebar.collapsed") === "1"; } catch { return false; } });
   const [historyQuery, setHistoryQuery] = useState("");
   const [modelsTab, setModelsTab] = useState<"Installed" | "Discover" | "Downloads">("Installed");
@@ -822,7 +819,6 @@ function App() {
           localStorage.setItem("hymnix.welcome", "1");
           localStorage.setItem("hymnix.whatsNew", __APP_VERSION__);
         } catch { /* private mode */ }
-        setWelcomeOpen(false);
         setWhatsNewOpen(false);
         setQrOpen(false);
         setClosePromptOpen(false);
@@ -907,7 +903,6 @@ function App() {
   function changeLang(next: Lang) { setLang(next); setLangState(next); }
   // Exactly one theme card carries a tick. Picking a light theme unticks the dark
   // row and vice versa, because there is only one active theme at a time.
-  const backButton = canGoBack ? <button type="button" className="page-back" onClick={goBack} aria-label={t("Back")} title={`${t("Back")} · Alt+←`}><span aria-hidden="true">←</span><span className="page-back-text">{t("Back")}</span></button> : null;
   function goBack(): void {
     const target = navTrailRef.current[navTrailRef.current.length - 1];
     if (!target) return;
@@ -1722,6 +1717,7 @@ function App() {
                 }}>
                 <div className="effort-track" data-level={EFFORT_LEVELS[Math.round(effortDrag ?? effortIndex)].key} aria-hidden="true" />
                 <span className="effort-fill" style={{ width: ((effortDrag ?? effortIndex) / 3) * 100 + "%" }} aria-hidden="true" />
+                <span className="effort-ticks" aria-hidden="true">{EFFORT_LEVELS.map((level, index) => <i key={level.key} style={{ left: (index / 3) * 100 + "%" }} />)}</span>
                 <span className="effort-thumb" style={{ left: ((effortDrag ?? effortIndex) / 3) * 100 + "%" }} aria-hidden="true" />
               </div>
               <div className="effort-stops">{EFFORT_LEVELS.map((level, index) => <button key={level.key} type="button" className={index <= effortIndex ? "on" : ""} data-disabled={level.key === "max" && !maxSupported ? "true" : "false"} onClick={() => { if (index === 3 && !maxSupported) return; setEffort(level.key); }}>{level.label}</button>)}</div>
@@ -1834,7 +1830,7 @@ function App() {
       : null;
 
     return <section className="chat-page">
-      <div className="chat-head">
+      <div className="page-head chat-head">
         {renamingSession
           ? <form className="rename-session" onSubmit={(event) => { event.preventDefault(); commitRenameSession(); }}><input autoFocus value={renameDraft} onChange={(event) => setRenameDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setRenamingSession(false); }} aria-label={t("Conversation name")} /><button className="btn primary" type="submit">{t("Save name")}</button></form>
           : <h1 className="chat-title" title={t("Double-click to rename")} onDoubleClick={beginRenameSession}>{sessionName}</h1>}
@@ -2076,7 +2072,7 @@ function App() {
       return `${item.name} ${item.model} ${transcript.map((message) => message.content).join(" ")}`.toLowerCase().includes(historyQuery.trim().toLowerCase());
     });
     return <section className="view-page">
-      <div className="view-heading">{backButton}<div><label>{t("CONVERSATIONS")}</label><h2>{t("History")}</h2><p>{t("Saved conversations on this machine.")}</p></div><button className="btn danger" onClick={() => setClearAllConfirm(true)} disabled={!sessions.length}>{t("Clear all")}</button></div>
+      <div className="page-head"><div><label>{t("CONVERSATIONS")}</label><h2>{t("History")}</h2><p>{t("Saved conversations on this machine.")}</p></div><button className="btn danger" onClick={() => setClearAllConfirm(true)} disabled={!sessions.length}>{t("Clear all")}</button></div>
       <div className="history-toolbar"><input type="search" value={historyQuery} onChange={(event) => setHistoryQuery(event.target.value)} placeholder={t("Search conversations...")} aria-label={t("Search conversations")} /><span className="hint">{filtered.length} {t("conversations")}</span></div>
       {filtered.length === 0 ? <div className="card empty-state"><div className="empty-orbit" aria-hidden="true">✦</div><strong>{sessions.length ? t("No conversations match your search") : t("Your conversations will appear here")}</strong><span>{sessions.length ? t("Try another search term.") : t("Messages are saved automatically on this device.")}</span><button className="btn primary" onClick={createSession}>{t("Start chatting")}</button></div> : <div className="list conversation-list">{filtered.map((item) => {
         const record = savedSessions.find((session) => session.id === item.id);
@@ -2099,7 +2095,7 @@ function App() {
       { key: "share", label: t("Start sharing"), done: tunnelState === "up" },
     ];
     return <section className="view-page">
-      <div className="view-heading">{backButton}<div><label>{t("SHARING & CONNECTIONS")}</label><h2>{t("Sharing")}</h2><p>{t("Share this computer's model service with friends. Connecting to a friend or adding a cloud provider lives on the Models page.")}</p></div><button className="btn ghost" onClick={() => { void loadNetwork(); void loadCloud(); void loadHealth(); void loadHostClients(); }}>{t("Refresh")}</button></div>
+      <div className="page-head"><div><label>{t("SHARING & CONNECTIONS")}</label><h2>{t("Sharing")}</h2><p>{t("Share this computer's model service with friends. Connecting to a friend or adding a cloud provider lives on the Models page.")}</p></div><button className="btn ghost" onClick={() => { void loadNetwork(); void loadCloud(); void loadHealth(); void loadHostClients(); }}>{t("Refresh")}</button></div>
       <div className="sharing-summary card"><span className={"status-pill " + (tunnelState === "up" ? "success" : "neutral")}><span className="status-dot" />{t(tunnelState === "up" ? "Sharing" : "Not sharing")}</span><span>{t("Clients online")}: <strong>{online}</strong></span><span className="public-link">{tunnelUrl || t("No public link yet")}</span>{tunnelUrl && <button className="btn tonal" onClick={() => void navigator.clipboard?.writeText(tunnelUrl)}>{t("Copy link")}</button>}{tunnelUrl && <button className="btn" onClick={() => setQrOpen(true)}>{t("Show QR code")}</button>}</div>
       <div className="section-head"><div><h3>{t("Share this computer")}</h3><p className="subtitle">{t("People connect with the address and password below; their chats run on your hardware.")}</p></div></div>
 
@@ -2152,7 +2148,7 @@ function App() {
     const enabledCount = plugins.filter((item) => item.enabled).length;
     const loadedCount = plugins.filter((item) => item.loaded).length;
     return <section className="view-page plugin-page">
-      <div className="view-heading">{backButton}<div><label>{t("EXTENSIONS")}</label><h2>{t("Plugin center")}</h2><p>{t("Manage local plugins, requested permissions and runtime status.")}</p></div>
+      <div className="page-head"><div><label>{t("EXTENSIONS")}</label><h2>{t("Plugin center")}</h2><p>{t("Manage local plugins, requested permissions and runtime status.")}</p></div>
         <div className="header-actions"><button type="button" className="btn ghost" onClick={() => void loadPlugins()} disabled={pluginsBusy || !!pluginActionBusy}>{t(pluginsBusy ? "Loading plugins..." : "Refresh plugins")}</button><button type="button" className="btn primary" onClick={() => void installPlugin()} disabled={pluginsBusy || !!pluginActionBusy}>{t("Install local plugin")}</button></div>
       </div>
       <div className="plugin-summary card"><span>{tf("Installed {count} · Enabled {enabled} · Loaded {loaded}", { count: String(plugins.length), enabled: String(enabledCount), loaded: String(loadedCount) })}</span><small>{t("Permissions are granted individually; revoking one stops the plugin.")}</small></div>
@@ -2184,7 +2180,7 @@ function App() {
     const clients = Array.isArray(statusData?.clients) ? statusData.clients : [];
     const recent = Array.isArray(statusData?.recent) ? statusData.recent : [];
     return <section className="view-page">
-      <div className="view-heading">{backButton}<div><label>{t("GATEWAY MONITOR")}</label><h2>{t("Monitor")}</h2><p>{t("Review gateway health, usage and active operations.")}</p></div><div className="header-actions"><label className="inline-toggle"><input type="checkbox" checked={monitorAutoRefresh} onChange={(event) => setMonitorAutoRefresh(event.target.checked)} />{t("Auto refresh · 5s")}</label><button className="btn ghost" onClick={() => { void loadHealth(); if (adminKey.trim()) void loadStatus(); void pollTunnel(); }}>{t("Refresh")}</button></div></div>
+      <div className="page-head"><div><label>{t("GATEWAY MONITOR")}</label><h2>{t("Monitor")}</h2><p>{t("Review gateway health, usage and active operations.")}</p></div><div className="header-actions"><label className="inline-toggle"><input type="checkbox" checked={monitorAutoRefresh} onChange={(event) => setMonitorAutoRefresh(event.target.checked)} />{t("Auto refresh · 5s")}</label><button className="btn ghost" onClick={() => { void loadHealth(); if (adminKey.trim()) void loadStatus(); void pollTunnel(); }}>{t("Refresh")}</button></div></div>
       <div className="metric-grid">
         <div className="metric-card"><span>{t("Status")}</span><strong><i className={"status-dot " + (state === "ready" ? "success" : "warning")} />{statusLabel}</strong><small>{health?.gateway || t("Gateway")}</small></div>
         <div className="metric-card"><span>{t("Models")}</span><strong>{health?.models ?? models.length}</strong><small>{health?.ollama ? t("Model service online") : t("Model service offline")}</small></div>
@@ -2200,19 +2196,9 @@ function App() {
     </section>;
   }
 
-  function finishWelcome() {
-    try {
-      localStorage.setItem("hymnix.welcome", "1");
-      // Mark this version as seen so the changelog card does not pop up right after setup.
-      localStorage.setItem("hymnix.whatsNew", __APP_VERSION__);
-    } catch { /* ignore */ }
-    setWelcomeOpen(false);
-    setStartupNote(t("Gateway ready. Local models are listed on the Models page."));
-    window.setTimeout(() => setStartupNote(""), 6000);
-  }
   function renderSupport() {
     return <section className="view-page">
-      <div className="view-heading">{backButton}<div><label>{t("SUPPORT")}</label><h2>{t("Sponsor")}</h2><p>{t("Sponsor the project or send feedback.")}</p></div></div>
+      <div className="page-head"><div><label>{t("SUPPORT")}</label><h2>{t("Sponsor")}</h2><p>{t("Sponsor the project or send feedback.")}</p></div></div>
       <div className="card">
         <div className="setting-row"><label>{t("Sponsor")}<span className="hint">爱发电</span></label><div className="controls"><button className="btn primary" onClick={() => void window.hymnix.system.openExternal("https://ifdian.net/a/hymnixstudio")}>{t("Open sponsor page")}</button></div></div>
         <div className="setting-row"><label>{t("Source code")}<span className="hint">GitHub</span></label><div className="controls"><button className="btn" onClick={() => void window.hymnix.system.openExternal("https://github.com/CarrisFlynn/hymnix-ai-server")}>github.com/CarrisFlynn/hymnix-ai-server</button></div></div>
@@ -2223,50 +2209,6 @@ function App() {
         <div className="setting-row"><label>{t("Carris on X")}<span className="hint">@ShayHymnix</span></label><div className="controls"><button className="btn" onClick={() => void window.hymnix.system.openExternal("https://x.com/ShayHymnix")}>x.com/ShayHymnix</button></div></div>
       </div>
     </section>;
-  }
-  function renderWelcome() {
-    const serviceReady = health?.ollama === true || state === "ready";
-    const hasModel = models.length > 0;
-    const stepped = [
-      { key: "service", title: t("Model service"), done: serviceReady || welcomeSkipped.includes("service"), detail: serviceReady ? t("Running") : t("Needed before a model can answer.") },
-      { key: "model", title: t("A model"), done: hasModel || welcomeSkipped.includes("model"), detail: hasModel ? tf("{count} installed", { count: String(models.length) }) : t("Download one that fits this computer.") },
-      { key: "hello", title: t("Say hello"), done: messages.length > 0 || welcomeSkipped.includes("hello"), detail: messages.length > 0 ? t("First message sent") : t("Send your first message.") },
-    ];
-    const nextStep = stepped.find((step) => !step.done);
-    const skip = (key: string) => setWelcomeSkipped((current) => current.includes(key) ? current : [...current, key]);
-    const gpu = stats?.vramTotal;
-    const chooseCloud = () => { setSource("cloud"); setActive("Models"); setModelsSection("api"); setWelcomeOpen(false); };
-    const chooseFriend = () => { setActive("Models"); setModelsSection("remote"); setWelcomeOpen(false); };
-    return <div className="welcome-mask" role="dialog" aria-modal="true" aria-label={t("Welcome")}>
-      <div className="welcome-card onboarding">
-        <div className="welcome-brand"><img src={brandIcon} alt="" /><div><strong>Hymnix Orbit</strong><small>{__APP_VERSION__}</small></div></div>
-        <h2>{t("Welcome to Hymnix Orbit")}</h2>
-        <p>{t("Everything stays on this device. Get set up in three steps.")}</p>
-
-        <div className="welcome-setup">
-          <div className="setting-row"><label>{t("Language")}</label><div className="controls segmented"><button className={lang === "en" ? "active" : ""} onClick={() => changeLang("en")}>English</button><button className={lang === "zh" ? "active" : ""} onClick={() => changeLang("zh")}>中文</button></div></div>
-          <div className="setting-row"><label>{t("Theme")}<span className="hint">{tf("Live preview · {name}", { name: t(THEMES.find((item) => item.id === theme)?.label || "") })}</span></label><div className="controls theme-swatches">{THEMES.map((preset) => <button key={preset.id} type="button" className={"theme-swatch " + (theme === preset.id ? "selected" : "")} aria-label={t(preset.label)} aria-pressed={theme === preset.id} onClick={() => changeTheme(preset.id)}><i style={{ background: preset.swatch }} /></button>)}</div></div>
-        </div>
-
-        <ol className="welcome-steps">{stepped.map((step, index) => <li key={step.key} className={step.done ? "done" : ""}>
-          <span className="welcome-step-mark" aria-hidden="true">{step.done ? "✓" : index + 1}</span>
-          <div className="welcome-step-copy"><strong>{step.title}</strong><small>{step.detail}</small>
-            {step.key === "service" && !serviceReady && <button className="btn primary" onClick={() => void startOllama()} disabled={ollamaBusy}>{t(ollamaBusy ? "Starting Ollama..." : "Start Ollama")}</button>}
-            {step.key === "model" && !hasModel && <div className="welcome-step-actions"><button className="btn primary" onClick={() => { setActive("Models"); setModelsTab("Discover"); setWelcomeOpen(false); }}>{t("Browse models")}</button>{gpu ? <span className="chip accent">{tf("Fits your {gb} GB GPU", { gb: String(gpu) })}</span> : null}</div>}
-            {step.key === "model" && hasModel && <ModelCombobox value={model} options={models} gpuGb={gpu} onChange={setModel} />}
-            {step.key === "hello" && <form className="welcome-hello" onSubmit={(event) => { event.preventDefault(); if (model || source === "cloud") { finishWelcome(); void send(); } }}><input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={t("Say hello to your model")} aria-label={t("Say hello to your model")} /><button className="btn primary" type="submit" disabled={!draft.trim()}>{t("Send")}</button></form>}
-          </div>
-          {!step.done && <button className="btn ghost welcome-skip" onClick={() => skip(step.key)}>{t("Skip")}</button>}
-        </li>)}</ol>
-
-        {netError && <p className="error">{netError}</p>}
-        <div className="welcome-actions">
-          <button className="btn primary" onClick={() => { if (nextStep?.key === "service") { void startOllama(); return; } if (nextStep?.key === "model") { setActive("Models"); setModelsTab("Discover"); setWelcomeOpen(false); return; } finishWelcome(); }}>{nextStep?.key === "service" ? t("Start Ollama") : nextStep?.key === "model" ? t("Choose a model") : t("Start chatting")}</button>
-          <button className="btn ghost" onClick={chooseCloud}>{t("Use a cloud model instead")}</button>
-          <button className="btn ghost" onClick={chooseFriend}>{t("Connect to a friend's computer")}</button>
-        </div>
-      </div>
-    </div>;
   }
   async function setSetting(key: keyof typeof DEFAULT_UI_SETTINGS, value: unknown) {
     setUiSettings((current) => ({ ...current, [key]: value }) as typeof current);
@@ -2603,7 +2545,7 @@ function App() {
       </button>;
     });
     return <section className="view-page">
-      <div className="view-heading">{backButton}<div><label>{t("APPLICATION")}</label><h2>{t("Settings")}</h2><p>{t("Workspace and connection preferences.")}</p></div></div>
+      <div className="page-head"><div><label>{t("APPLICATION")}</label><h2>{t("Settings")}</h2><p>{t("Workspace and connection preferences.")}</p></div></div>
       <div className="settings-layout"><nav className="settings-nav" aria-label={t("Settings sections")}>{sections.map((section) => <button className={settingsSection === section ? "active" : ""} key={section} onClick={() => setSettingsSection(section)}>{t(section)}</button>)}</nav><div className="settings-content">
         {restartKeys.length > 0 && <div className="restart-bar" role="status"><span>{tf("{count} changes need a restart", { count: String(restartKeys.length) })}</span><button type="button" className="btn primary" onClick={() => void window.hymnix.window.control("restart")}>{t("Restart now")}</button><button type="button" className="btn ghost" onClick={() => setRestartKeys([])}>{t("Later")}</button></div>}
         {settingsSection === "General" && <div className="card">{head("General", "General")}
@@ -2738,7 +2680,7 @@ function App() {
         <button type="button" className={active === "Settings" ? "side-row active" : "side-row"} onClick={() => setActive("Settings")} aria-current={active === "Settings" ? "page" : undefined} title={t("Settings")}>
           <Icon name="Settings" /><span className="side-row-label">{t("Settings")}</span>
         </button>
-        <button type="button" className="side-account" onClick={() => setWelcomeOpen(true)} title={t("Connection") + " · " + t(state)}>
+        <button type="button" className="side-account" onClick={() => setActive("Settings")} title={t("Connection") + " · " + t(state)}>
           <span className="avatar">{mode === "remote" ? "R" : "L"}</span>
           <span className="side-row-label"><strong>{mode === "local" ? t("Local mode") : t("Remote host")}</strong><small>{t(state)}</small></span>
           <span className="dot account-dot" data-state={state} aria-hidden="true" />
@@ -2771,7 +2713,6 @@ function App() {
     {download && <ModelDownloadFooter download={download} lang={lang} remote={remoteActive()}
       onPause={() => stopModelDownload("pause")} onResume={resumeModelDownload}
       onCancel={() => stopModelDownload("cancel")} onDismiss={() => setDownload(null)} />}
-    {welcomeOpen && renderWelcome()}
     {whatsNewOpen && <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) { setWhatsNewOpen(false); try { localStorage.setItem("hymnix.whatsNew", __APP_VERSION__); } catch { /* private mode */ } } }}>
       <section className="confirm-dialog whats-new" role="dialog" aria-modal="true" aria-labelledby="whats-new-title">
         <div className="dialog-icon">✦</div>

@@ -1712,3 +1712,65 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 @media (max-width: 900px) {
   .timeline-row { grid-template-columns: minmax(0, 1fr); gap: 8px; }
 }
+
+/* The picker is placed by JS (fixed), never by absolute positioning. */
+.model-panel { position: fixed; top: auto; right: auto; bottom: auto; left: auto; z-index: 80; }
+
+/* One header height everywhere: 52px, same padding, divider on the bottom edge. */
+.chat-head,
+.page-head,
+.view-heading { display: flex; height: 52px; min-height: 52px; align-items: center; gap: 12px; margin: 0 0 16px; padding: 0; border-bottom: 1px solid var(--border); }
+.chat-head { gap: 22px; padding: 0 24px; }
+.page-head, .view-heading { position: relative; }
+.page-head::after, .view-heading::after { display: none; }
+.page, .view-page { padding: 0 24px 30px; }
+.chat-title { font-size: calc(15px * var(--text-scale, 1)); }
+.page-head h2, .view-heading h2 { font-size: calc(15px * var(--text-scale, 1)); }
+
+
+/* ==========================================================================
+   ONE header row, used by every page (the terminal keeps its own chrome).
+   Structure is identical: [title] ... [actions]; the chat page adds its tabs
+   inside the same row. Height 52, inline padding 24, hairline on the bottom.
+   ========================================================================== */
+.page-head {
+  display: flex;
+  height: 52px;
+  min-height: 52px;
+  align-items: center;
+  gap: 12px;
+  margin: 0 -24px 16px;
+  padding: 0 24px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+}
+.page-head::after { display: none; content: none; }
+.page-head h2 { margin: 0; color: var(--text); font-size: calc(15px * var(--text-scale, 1)); font-weight: 600; letter-spacing: -.01em; white-space: nowrap; }
+.page-head p, .page-head label, .page-head small { display: none; }
+.page-head .page-actions, .page-head .header-actions { display: flex; margin-left: auto; align-items: center; gap: 6px; }
+.chat-head { margin: 0; padding: 0 24px; gap: 22px; }
+.chat-head .chat-title { margin: 0; max-width: 40%; font-size: calc(15px * var(--text-scale, 1)); font-weight: 600; }
+
+/* Model picker: fixed placement is computed in JS; visual box only. */
+.model-panel { position: fixed; z-index: 80; }
+
+/* ==========================================================================
+   Reasoning slider: thin track, tick dots, small thumb, accent fill.
+   ========================================================================== */
+.effort-slider-wrap { position: relative; height: 32px; cursor: pointer; touch-action: none; }
+.effort-slider-wrap:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 6px; }
+.effort-track { position: absolute; top: 50%; right: 0; left: 0; height: 6px; border-radius: 3px; background: color-mix(in srgb, var(--accent-fill) 16%, var(--sunken)); transform: translateY(-50%); }
+.effort-fill { position: absolute; top: 50%; left: 0; height: 6px; border-radius: 3px; background: var(--accent-fill); transform: translateY(-50%); transition: width 90ms linear; }
+.effort-ticks { position: absolute; top: 50%; right: 0; left: 0; height: 0; }
+.effort-ticks i { position: absolute; top: -2px; width: 4px; height: 4px; border-radius: 50%; background: var(--surface); transform: translateX(-50%); }
+.effort-thumb { position: absolute; top: 50%; width: 16px; height: 16px; margin-left: -8px; border: 2px solid var(--surface); border-radius: 50%; background: var(--accent-fill); box-shadow: 0 1px 3px color-mix(in srgb, var(--text) 30%, transparent); transform: translateY(-50%); transition: left 90ms linear; }
+.effort-stops { display: flex; justify-content: space-between; margin-top: 6px; }
+.effort-stops button { padding: 0; border: 0; background: transparent; color: var(--faint); font-size: calc(10.5px * var(--text-scale, 1)); }
+.effort-stops button.on { color: var(--accent-text); font-weight: 600; }
+.effort-stops button[data-disabled="true"] { opacity: .4; }
+.mp-close { display: grid; width: 28px; height: 28px; place-items: center; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font-size: calc(16px * var(--text-scale, 1)); }
+.mp-close:hover { background: var(--highlight); color: var(--text); }
+
+/* Reserve the scrollbar gutter so every page's header has the same right edge. */
+.page, .view-page { scrollbar-gutter: stable; }

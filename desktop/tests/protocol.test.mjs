@@ -25,7 +25,7 @@ for (const token of ['aria-live="polite"', 'aria-current', 'Conversation turns']
 assert.ok(chat.includes("messageDay") && read("../src/renderer/chat.tsx").includes("formatMessageTime"), "chat messages must group by date and display readable times");
 for (const page of ["Files", "Tools", "Approvals", "Logs"]) assert.ok(!renderer.includes(`return render${page}()`), `${page} page must stay removed`);
 assert.ok(renderer.includes('if (active === "Changelog") return renderChangelog()'), "changelog must be the only log page");
-assert.ok(renderer.includes('className="page-back"') && renderer.includes("navTrailRef"), "every page needs a way back");
+assert.ok(renderer.includes("navTrailRef") && renderer.includes("function goBack") && renderer.includes('key === "ArrowLeft"'), "every page needs a way back (Alt+Left and the nav trail)");
 assert.ok(renderer.includes('items: ["Chat", "Models", "Gateway", "Plugins", "Changelog", "Support"]'), "changelog and sponsor belong in the main list");
 assert.ok(renderer.includes('if (active === "Plugins") return renderPlugins()'), "Plugins navigation must reach the management workflow");
 assert.ok(preload.includes('ipcRenderer.invoke("plugins:list")') && main.includes('ipcMain.handle("plugins:action"'), "plugin management must use validated preload IPC");
