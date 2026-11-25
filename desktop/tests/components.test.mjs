@@ -85,7 +85,7 @@ test("every interface string has Chinese copy", () => {
   // The plan makes both languages first-class, so a missing key is a bug, not a
   // fallback. Scan the literals passed to t()/tf() and require a zh entry each.
   const dir = new URL("../src/renderer/", import.meta.url);
-  const sources = ["main.tsx", "components.tsx", "chat.tsx", "chat-navigation.tsx", "design-lab.tsx", "ModelCatalog.tsx"];
+  const sources = ["main.tsx", "components.tsx", "chat.tsx", "chat-navigation.tsx", "ModelCatalog.tsx"];
   const keys = new Set();
   for (const file of sources) {
     const text = fs.readFileSync(new URL(file, dir), "utf8");

@@ -1604,3 +1604,63 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 .section-tabs button { padding: 4px 8px 8px; }
 
 .statusbar { height: 24px; gap: 14px; font-size: calc(11px * var(--text-scale, 1)); }
+
+/* ==========================================================================
+   Layout pass 2 — empty caption, brand in the sidebar, one-row chat header,
+   full-bleed page dividers, no subtitles.
+   ========================================================================== */
+
+.titlebar { padding: 0 8px; }
+.tb-left { gap: 0; }
+.tb-window { margin-left: auto; gap: 0; }
+
+.side-brand-wrap { position: relative; margin: 2px 3px 8px; }
+.side-brand { display: flex; width: 100%; height: 40px; align-items: center; gap: 9px; padding: 0 8px; border: 1px solid transparent; border-radius: 10px; background: transparent; color: var(--text); }
+.side-brand:hover { background: var(--highlight); }
+.side-brand img { width: 22px; height: 22px; flex: 0 0 22px; border-radius: 6px; }
+.side-brand-name { flex: 1 1 auto; overflow: hidden; color: var(--text); font-size: calc(19px * var(--text-scale, 1)); font-weight: 600; letter-spacing: -.02em; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.side-brand svg { width: 14px; height: 14px; flex: 0 0 14px; color: var(--faint); fill: none; stroke: currentColor; stroke-width: 1.8; }
+.side-brand-wrap .product-menu { top: 44px; right: 0; left: 0; width: auto; }
+
+/* One row: title, then the three tabs right after it, actions pinned right. */
+.chat-head { display: flex; height: 44px; flex: 0 0 auto; align-items: center; gap: 22px; padding: 0 24px; border-bottom: 1px solid var(--border); }
+.chat-title { overflow: hidden; max-width: 38%; margin: 0; color: var(--text); font-size: calc(15px * var(--text-scale, 1)); font-weight: 600; letter-spacing: -.01em; text-overflow: ellipsis; white-space: nowrap; cursor: text; }
+.chat-head .chat-tabs { display: flex; height: 100%; align-items: stretch; gap: 18px; padding: 0; border: 0; }
+.chat-head .chat-tabs button { height: 100%; padding: 0; border: 0; background: transparent; color: var(--muted); font-size: calc(14px * var(--text-scale, 1)); font-weight: 450; }
+.chat-head .chat-tabs button:hover { color: var(--text); }
+.chat-head .chat-tabs button.active { color: var(--text); font-weight: 600; }
+.chat-head .chat-tabs button.active::after { right: 0; bottom: -1px; left: 0; }
+.chat-head-actions { display: flex; margin-left: auto; align-items: center; gap: 4px; }
+.chat-head .rename-session { display: flex; align-items: center; gap: 6px; }
+.chat-head .rename-session input { height: 30px; }
+
+/* Page headers: one left-aligned title, divider edge to edge, no subtitle. */
+.view-page, .page { padding-top: 0; }
+.view-heading, .page-head { position: relative; display: flex; align-items: center; gap: 12px; margin: 0 0 18px; padding: 18px 0 10px; }
+.view-heading::after, .page-head::after { position: absolute; right: -24px; bottom: 0; left: -24px; height: 1px; background: var(--border); content: ""; }
+.view-heading > div, .view-heading > div:not(.header-actions) { flex: 1 1 auto; min-width: 0; }
+.view-heading label, .view-heading > div > label, .view-heading p, .page-head p { display: none; }
+.view-heading h2, .page-head h2 { margin: 0; color: var(--text); font-size: calc(16px * var(--text-scale, 1)); font-weight: 600; letter-spacing: -.01em; }
+.view-heading .header-actions, .page-actions { margin-left: auto; }
+.view-heading .page-back { position: static; }
+
+/* Red "no model" chip. */
+.cb-chip.model.is-empty { border-color: color-mix(in srgb, var(--danger) 55%, var(--border)); background: var(--danger-soft); color: var(--danger); }
+.cb-chip.model.is-empty .cb-model-name { color: var(--danger); }
+.cb-chip.model.is-empty .cb-model-source { color: color-mix(in srgb, var(--danger) 70%, var(--faint)); }
+
+/* Density: comfortable is the roomier one, compact the tighter one. */
+:root[data-density="comfortable"] { --row-h: 36px; --list-h: 36px; }
+:root[data-density="compact"] { --row-h: 32px; --list-h: 30px; }
+.side-row, .side-new { height: var(--row-h, 36px); }
+.side-session, .ws-item { height: var(--list-h, 36px); }
+
+/* The model panel sits above the composer and never crosses the header. */
+.model-panel { max-height: min(58vh, 440px); }
+
+/* Pages are left-aligned and full width: the header divider runs edge to edge,
+   the title starts at the same 24px in every page. */
+.page, .view-page { width: 100%; max-width: none; margin: 0; padding: 0 24px 30px; }
+.models-page { max-width: none; }
+.view-heading, .page-head { margin: 0 0 18px; padding: 18px 0 10px; }
+.view-heading::after, .page-head::after { right: -24px; left: -24px; }

@@ -39,7 +39,6 @@ const PAGES = [
   "Settings",
   "Changelog",
   "Support",
-  "DesignLab",
 ];
 
 type DevHook = {

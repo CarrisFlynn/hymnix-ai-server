@@ -14,7 +14,6 @@ import { ModelCatalog } from "./ModelCatalog";
 import { DEFAULT_CATALOG_FILTERS, type CatalogFilters } from "./model-catalog";
 import { MODEL_CATALOG } from "./model-catalog-data";
 import { ModelCombobox, PasswordMeter, QrCode, SkeletonList, ErrorPanel, TooltipLayer, passwordStrength } from "./components";
-import { DesignLab } from "./design-lab";
 import { estimateTokens, parseSlashCommand, classifyConnectError, downloadBytes } from "./lib/pure.js";
 
 declare global { interface Window { hymnix: DesktopApi } }
@@ -734,6 +733,24 @@ function App() {
     void window.hymnix.credentials?.get("adminKey").then((value) => { if (value) setAdminKey(value); }).catch(() => undefined);
   }, []);
   useEffect(() => { void loadProviders(); }, []);
+  // Any click outside the composer closes the model panel: a popover must never
+  // survive a click on the page, a tab switch or a keystroke into the message box.
+  useEffect(() => {
+    if (modelPopover === "closed") return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target && target.closest(".composer")) return;
+      setModelPopover("closed");
+    };
+    const onKeyDown = () => setModelPopover("closed");
+    document.addEventListener("pointerdown", onPointerDown, true);
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      window.removeEventListener("keydown", onKeyDown, true);
+    };
+  }, [modelPopover]);
+  useEffect(() => { setModelPopover("closed"); setConversationMenuOpen(false); }, [active]);
   // Sidebar footer: what this machine did today, straight from the saved sessions.
   useEffect(() => {
     const today = new Date().toDateString();
@@ -824,7 +841,12 @@ function App() {
           id: currentSessionId, name: title, createdAt: previous?.createdAt || now, updatedAt: now,
           count: messages.length, model, draft, messages, pinned: previous?.pinned || false,
         };
-        const next = [record, ...current.filter((item) => item.id !== currentSessionId)].slice(0, 200);
+        // Keep the row where it is while the user types or reopens it; only a new
+        // message (count went up) moves the conversation to the top.
+        const moved = !previous || record.count > (previous.count || 0);
+        const next = (moved
+          ? [record, ...current.filter((item) => item.id !== currentSessionId)]
+          : current.map((item) => (item.id === currentSessionId ? record : item))).slice(0, 200);
         writeChatSessions(next);
         return next;
       });
@@ -1540,10 +1562,17 @@ function App() {
     const effortIndex = Math.max(0, EFFORT_LEVELS.findIndex((level) => level.key === effort));
     const effortLevel = EFFORT_LEVELS[effortIndex];
     const maxSupported = source === "cloud" ? activeProvider?.max_effort === true : false;
+    // "No model" means nothing can answer right now: no local service, no cloud
+    // profile, no tunnel. A remembered model name must not pretend otherwise.
+    const modelUsable = source === "cloud"
+      ? Boolean(cloudBase.trim() && cloudModel.trim())
+      : mode === "remote" ? Boolean(serverBase.trim()) : (Boolean(model) && health?.ollama === true);
     const sourceLabel = source === "cloud"
       ? (activeProvider?.label || t("Cloud API"))
       : mode === "remote" ? (guestName || t("Remote host")) : t("Local model");
-    const modelTitle = source === "cloud" ? (cloudModel || t("No model selected")) : (model || t("No model selected"));
+    const modelTitle = modelUsable
+      ? (source === "cloud" ? cloudModel : model)
+      : t("No model");
     const sessionStart = savedSessions.find((item) => item.id === currentSessionId)?.createdAt;
     const elapsed = sessionStart ? formatDuration(Math.max(0, Math.round((Date.now() - new Date(sessionStart).getTime()) / 1000))) : "";
     const query = modelQuery.trim().toLowerCase();
@@ -1590,7 +1619,7 @@ function App() {
           <button type="button" className={"cb-chip approval" + (autoApprove ? " auto" : "")} onClick={() => void toggleAutoApprove(!autoApprove)} aria-pressed={autoApprove} title={t("Tool approval")}>
             <Icon name="Approvals" />{t(autoApprove ? "Auto allow" : "Ask every time")}
           </button>
-          <button type="button" className={"cb-chip model" + (source === "cloud" && !cloudBase.trim() ? " is-empty" : "")} onClick={() => setModelPopover((value) => value === "closed" ? "root" : "closed")} aria-expanded={modelPopover !== "closed"} aria-haspopup="dialog">
+          <button type="button" className={"cb-chip model" + (modelUsable ? "" : " is-empty")} onClick={() => setModelPopover((value) => value === "closed" ? "root" : "closed")} aria-expanded={modelPopover !== "closed"} aria-haspopup="dialog">
             <span className="cb-model-name">{modelTitle}</span>
             <span className="cb-model-source">{sourceLabel}</span>
             <span className="cb-level" data-level={effortLevel.key}>{effortLevel.label}</span>
@@ -1740,9 +1769,26 @@ function App() {
       : null;
 
     return <section className="chat-page">
-      <nav className="chat-tabs" role="tablist" aria-label={t("Conversation views")}>
-        {(["chat", "context", "trace"] as const).map((tab) => <button key={tab} type="button" role="tab" aria-selected={chatTab === tab} className={chatTab === tab ? "active" : ""} onClick={() => setChatTab(tab)}>{t(tab === "chat" ? "Chat" : tab === "context" ? "Context" : "Trace")}</button>)}
-      </nav>
+      <div className="chat-head">
+        {renamingSession
+          ? <form className="rename-session" onSubmit={(event) => { event.preventDefault(); commitRenameSession(); }}><input autoFocus value={renameDraft} onChange={(event) => setRenameDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setRenamingSession(false); }} aria-label={t("Conversation name")} /><button className="btn primary" type="submit">{t("Save name")}</button></form>
+          : <h1 className="chat-title" title={t("Double-click to rename")} onDoubleClick={beginRenameSession}>{sessionName}</h1>}
+        <nav className="chat-tabs" role="tablist" aria-label={t("Conversation views")}>
+          {(["chat", "context", "trace"] as const).map((tab) => <button key={tab} type="button" role="tab" aria-selected={chatTab === tab} className={chatTab === tab ? "active" : ""} onClick={() => setChatTab(tab)}>{t(tab === "chat" ? "Chat" : tab === "context" ? "Context" : "Trace")}</button>)}
+        </nav>
+        <div className="chat-head-actions">
+          <div className="conversation-menu-wrap" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setConversationMenuOpen(false); }}>
+            <button type="button" className="btn ghost icon-button" aria-label={t("Conversation actions")} aria-haspopup="menu" aria-expanded={conversationMenuOpen} onClick={() => setConversationMenuOpen((value) => !value)}>⋯</button>
+            {conversationMenuOpen && <div className="conversation-menu" role="menu">
+              <button type="button" role="menuitem" onClick={beginRenameSession}>{t("Rename conversation")}</button>
+              <button type="button" role="menuitem" onClick={() => { toggleCurrentPin(); setConversationMenuOpen(false); }}>{t(savedSessions.find((item) => item.id === currentSessionId)?.pinned ? "Unpin conversation" : "Pin conversation")}</button>
+              <button type="button" role="menuitem" onClick={() => { exportChat(); setConversationMenuOpen(false); }}>{t("Export chat")}</button>
+              <hr />
+              <button type="button" role="menuitem" className="danger" onClick={() => { clearCurrentConversation(); setConversationMenuOpen(false); }}>{t("Clear conversation")}</button>
+            </div>}
+          </div>
+        </div>
+      </div>
       {chatTab === "chat" && <>
         <ChatViewport messages={messages} footer={toolCard} followSignal={followSignal} empty={emptyChat} busy={chatBusy} onEditMessage={editMessage} onRegenerateMessage={regenerateMessage} onDeleteMessage={deleteMessageTurn} onBranchMessage={branchFrom} onRetryMessage={retryMessage} />
         {messages.length > 0 && composer}
@@ -2532,7 +2578,7 @@ function App() {
         </div>}
         {settingsSection === "Sharing and security" && <div className="card settings-link-card">{head("Sharing and security", "Sharing and security")}<p className="subtitle">{t("Configure host sharing, connections and cloud provider credentials.")}</p><button className="btn primary" onClick={() => setActive("Gateway")}>{t("Open sharing settings")}</button></div>}
                 {settingsSection === "Shortcuts" && <div className="card">{head("Shortcuts", "Shortcuts")}<div className="setting-row"><label>{t("Send with Shift+Enter")}<span className="hint">{t("Swap the Enter and Shift+Enter behaviour.")}</span></label><div className="controls"><button type="button" className={"switch" + (enterSwaps ? " on" : "")} aria-pressed={enterSwaps} aria-label={t("Send with Shift+Enter")} onClick={() => setEnterSwaps((value) => !value)}><span /></button></div></div><div className="shortcut-list">{[["Ctrl+N", "New session"], ["Ctrl+L", "Focus message composer"], ["Ctrl+B", "Toggle sidebar"], ["Ctrl+.", "Toggle inspector"], ["Ctrl+,", "Open settings"], ["Ctrl+/", "Open the shortcut sheet"], ["Ctrl+1–5", "Navigate primary pages"], ["Ctrl+Shift+C", "Copy last reply"], ["Ctrl+Shift+E", "Export chat"], [enterSwaps ? "Shift+Enter" : "Enter", "Send message"], [enterSwaps ? "Enter" : "Shift+Enter", "New line"], ["↑", "Edit the last message"], ["Esc", "Close or stop"]].map(([shortcut, action]) => <div key={shortcut}><kbd>{shortcut}</kbd><span>{t(action)}</span></div>)}</div></div>}
-        {settingsSection === "About" && <div className="card">{head("About", "About")}<div className="about-brand"><img src={brandIcon} alt="" /><span><strong>Hymnix Orbit</strong><small>{__APP_VERSION__} · Hymnix Studio</small></span></div><div className="setting-row"><label>{t("Updates")}<span className="hint">{updateState.detail || tf("Installed version {version}", { version: __APP_VERSION__ })}</span></label><div className="controls"><button className="btn" onClick={() => void checkUpdates()} disabled={updateState.status === "checking"}>{t(updateState.status === "checking" ? "Checking..." : "Check for updates")}</button>{updateState.status === "available" && updateState.url && <button className="btn primary" onClick={() => void window.hymnix.system.openExternal(updateState.url)}>{t("Open download page")}</button>}<button className="btn ghost" onClick={() => void window.hymnix.system.openExternal("https://github.com/CarrisFlynn/hymnix-ai-server/releases")}>{t("View releases")}</button></div></div><div className="setting-row"><label>{t("Help")}</label><div className="controls"><button className="btn" onClick={() => setActive("Support")}>{t("Sponsor")}</button><button className="btn ghost" onClick={() => setActive("Changelog")}>{t("Changelog")}</button><button className="btn ghost" onClick={() => setActive("DesignLab")}>{t("Component gallery")}</button></div></div></div>}
+        {settingsSection === "About" && <div className="card">{head("About", "About")}<div className="about-brand"><img src={brandIcon} alt="" /><span><strong>Hymnix Orbit</strong><small>{__APP_VERSION__} · Hymnix Studio</small></span></div><div className="setting-row"><label>{t("Updates")}<span className="hint">{updateState.detail || tf("Installed version {version}", { version: __APP_VERSION__ })}</span></label><div className="controls"><button className="btn" onClick={() => void checkUpdates()} disabled={updateState.status === "checking"}>{t(updateState.status === "checking" ? "Checking..." : "Check for updates")}</button>{updateState.status === "available" && updateState.url && <button className="btn primary" onClick={() => void window.hymnix.system.openExternal(updateState.url)}>{t("Open download page")}</button>}<button className="btn ghost" onClick={() => void window.hymnix.system.openExternal("https://github.com/CarrisFlynn/hymnix-ai-server/releases")}>{t("View releases")}</button></div></div><div className="setting-row"><label>{t("Help")}</label><div className="controls"><button className="btn" onClick={() => setActive("Support")}>{t("Sponsor")}</button><button className="btn ghost" onClick={() => setActive("Changelog")}>{t("Changelog")}</button></div></div></div>}
       </div></div>
     </section>;
   }
@@ -2547,7 +2593,6 @@ function App() {
     if (active === "Changelog") return renderChangelog();
     if (active === "Support") return renderSupport();
     if (active === "Settings") return renderSettings();
-    if (active === "DesignLab") return <DesignLab lang={lang} mode={appearanceMode === "auto" ? systemMode() : appearanceMode} onLang={changeLang} onMode={changeAppearanceMode} onTheme={changeTheme} themes={THEMES} />;
     // Removed pages (Files, Tools, Approvals, Logs, Support) fall back to chat
     // instead of showing a dead "capability" screen.
     return renderChat();
@@ -2561,7 +2606,7 @@ function App() {
   const sourceLabel = source === "cloud"
     ? (activeProvider?.label || t("Cloud API"))
     : mode === "remote" ? (guestName || t("Remote host")) : t("Local model");
-  const modelTitle = source === "cloud" ? (cloudModel || t("No model selected")) : (model || t("No model selected"));
+  const modelTitle = (source === "cloud" ? cloudModel : model) || t("No model");
   const workspaceName = filesRoot ? filesRoot.split(/[\\/]/).filter(Boolean).pop() || t("Workspace") : t(workspace);
   const titleLabel = chatView ? sessionName : t(active === "Gateway" ? "Sharing" : active);
   const sessionRows = sessions
@@ -2575,46 +2620,31 @@ function App() {
         <button type="button" className="tb-icon" onClick={() => setSidebarCollapsed((value) => !value)} aria-label={t(sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar")} title={t(sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar")}>
           <span aria-hidden="true">{sidebarCollapsed ? "»" : "«"}</span>
         </button>
-        <button type="button" className="product-switch" onClick={() => setProductMenuOpen((value) => !value)} aria-expanded={productMenuOpen} aria-haspopup="menu">
-          <img src={brandIcon} alt="" />
-          <strong>{surface === "ai" ? t("Hymnix AI") : t("Hymnix Orbit")}</strong>
-          <Icon name="Chevron" />
-        </button>
       </div>
-      <div className="tb-center">
-        <h1 className="tb-title" title={chatView ? t("Double-click to rename") : titleLabel} onDoubleClick={chatView ? beginRenameSession : undefined}>{titleLabel}</h1>
-        {chatView && <span className={"status-pill " + (state === "ready" ? "success" : state === "error" ? "danger" : "neutral")}><span className="status-dot" />{t(state === "ready" ? "Ready" : state === "starting" ? "Starting" : state === "error" ? "Error" : "Limited")}</span>}
-        {chatView && <span className="tb-meta">{messages.length} {t("messages")}</span>}
-        {chatView && <span className="tb-meta">~{estimateTokens(messages.map((item) => item.content).join(" "))} {t("tokens")}</span>}
+      <div className="titlebar-drag" />
+      <div className="tb-window">
+        {previewOpen && <button type="button" className="preview-close" onClick={() => void closePreview()}>{t("Close preview")}</button>}
+        <button type="button" onClick={() => void window.hymnix.window.control("minimize")} aria-label={t("Minimize")}>–</button>
+        <button type="button" onClick={() => void window.hymnix.window.control("maximize")} aria-label={t("Maximize")}>▢</button>
+        <button type="button" className="close" onClick={requestClose} aria-label={t("Close")}>✕</button>
       </div>
-      <div className="tb-right">
-        {chatView && <div className="conversation-menu-wrap" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setConversationMenuOpen(false); }}>
-          <button type="button" className="tb-icon" aria-label={t("Conversation actions")} aria-haspopup="menu" aria-expanded={conversationMenuOpen} onClick={() => setConversationMenuOpen((value) => !value)}>⋯</button>
-          {conversationMenuOpen && <div className="conversation-menu" role="menu">
-            <button type="button" role="menuitem" onClick={beginRenameSession}>{t("Rename conversation")}</button>
-            <button type="button" role="menuitem" onClick={() => { toggleCurrentPin(); setConversationMenuOpen(false); }}>{t(savedSessions.find((item) => item.id === currentSessionId)?.pinned ? "Unpin conversation" : "Pin conversation")}</button>
-            <button type="button" role="menuitem" onClick={() => { exportChat(); setConversationMenuOpen(false); }}>{t("Export chat")}</button>
-            <hr />
-            <button type="button" role="menuitem" className="danger" onClick={() => { clearCurrentConversation(); setConversationMenuOpen(false); }}>{t("Clear conversation")}</button>
-          </div>}
-        </div>}
-        <div className="tb-window">
-          {previewOpen && <button type="button" className="preview-close" onClick={() => void closePreview()}>{t("Close preview")}</button>}
-          <button type="button" onClick={() => void window.hymnix.window.control("minimize")} aria-label={t("Minimize")}>–</button>
-          <button type="button" onClick={() => void window.hymnix.window.control("maximize")} aria-label={t("Maximize")}>▢</button>
-          <button type="button" className="close" onClick={requestClose} aria-label={t("Close")}>✕</button>
-        </div>
-      </div>
-      {productMenuOpen && <div className="product-menu" role="menu" onMouseLeave={() => setProductMenuOpen(false)}>
-        {SURFACES.map((item) => <button key={item.id} type="button" role="menuitemradio" aria-checked={surface === item.id} className={surface === item.id ? "active" : ""} onClick={() => { setSurface(item.id); setProductMenuOpen(false); }}>
-          <span className="product-dot" data-surface={item.id} aria-hidden="true" />
-          <span className="product-copy"><strong>{t(item.label)}</strong><small>{t(item.hint)}</small></span>
-          {surface === item.id && <span className="product-check" aria-hidden="true">✓</span>}
-        </button>)}
-      </div>}
     </div>
 
     <aside className="side" aria-label={t("NAVIGATION")}>
+      <div className="side-brand-wrap">
+        <button type="button" className="side-brand" onClick={() => setProductMenuOpen((value) => !value)} aria-expanded={productMenuOpen} aria-haspopup="menu">
+          <img src={brandIcon} alt="" />
+          <span className="side-brand-name">{surface === "ai" ? t("Hymnix AI") : t("Hymnix Orbit")}</span>
+          <Icon name="Chevron" />
+        </button>
+        {productMenuOpen && <div className="product-menu" role="menu">
+          {SURFACES.map((item) => <button key={item.id} type="button" role="menuitemradio" aria-checked={surface === item.id} className={surface === item.id ? "active" : ""} onClick={() => { setSurface(item.id); setProductMenuOpen(false); }}>
+            <span className="product-dot" data-surface={item.id} aria-hidden="true" />
+            <span className="product-copy"><strong>{t(item.label)}</strong><small>{t(item.hint)}</small></span>
+            {surface === item.id && <span className="product-check" aria-hidden="true">✓</span>}
+          </button>)}
+        </div>}
+      </div>
       <button type="button" className="side-new" onClick={createSession}>
         <Icon name="Plus" /><span className="side-new-label">{t("New chat")}</span>
       </button>
