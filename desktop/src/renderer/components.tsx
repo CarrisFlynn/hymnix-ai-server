@@ -71,7 +71,13 @@ export function TooltipLayer() {
 
   if (!tip) return null;
   const below = tip.y < 64;
-  return <div className="tooltip" role="tooltip" style={{ left: tip.x, top: below ? tip.y + 38 : tip.y - 10, transform: "translate(-50%, -100%)" }} data-flip={below ? "down" : "up"}>{tip.label}</div>;
+  // Keep the tooltip inside the viewport. It is centred on the anchor, so a button
+  // near the right edge used to lose about 120px of its hint to overflow: hidden.
+  // The half-width is estimated from the label because this renders before layout.
+  const half = Math.min(140, Math.max(56, tip.label.length * 3.5));
+  const margin = 8;
+  const left = Math.max(margin + half, Math.min(window.innerWidth - margin - half, tip.x));
+  return <div className="tooltip" role="tooltip" style={{ left, top: below ? tip.y + 38 : tip.y - 10, transform: "translate(-50%, -100%)" }} data-flip={below ? "down" : "up"}>{tip.label}</div>;
 }
 
 /* --------------------------------------------------------------- skeleton */

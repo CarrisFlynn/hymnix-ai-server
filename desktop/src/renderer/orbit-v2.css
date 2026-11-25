@@ -452,7 +452,10 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 .client-row small, .activity-row small { margin-top: 3px; color: var(--muted); font-size: calc(10px * var(--text-scale, 1)); }
 .empty-inline { padding: 12px 0; color: var(--muted); font-size: calc(11px * var(--text-scale, 1)); }
 .activity-dot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: var(--accent-fill); }
-.inline-toggle { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: calc(11px * var(--text-scale, 1)); }
+/* A page header ends in one right-aligned cluster of controls. Without this the
+   block-level children stacked and the label was squeezed into a vertical column. */
+.header-actions { display: flex; min-width: 0; flex: 0 0 auto; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+.inline-toggle { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: calc(11px * var(--text-scale, 1)); white-space: nowrap; }
 .inline-toggle input { accent-color: var(--accent-fill); }
 .error { color: var(--danger); font-size: calc(12px * var(--text-scale, 1)); }
 .notice { margin: 6px 16px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--muted); font-size: calc(11px * var(--text-scale, 1)); }

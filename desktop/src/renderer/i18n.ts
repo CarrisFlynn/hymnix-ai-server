@@ -2,6 +2,8 @@ export type Lang = "en" | "zh";
 
 export const zh: Record<string, string> = {
   "Check for updates": "检查更新",
+  "Forget": "清除",
+  "Remember on this device": "记住这台设备",
   "Checking...": "正在检查…",
   "Chats run on {host}.": "对话运行在 {host} 上。",
   "Chats run on this computer.": "对话运行在这台电脑上。",
