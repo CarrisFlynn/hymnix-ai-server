@@ -8,7 +8,7 @@ Hymnix Orbit 1.3.3 is one application with three processes:
 Electron renderer (React, app://hymnix)  <--IPC-->  Electron main  <--HTTP loopback-->  headless gateway  -->  Ollama / cloud provider
 ```
 
-- **Renderer** — `desktop/src/renderer`. React + TypeScript, built by Vite into `dist/renderer` and loaded over the privileged `app://` protocol (not `file://`, so ES modules and CSP behave normally). It has no Node access.
+- **Renderer** — `desktop/src/renderer`. React + TypeScript, built by Vite into `dist/renderer` and loaded over the privileged `app://` protocol (not `file://`, so ES modules and CSP behave normally). It has no Node access. The shell is three columns — navigation rail, conversation list, content — with a persistent status bar and no right-hand inspector.
 - **Main** — `desktop/src/main`. Owns the window, the gateway lifecycle, credentials, files, the terminal, provider adapters and every outbound request.
 - **Gateway** — `server/headless_gateway.py` (packaged as `backend-gateway-headless.exe`) running `server/gateway_core.py`. It is supervised by `GatewayLifecycle` and speaks to Ollama at `127.0.0.1:11434`.
 - **Console (legacy)** — `server/hymnix_main.py` is the old Tk console. It is not shipped by the installer and is kept for reference and for the extra pages the desktop shell does not expose.
@@ -22,9 +22,12 @@ There is no separate client executable any more: the desktop app is both host an
 | Window, tray, single-instance lock | main (`desktop/src/main/main.ts`) |
 | Gateway spawn, health probe, restart, shutdown | main (`gateway-lifecycle.ts`) |
 | Chat streaming, provider dialects (OpenAI, Anthropic, OpenClaw) | main (`providers.ts`), streamed to the renderer as `gateway:delta` events |
+| Model list for the composer | renderer joins three sources: local gateway models, saved cloud profiles, and the connected remote host |
 | Files, workspace root, terminal | main; the renderer may only ask, never read directly |
 | Settings, credential vault, cache path | main; `safeStorage` (DPAPI) for secrets |
 | Theme, density, text scale | renderer; the resolved background colour is reported back to main so the next window paints in the right colour |
+| Cloud provider profiles | gateway (`/admin/providers`); the selected profile is copied into `cloud_api`, which is what the chat path reads |
+| Tool approval policy | gateway config (`auto_approve_tools`), toggled from the composer |
 
 Every `ipcMain.handle` starts with `assertSender(event)`: only `app://hymnix/index.html` and loopback dev pages may call. The preload (`src/preload/preload.ts`) exposes a typed `window.hymnix` API and nothing else; `contextIsolation`, `sandbox` and `webSecurity` stay on, and `window.open`/navigation are denied.
 

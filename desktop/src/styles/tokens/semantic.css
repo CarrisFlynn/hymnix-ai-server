@@ -25,4 +25,9 @@
 
   /* layers */
   --z-popover: 40; --z-dialog: 60; --z-toast: 80;
+
+  /* reasoning effort scale: one hue family, hotter as it climbs (composer slider) */
+  --effort-low: #6D5CFF; --effort-mid: #A855F7; --effort-high: #C026D3; --effort-max: #E879F9;
+  --effort-soft: color-mix(in srgb, var(--effort-mid) 16%, var(--surface));
+  --effort-ink: color-mix(in srgb, var(--effort-high) 68%, var(--text));
 }

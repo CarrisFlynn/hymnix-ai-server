@@ -786,6 +786,8 @@ function registerCloudIpc(): void {
     }
     return {...payload, ok: payload.ok, online: payload.online, ready};
   });
+  ipcMain.handle("providers:list", async (event) => { assertSender(event); return adminJson("admin/providers"); });
+  ipcMain.handle("providers:save", async (event, raw: unknown) => { assertSender(event); return adminJson("admin/providers", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(raw && typeof raw === "object" ? raw : {}) }); });
   ipcMain.handle("config:get", async (event) => { assertSender(event); return adminJson("admin/config", { method: "GET" }); });
   ipcMain.handle("config:set", async (event, raw: unknown) => { assertSender(event); return adminJson("admin/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(raw && typeof raw === "object" ? raw : {}) }); });
   ipcMain.handle("cloud:get", async (event) => {

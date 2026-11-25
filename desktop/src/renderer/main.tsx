@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import type { ApprovalRecord, DesktopApi, GatewayHealth, PluginDescriptor, ProviderKind, TerminalBridgeReply, ToolDescriptor } from "../shared/protocol";
+import type { ApprovalRecord, DesktopApi, GatewayHealth, PluginDescriptor, ProviderKind, ProviderProfile, TerminalBridgeReply, ToolDescriptor } from "../shared/protocol";
 import "../styles/index.css";
 import "./styles.css";
 import "./orbit-v2.css";
@@ -52,7 +52,14 @@ const ICONS: Record<string, string> = {
   Logs: "M6 4h9l3 3v13H6zM9 11h6M9 15h6",
   Support: "M12 3l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8L3.5 9.2l5.9-.9z",
   Gateway: "M4 12h16M12 4v16M7 7l10 10M17 7L7 17",
-  Changelog: "M6 4h12v16H6zM9 8h6M9 12h6M9 16h4"
+  Changelog: "M6 4h12v16H6zM9 8h6M9 12h6M9 16h4",
+  Sparkle: "M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z",
+  Plus: "M12 5v14M5 12h14",
+  Search: "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM16.5 16.5L21 21",
+  Chevron: "M8 10l4 4 4-4",
+  Cloud: "M7 18h10a4 4 0 0 0 .4-8 6 6 0 0 0-11.6 2A3 3 0 0 0 7 18z",
+  Link: "M9 15l6-6M8 7l2-2a4 4 0 0 1 6 6l-2 2M16 17l-2 2a4 4 0 0 1-6-6l2-2",
+  Chip: "M8 8h8v8H8zM4 9v6M20 9v6M9 4h6M9 20h6"
 };
 function Icon({ name }: { name: string }) { return <svg viewBox="0 0 24 24" aria-hidden="true"><path d={ICONS[name] || ICONS.Chat} /></svg> }
 
@@ -60,6 +67,34 @@ const navGroups = [
   { title: "WORKSPACE", items: ["Chat", "Models", "Gateway", "Plugins", "Changelog", "Support"] },
   { title: "DEVELOPER", items: ["Monitor", "Terminal"] }
 ];
+
+/** The two product surfaces, mirroring ChatGPT / Codex: same history, different agent. */
+const SURFACES = [
+  { id: "ai" as const, label: "Hymnix AI", hint: "General assistant" },
+  { id: "orbit" as const, label: "Hymnix Orbit", hint: "Coding agent" }
+];
+
+/** Four reasoning stops; the slider moves through this list. */
+const EFFORT_LEVELS = [
+  { key: "low", label: "Low" },
+  { key: "medium", label: "Medium" },
+  { key: "high", label: "High" },
+  { key: "max", label: "Max" }
+] as const;
+
+/** Vendor presets for the add-provider form. Only defaults; everything is editable. */
+const PROVIDER_CATALOG = [
+  { id: "deepseek", label: "DeepSeek", kind: "openai", base: "https://api.deepseek.com/v1", models: ["deepseek-chat", "deepseek-reasoner"] },
+  { id: "openai", label: "OpenAI", kind: "openai", base: "https://api.openai.com/v1", models: ["gpt-4.1", "gpt-4.1-mini", "o4-mini"] },
+  { id: "anthropic", label: "Anthropic Claude", kind: "anthropic", base: "https://api.anthropic.com", models: ["claude-sonnet-4-5", "claude-haiku-4-5"] },
+  { id: "moonshot", label: "Moonshot Kimi", kind: "openai", base: "https://api.moonshot.cn/v1", models: ["kimi-k2-0905-preview", "moonshot-v1-128k"] },
+  { id: "zhipu", label: "智谱 GLM", kind: "openai", base: "https://open.bigmodel.cn/api/paas/v4", models: ["glm-4.6", "glm-4.5-air"] },
+  { id: "qwen", label: "通义千问", kind: "openai", base: "https://dashscope.aliyuncs.com/compatible-mode/v1", models: ["qwen3-max", "qwen-plus"] },
+  { id: "openrouter", label: "OpenRouter", kind: "openai", base: "https://openrouter.ai/api/v1", models: [] },
+  { id: "groq", label: "Groq", kind: "openai", base: "https://api.groq.com/openai/v1", models: [] },
+  { id: "openclaw", label: "OpenClaw local gateway", kind: "openclaw", base: "http://127.0.0.1:18789", models: ["openclaw/default"] },
+  { id: "custom", label: "Custom", kind: "openai", base: "", models: [] }
+] as const;
 
 const SLASH_COMMANDS = [
   { name: "/model", detail: "Switch the active model", insert: "/model " },
@@ -235,14 +270,15 @@ function App() {
   const [currentSessionId, setCurrentSessionId] = useState(() => initialSessionsRef.current?.[0]?.id || newSessionId());
   const [sessionName, setSessionName] = useState(() => initialSessionsRef.current?.[0]?.name || "New chat");
   // Claude-style layout: the conversation owns the width, settings are a toggle.
-  const [inspectorOpen, setInspectorOpen] = useState(false);
+  // The right-hand inspector is gone: model and reasoning live in the composer,
+  // telemetry in the status bar and the Context tab.
   const [welcomeOpen, setWelcomeOpen] = useState(() => { try { return localStorage.getItem("hymnix.welcome") !== "1"; } catch { return true; } });
   const [welcomeStep, setWelcomeStep] = useState(0);
   const [welcomeSkipped, setWelcomeSkipped] = useState<string[]>([]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => { try { return localStorage.getItem("hymnix.sidebar.collapsed") === "1"; } catch { return false; } });
   const [historyQuery, setHistoryQuery] = useState("");
   const [modelsTab, setModelsTab] = useState<"Installed" | "Discover" | "Downloads">("Installed");
-  const [gatewayTab, setGatewayTab] = useState<"Host" | "Connect" | "API providers">("Host");
+
   const [settingsSection, setSettingsSection] = useState("General");
   const [terminalFilter, setTerminalFilter] = useState("All");
   const [terminalSearch, setTerminalSearch] = useState("");
@@ -279,6 +315,23 @@ function App() {
   const [savedHosts, setSavedHosts] = useState<SavedHost[]>(readSavedHosts);
   const [shareTest, setShareTest] = useState<{ state: "idle" | "testing" | "ok" | "fail"; message: string; category?: string }>({ state: "idle", message: "" });
   const [updateState, setUpdateState] = useState<{ status: "idle" | "checking" | "current" | "available" | "error"; detail: string; url: string }>({ status: "idle", detail: "", url: "" });
+  // ---- Codex-style shell state -------------------------------------------
+  const [surface, setSurface] = useState<"ai" | "orbit">(() => { try { return localStorage.getItem("hymnix.surface") === "orbit" ? "orbit" : "ai"; } catch { return "ai"; } });
+  const [productMenuOpen, setProductMenuOpen] = useState(false);
+  const [chatTab, setChatTab] = useState<"chat" | "context" | "trace">("chat");
+  const [modelsSection, setModelsSection] = useState<"local" | "api" | "remote">("local");
+  const [providers, setProviders] = useState<ProviderProfile[]>([]);
+  const [activeProviderId, setActiveProviderId] = useState("");
+  const [providersBusy, setProvidersBusy] = useState(false);
+  const [providerError, setProviderError] = useState("");
+  const [autoApprove, setAutoApprove] = useState(false);
+  const [modelPopover, setModelPopover] = useState<"closed" | "root" | "models">("closed");
+  const [modelQuery, setModelQuery] = useState("");
+  const [providerForm, setProviderForm] = useState<null | {
+    id: string; label: string; kind: string; base_url: string; api_key: string; models: string[];
+    max_effort: boolean; agent_id: string; max_tokens: number;
+    tab: "catalog" | "custom"; catalogId: string; modelDraft: string;
+  }>(null);
   const [savedFlash, setSavedFlash] = useState(false);
   const transport = useRef<{ startedAt: number; chars: number; reasoningStartedAt: number | null; reasoningMs: number }>({ startedAt: 0, chars: 0, reasoningStartedAt: null, reasoningMs: 0 });
   const composerRef = useRef<HTMLTextAreaElement>(null);
@@ -667,6 +720,10 @@ function App() {
   useEffect(() => {
     void window.hymnix.credentials?.get("adminKey").then((value) => { if (value) setAdminKey(value); }).catch(() => undefined);
   }, []);
+  useEffect(() => { void loadProviders(); }, []);
+  useEffect(() => { try { localStorage.setItem("hymnix.surface", surface); } catch { /* private mode */ } }, [surface]);
+  // The surface sets the default working mode: Orbit is the coding agent.
+  useEffect(() => { setComposerMode(surface === "orbit" ? "code" : "chat"); }, [surface]);
   useEffect(() => {
     void window.hymnix.system.disk("").then((info) => setDiskFree(info?.free ?? null)).catch(() => undefined);
   }, []);
@@ -708,7 +765,7 @@ function App() {
       if (mod && key === "f" && active === "Terminal") { event.preventDefault(); terminalSearchRef.current?.focus(); terminalSearchRef.current?.select(); return; }
       if (mod && key === "n") { event.preventDefault(); createSession(); return; }
       if (mod && key === "b") { event.preventDefault(); setSidebarCollapsed((value) => !value); return; }
-      if (mod && key === ".") { event.preventDefault(); setInspectorOpen((value) => !value); return; }
+      if (mod && key === ".") { event.preventDefault(); setModelPopover((value) => (value === "closed" ? "root" : "closed")); return; }
       if (mod && key === ",") { event.preventDefault(); setActive("Settings"); return; }
       if (mod && key === "l") { event.preventDefault(); setActive("Chat"); window.setTimeout(() => composerRef.current?.focus(), 0); return; }
       if (mod && key === "/") { event.preventDefault(); setActive("Settings"); setSettingsSection("Shortcuts"); return; }
@@ -723,13 +780,13 @@ function App() {
         if (renamingSession) { event.preventDefault(); setRenamingSession(false); return; }
         if (previewOpen) { event.preventDefault(); void closePreview(); return; }
         if (stopShareConfirm) { event.preventDefault(); setStopShareConfirm(false); return; }
-        if (inspectorOpen && active === "Chat") { event.preventDefault(); setInspectorOpen(false); return; }
+        if (modelPopover !== "closed") { event.preventDefault(); setModelPopover("closed"); return; }
         if (requestRef.current) { event.preventDefault(); cancel(); return; }
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [active, clearAllConfirm, modelDeleteTarget, pluginDeleteTarget, qrOpen, conversationMenuOpen, renamingSession, previewOpen, stopShareConfirm, inspectorOpen]);
+  }, [active, clearAllConfirm, modelDeleteTarget, pluginDeleteTarget, qrOpen, conversationMenuOpen, renamingSession, previewOpen, stopShareConfirm, modelPopover]);
   useEffect(() => {
     if (!messages.length && !draft.trim() && !savedSessions.some((item) => item.id === currentSessionId)) return;
     const timer = window.setTimeout(() => {
@@ -1446,133 +1503,391 @@ function App() {
     const selectedLocalModel = models.find((item) => item.name === model);
     const modelNeedsLoad = source === "local" && !!selectedLocalModel && selectedLocalModel.loaded === false;
     const checkingService = source === "local" && !remoteActive() && health === null;
-    const cloudUnconfigured = source === "cloud" && (!cloudBase.trim() || !cloudModel.trim());
+    const cloudUnconfigured = source === "cloud" && !cloudBase.trim();
     const slashQuery = draft.startsWith("/") && !draft.includes("\n") ? draft.split(/\s/)[0].toLowerCase() : "";
     const slashMatches = slashQuery ? SLASH_COMMANDS.filter((item) => item.name.startsWith(slashQuery)) : [];
     const lastAssistant = [...messages].reverse().find((item) => item.role === "assistant");
     const liveRate = chatBusy && transport.current.startedAt && lastAssistant?.content
       ? estimateTokens(lastAssistant.content) / Math.max(0.4, (Date.now() - transport.current.startedAt) / 1000)
       : null;
-    const lastRate = !chatBusy ? lastAssistant?.tokensPerSecond : undefined;
     const totalTokens = estimateTokens(messages.map((item) => item.content).join(" "));
+    const activeProvider = providers.find((item) => item.id === activeProviderId);
+    const effortIndex = Math.max(0, EFFORT_LEVELS.findIndex((level) => level.key === effort));
+    const effortLevel = EFFORT_LEVELS[effortIndex];
+    const maxSupported = source === "cloud" ? activeProvider?.max_effort === true : false;
+    const sourceLabel = source === "cloud"
+      ? (activeProvider?.label || t("Cloud API"))
+      : mode === "remote" ? (guestName || t("Remote host")) : t("Local model");
+    const modelTitle = source === "cloud" ? (cloudModel || t("No model selected")) : (model || t("No model selected"));
+    const sessionStart = savedSessions.find((item) => item.id === currentSessionId)?.createdAt;
+    const elapsed = sessionStart ? formatDuration(Math.max(0, Math.round((Date.now() - new Date(sessionStart).getTime()) / 1000))) : "";
+    const query = modelQuery.trim().toLowerCase();
+    const matches = (name: string) => !query || name.toLowerCase().includes(query);
+    const providerRows = providers.flatMap((provider) => {
+      const names = provider.models.length ? provider.models : [""];
+      return names.map((name) => ({ provider, name }));
+    }).filter((row) => matches(row.name || row.provider.label));
+
     const composer = (
-        <form className={"composer" + (dropActive ? " drop-active" : "")} onSubmit={(event) => { event.preventDefault(); void send(); }}
-          onDragOver={(event) => { if (event.dataTransfer?.types.includes("Files")) { event.preventDefault(); setDropActive(true); } }}
-          onDragLeave={() => setDropActive(false)}
-          onDrop={(event) => { event.preventDefault(); setDropActive(false); if (event.dataTransfer?.files.length) void addFiles(event.dataTransfer.files); }}>
-          {editingMessageIndex !== null && <div className="editing-banner"><span>{t("Editing prompt")}</span><button type="button" onClick={() => { setEditingMessageIndex(null); setDraft(""); }}>{t("Cancel edit")}</button></div>}
-          {attachments.length > 0 && <div className="attachment-strip" aria-label={t("Attachments")}>{attachments.map((item) => <span className="attachment-chip" key={item.id}><span aria-hidden="true">{item.kind === "image" ? "▣" : "▤"}</span><span className="attachment-name">{item.name}</span><small>{Math.max(1, Math.round(item.size / 1024))} KB</small><button type="button" aria-label={tf("Remove {name}", { name: item.name })} onClick={() => setAttachments((current) => current.filter((entry) => entry.id !== item.id))}>×</button></span>)}</div>}
-          {slashMatches.length > 0 && <div className="slash-menu" role="listbox" aria-label={t("Slash commands")}>
-            {slashMatches.map((item, index) => <button type="button" role="option" aria-selected={index === slashIndex} key={item.name} className={index === slashIndex ? "active" : ""}
-              onMouseEnter={() => setSlashIndex(index)}
-              onClick={() => { if (item.insert) { setDraft(item.insert); window.setTimeout(() => composerRef.current?.focus(), 0); } else { runSlash(item.name); setDraft(""); } setSlashIndex(0); }}>
-              <code>{item.name}</code><span>{t(item.detail)}</span>
-            </button>)}
-          </div>}
-          <textarea ref={composerRef} aria-label={t("Message")} rows={1} value={draft} onChange={(event) => { setDraft(event.target.value); setSlashIndex(0); }}
-            onPaste={(event) => { const files = event.clipboardData?.files; if (files && files.length) { event.preventDefault(); void addFiles(files); } }}
-            onKeyDown={(event) => {
-              if (slashMatches.length && !event.nativeEvent.isComposing) {
-                if (event.key === "ArrowDown") { event.preventDefault(); setSlashIndex((index) => (index + 1) % slashMatches.length); return; }
-                if (event.key === "ArrowUp") { event.preventDefault(); setSlashIndex((index) => (index - 1 + slashMatches.length) % slashMatches.length); return; }
-                if (event.key === "Tab" || (event.key === "Enter" && !event.shiftKey)) {
-                  event.preventDefault();
-                  const item = slashMatches[Math.min(slashIndex, slashMatches.length - 1)];
-                  if (item.insert) setDraft(item.insert); else { runSlash(item.name); setDraft(""); }
-                  return;
-                }
+      <form className={"composer" + (dropActive ? " drop-active" : "")} onSubmit={(event) => { event.preventDefault(); void send(); }}
+        onDragOver={(event) => { if (event.dataTransfer?.types.includes("Files")) { event.preventDefault(); setDropActive(true); } }}
+        onDragLeave={() => setDropActive(false)}
+        onDrop={(event) => { event.preventDefault(); setDropActive(false); if (event.dataTransfer?.files.length) void addFiles(event.dataTransfer.files); }}>
+        {editingMessageIndex !== null && <div className="editing-banner"><span>{t("Editing prompt")}</span><button type="button" onClick={() => { setEditingMessageIndex(null); setDraft(""); }}>{t("Cancel edit")}</button></div>}
+        {attachments.length > 0 && <div className="attachment-strip" aria-label={t("Attachments")}>{attachments.map((item) => <span className="attachment-chip" key={item.id}><span aria-hidden="true">{item.kind === "image" ? "▣" : "▤"}</span><span className="attachment-name">{item.name}</span><small>{Math.max(1, Math.round(item.size / 1024))} KB</small><button type="button" aria-label={tf("Remove {name}", { name: item.name })} onClick={() => setAttachments((current) => current.filter((entry) => entry.id !== item.id))}>×</button></span>)}</div>}
+        {slashMatches.length > 0 && <div className="slash-menu" role="listbox" aria-label={t("Slash commands")}>
+          {slashMatches.map((item, index) => <button type="button" role="option" aria-selected={index === slashIndex} key={item.name} className={index === slashIndex ? "active" : ""}
+            onMouseEnter={() => setSlashIndex(index)}
+            onClick={() => { if (item.insert) { setDraft(item.insert); window.setTimeout(() => composerRef.current?.focus(), 0); } else { runSlash(item.name); setDraft(""); } setSlashIndex(0); }}>
+            <code>{item.name}</code><span>{t(item.detail)}</span>
+          </button>)}
+        </div>}
+        <textarea ref={composerRef} aria-label={t("Message")} rows={1} value={draft} onChange={(event) => { setDraft(event.target.value); setSlashIndex(0); }}
+          onPaste={(event) => { const files = event.clipboardData?.files; if (files && files.length) { event.preventDefault(); void addFiles(files); } }}
+          onKeyDown={(event) => {
+            if (slashMatches.length && !event.nativeEvent.isComposing) {
+              if (event.key === "ArrowDown") { event.preventDefault(); setSlashIndex((index) => (index + 1) % slashMatches.length); return; }
+              if (event.key === "ArrowUp") { event.preventDefault(); setSlashIndex((index) => (index - 1 + slashMatches.length) % slashMatches.length); return; }
+              if (event.key === "Tab" || (event.key === "Enter" && !event.shiftKey)) {
+                event.preventDefault();
+                const item = slashMatches[Math.min(slashIndex, slashMatches.length - 1)];
+                if (item.insert) setDraft(item.insert); else { runSlash(item.name); setDraft(""); }
+                return;
               }
-              const shouldSend = enterSwaps ? event.key === "Enter" && event.shiftKey : event.key === "Enter" && !event.shiftKey;
-              if (shouldSend && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); }
-              if (event.key === "ArrowUp" && !draft.trim() && !event.nativeEvent.isComposing) { const lastUser = messages.map((item, index) => item.role === "user" ? index : -1).filter((index) => index >= 0).at(-1); if (lastUser != null) { event.preventDefault(); editMessage(lastUser); } }
-            }} placeholder={t(source === "local" && health?.ollama === false ? "Start the model service to chat." : "Ask Hymnix anything...")} />
-          <footer>
-            <div>
-              <input ref={fileInputRef} type="file" multiple hidden onChange={(event) => { if (event.target.files?.length) void addFiles(event.target.files); event.target.value = ""; }} />
-              <button type="button" className="btn icon attach-button" data-tip={t("Attach a file")} aria-label={t("Attach a file")} onClick={() => fileInputRef.current?.click()}>+</button>
-            <div className="mode-switch" role="group" aria-label={t("Conversation mode")}>
-              <button type="button" className={composerMode === "chat" ? "active" : ""} aria-pressed={composerMode === "chat"} onClick={() => setComposerMode("chat")}>{t("Chat")}</button>
-              <button type="button" className={composerMode === "code" ? "active" : ""} aria-pressed={composerMode === "code"} onClick={() => setComposerMode("code")}>{t("Code")}</button>
+            }
+            const shouldSend = enterSwaps ? event.key === "Enter" && event.shiftKey : event.key === "Enter" && !event.shiftKey;
+            if (shouldSend && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); }
+            if (event.key === "ArrowUp" && !draft.trim() && !event.nativeEvent.isComposing) { const lastUser = messages.map((item, index) => item.role === "user" ? index : -1).filter((index) => index >= 0).at(-1); if (lastUser != null) { event.preventDefault(); editMessage(lastUser); } }
+          }} placeholder={t(source === "local" && health?.ollama === false ? "Start the model service to chat." : "Ask Hymnix anything...")} />
+        <div className="composer-bar">
+          <input ref={fileInputRef} type="file" multiple hidden onChange={(event) => { if (event.target.files?.length) void addFiles(event.target.files); event.target.value = ""; }} />
+          <button type="button" className="cb-icon" onClick={() => fileInputRef.current?.click()} aria-label={t("Attach a file")} data-tip={t("Attach a file")}><Icon name="Plus" /></button>
+          <button type="button" className={"cb-chip approval" + (autoApprove ? " auto" : "")} onClick={() => void toggleAutoApprove(!autoApprove)} aria-pressed={autoApprove} title={t("Tool approval")}>
+            <Icon name="Approvals" />{t(autoApprove ? "Auto allow" : "Ask every time")}
+          </button>
+          <button type="button" className={"cb-chip model" + (source === "cloud" && !cloudBase.trim() ? " is-empty" : "")} onClick={() => setModelPopover((value) => value === "closed" ? "root" : "closed")} aria-expanded={modelPopover !== "closed"} aria-haspopup="dialog">
+            <span className="cb-model-name">{modelTitle}</span>
+            <span className="cb-model-source">{sourceLabel}</span>
+            <span className="cb-level" data-level={effortLevel.key}>{effortLevel.label}</span>
+            <Icon name="Chevron" />
+          </button>
+          <span className="composer-hint">{t(enterSwaps ? "Shift+Enter to send · Enter for new line" : "Enter to send · Shift+Enter for new line")}</span>
+          <div className="cb-right">
+            {liveRate != null && <span className="composer-rate" data-no-translate>{liveRate.toFixed(1)} tok/s</span>}
+            {chatBusy ? <button type="button" className="composer-send stop" onClick={cancel} aria-label={t("Stop generating")} data-tip={t("Stop generating")} data-tip-key="Esc"><span aria-hidden="true">■</span></button> : <button type="submit" className="composer-send" disabled={!draft.trim() && !attachments.length} aria-label={t("Send")} data-tip={t("Send")} data-tip-key={enterSwaps ? "Shift+Enter" : "Enter"}><span aria-hidden="true">↑</span></button>}
+          </div>
+        </div>
+
+        {modelPopover !== "closed" && <div className="model-panel" role="dialog" aria-label={t("Model and reasoning")}>
+          <div className="mp-head">
+            {modelPopover === "models"
+              ? <button type="button" className="mp-back" onClick={() => setModelPopover("root")}>‹ {t("Back")}</button>
+              : <strong>{t("Model and reasoning")}</strong>}
+            <button type="button" className="mp-close" onClick={() => setModelPopover("closed")} aria-label={t("Close")}>×</button>
+          </div>
+          {modelPopover === "root" ? <div className="mp-body">
+            <button type="button" className="mp-row mp-row-button" onClick={() => setModelPopover("models")}>
+              <span className="mp-label">{t("Model")}</span>
+              <span className="mp-value">{modelTitle}</span>
+              <span className="mp-source">{sourceLabel}</span>
+              <Icon name="Chevron" />
+            </button>
+            <div className="mp-row mp-row-slider">
+              <div className="mp-slider-head"><span className="mp-label">{t("Reasoning")}</span><strong className="mp-level" data-level={effortLevel.key}>{effortLevel.label}</strong></div>
+              <div className="effort-slider-wrap">
+                <div className="effort-track" data-level={effortLevel.key} aria-hidden="true" />
+                <input type="range" min={0} max={EFFORT_LEVELS.length - 1} step={1} value={effortIndex} className="effort-slider" aria-label={t("Reasoning effort")}
+                  onChange={(event) => {
+                    const next = EFFORT_LEVELS[Number(event.target.value)];
+                    if (!next || (next.key === "max" && !maxSupported)) return;
+                    setEffort(next.key);
+                  }} />
+              </div>
+              <div className="effort-stops">{EFFORT_LEVELS.map((level, index) => <span key={level.key} className={index <= effortIndex ? "on" : ""} data-disabled={level.key === "max" && !maxSupported ? "true" : "false"}>{level.label}</span>)}</div>
+              {!maxSupported && <p className="mp-note">{t("Max needs a provider that declares support for it.")}</p>}
             </div>
-              <span className="composer-context">
-                <button type="button" className={"composer-chip" + (source === "cloud" ? (cloudModel ? "" : " is-empty") : (model ? "" : " is-empty"))} onClick={() => setInspectorOpen(true)} title={t("Chat settings")} aria-label={t("Chat settings")}>
-                  <span className="composer-dot" data-state={state === "ready" ? "ready" : state === "error" ? "error" : "connecting"} aria-hidden="true" />
-                  <span className="chip-label">{source === "cloud" ? (cloudModel || t("Choose a model")) : (model || t("Choose a model"))}</span>
-                </button>
-                <button type="button" className="composer-chip" onClick={() => setInspectorOpen(true)} title={t("Reasoning")} aria-label={t("Reasoning")}>
-                  <span className="chip-label">{t("Reasoning")} · {t(effort === "low" ? "Low" : effort === "high" ? "High" : "Medium")}</span>
-                </button>
-              </span>
-              <span className="composer-hint">{t(enterSwaps ? "Shift+Enter to send · Enter for new line" : "Enter to send · Shift+Enter for new line")}</span>
+            <div className="mp-row"><span className="mp-label">{t("Context")}</span><span className="mp-value">~{totalTokens} {t("tokens")}</span></div>
+            <div className="mp-row"><span className="mp-label">{t("Tool approval")}</span>
+              <button type="button" className={"switch" + (autoApprove ? " on" : "")} aria-pressed={autoApprove} aria-label={t("Tool approval")} onClick={() => void toggleAutoApprove(!autoApprove)}><span /></button>
             </div>
-            <div>
-              {liveRate != null && <span className="composer-rate" data-no-translate>{liveRate.toFixed(1)} tok/s</span>}
-              {chatBusy ? <button type="button" className="btn composer-stop" onClick={cancel} aria-label={t("Stop generating")} data-tip={t("Stop generating")} data-tip-key="Esc">■</button> : <button type="submit" className="btn primary composer-send" disabled={!draft.trim() && !attachments.length} aria-label={t("Send")} data-tip={t("Send")} data-tip-key={enterSwaps ? "Shift+Enter" : "Enter"}>↑</button>}
+          </div> : <div className="mp-body mp-models">
+            <input className="mp-search" autoFocus value={modelQuery} onChange={(event) => setModelQuery(event.target.value)} placeholder={t("Search models")} aria-label={t("Search models")} />
+            <div className="mp-scroll">
+              <div className="mp-group">{mode === "remote" ? t("Remote host models") : t("Local models")}</div>
+              {models.filter((item) => matches(item.name)).map((item) => <button type="button" key={item.name} className={"mp-option" + (source === "local" && model === item.name ? " active" : "")} onClick={() => void chooseModel({ kind: "local", model: item.name })}>
+                <span className="mp-option-name">{item.name}</span>
+                {item.loaded && <span className="chip accent">{t("Loaded")}</span>}
+              </button>)}
+              {models.length === 0 && <p className="mp-note">{t("No local models yet.")}</p>}
+
+              <div className="mp-group">{t("Cloud API")}</div>
+              {providers.length === 0
+                ? <button type="button" className="mp-option mp-placeholder" onClick={() => goConfigure("api")}><span className="mp-option-name">{t("Cloud API")} · {t("Not configured")}</span><span className="mp-go">{t("Configure")} →</span></button>
+                : providerRows.map(({ provider, name }) => <button type="button" key={provider.id + ":" + name} className={"mp-option" + (source === "cloud" && activeProviderId === provider.id && cloudModel === name ? " active" : "")} onClick={() => void chooseModel({ kind: "cloud", providerId: provider.id, model: name })}>
+                  <span className="mp-option-name">{name || provider.label}</span>
+                  <span className="mp-option-meta">{provider.label}</span>
+                </button>)}
+              {providers.length > 0 && <button type="button" className="mp-option mp-placeholder" onClick={() => goConfigure("api")}><span className="mp-option-name">{t("Add another provider")}</span><span className="mp-go">→</span></button>}
+
+              <div className="mp-group">{t("Remote hosts")}</div>
+              {mode === "remote"
+                ? <button type="button" className="mp-option active" onClick={() => setModelPopover("closed")}><span className="mp-option-name">{serverBase}</span><span className="mp-option-meta">{t("Connected")}</span></button>
+                : <button type="button" className="mp-option mp-placeholder" onClick={() => goConfigure("remote")}><span className="mp-option-name">{t("Remote host")} · {t("Not configured")}</span><span className="mp-go">{t("Configure")} →</span></button>}
             </div>
-          </footer>
-        </form>
+            <div className="mp-foot">
+              <button type="button" className="btn" onClick={() => { setModelPopover("closed"); setActive("Models"); setModelsSection("local"); }}>{t("Manage models")}</button>
+              <button type="button" className="btn ghost" onClick={() => { setModelPopover("closed"); setActive("Models"); setModelsSection("api"); }}>{t("Provider settings")}</button>
+            </div>
+          </div>}
+        </div>}
+      </form>
     );
+
     const emptyLead = checkingService ? <div className="chat-ready-card readiness-checking" role="status"><span className="orbit-loader" aria-hidden="true" /><div className="ready-copy"><span className="eyebrow">{t("GET STARTED")}</span><h2>{t("Checking the model service")}</h2><p>{t("Checking whether the local model service is ready...")}</p></div></div> : localOffline ? <div className="chat-ready-card">
       <div className="ready-icon"><Icon name="Models" /></div><div className="ready-copy"><span className="eyebrow">{t("GET STARTED")}</span><h2>{t("Model service is offline")}</h2><p>{t("Start Ollama to list and run local models. Your conversations stay on this device.")}</p>{ollamaError && <p className="error" role="alert">{ollamaError}</p>}</div>
-      <div className="ready-actions"><button className="btn primary" onClick={() => void startOllama()} disabled={ollamaBusy}>{t(ollamaBusy ? "Starting Ollama..." : "Start Ollama")}</button><button className="btn" onClick={() => setActive("Models")}>{t("View models")}</button></div>
+      <div className="ready-actions"><button className="btn primary" onClick={() => void startOllama()} disabled={ollamaBusy}>{t(ollamaBusy ? "Starting Ollama..." : "Start Ollama")}</button><button className="btn" onClick={() => { setActive("Models"); setModelsSection("local"); }}>{t("View models")}</button></div>
     </div> : noLocalModels ? <div className="chat-ready-card">
-      <div className="ready-icon"><Icon name="Models" /></div><div className="ready-copy"><span className="eyebrow">{t("GET STARTED")}</span><h2>{t("Choose a model to begin")}</h2><p>{t("Browse available local models, or switch to Cloud API in the chat settings.")}</p></div>
-      <div className="ready-actions"><button className="btn primary" onClick={() => { setActive("Models"); setModelsTab("Discover"); }}>{t("Discover models")}</button><button className="btn" onClick={() => { setSource("cloud"); setInspectorOpen(true); }}>{t("Use a remote API")}</button></div>
+      <div className="ready-icon"><Icon name="Models" /></div><div className="ready-copy"><span className="eyebrow">{t("GET STARTED")}</span><h2>{t("Choose a model to begin")}</h2><p>{t("Install a local model, or add a cloud provider and pick one of its models.")}</p></div>
+      <div className="ready-actions"><button className="btn primary" onClick={() => { setActive("Models"); setModelsSection("local"); setModelsTab("Discover"); }}>{t("Discover models")}</button><button className="btn" onClick={() => goConfigure("api")}>{t("Add a cloud provider")}</button></div>
     </div> : modelNeedsLoad ? <div className="chat-ready-card">
       <div className="ready-icon"><Icon name="Models" /></div><div className="ready-copy"><span className="eyebrow">{t("MODEL READY")}</span><h2>{tf("Load {model} to begin", { model })}</h2><p>{t("The model is installed but not loaded. Load it before starting a conversation.")}</p></div>
-      <div className="ready-actions"><button className="btn primary" onClick={() => void modelAction("start", model)} disabled={!!modelBusy}>{t(model && modelBusy === model ? "Loading..." : "Load model")}</button><button className="btn" onClick={() => setActive("Models")}>{t("Choose another model")}</button></div>
+      <div className="ready-actions"><button className="btn primary" onClick={() => void modelAction("start", model)} disabled={!!modelBusy}>{t(model && modelBusy === model ? "Loading..." : "Load model")}</button><button className="btn" onClick={() => { setActive("Models"); setModelsSection("local"); }}>{t("Choose another model")}</button></div>
     </div> : cloudUnconfigured ? <div className="chat-ready-card">
-      <div className="ready-icon"><span>✦</span></div><div className="ready-copy"><span className="eyebrow">{t("CLOUD API")}</span><h2>{t("Configure a cloud model")}</h2><p>{t("Add an API endpoint and model name in Chat settings before sending a message.")}</p></div>
-      <div className="ready-actions"><button className="btn primary" onClick={() => setInspectorOpen(true)}>{t("Open chat settings")}</button><button className="btn" onClick={() => setSource("local")}>{t("Use local model")}</button></div>
+      <div className="ready-icon"><span>✦</span></div><div className="ready-copy"><span className="eyebrow">{t("CLOUD API")}</span><h2>{t("Configure a cloud provider")}</h2><p>{t("Add an address and an API key, then pick one of its models.")}</p></div>
+      <div className="ready-actions"><button className="btn primary" onClick={() => goConfigure("api")}>{t("Add a cloud provider")}</button><button className="btn" onClick={() => setSource("local")}>{t("Use local model")}</button></div>
     </div> : <div className="chat-landing-head">
       <div className="empty-orbit" aria-hidden="true"><img src={brandIcon} alt="" /></div><span className="eyebrow">{t("HYMNIX ORBIT")}</span><h2>{t("What are you working on?")}</h2>
       <p>{tf("Start with {workspace} or choose a prompt.", { workspace: t(workspace) })}</p>
-      
     </div>;
-    // Every empty state keeps the composer reachable: the reference layout puts
-    // the input in the middle of the page, not pinned under a blank canvas.
     const plainEmpty = !checkingService && !localOffline && !noLocalModels && !modelNeedsLoad && !cloudUnconfigured;
     const emptyChat = <div className={plainEmpty ? "chat-empty-state" : "chat-empty-state has-card"}>{emptyLead}{composer}{plainEmpty && <div className="prompt-grid"><button className="prompt-card" onClick={() => setDraft(t("Summarize the current workspace"))}><strong>{t("Summarize workspace")}</strong><span>{t("Get a concise overview of your files and project context.")}</span><i>↗</i></button><button className="prompt-card" onClick={() => setDraft(t("Help me inspect a model"))}><strong>{t("Inspect a model")}</strong><span>{t("Compare model details and find a good fit.")}</span><i>↗</i></button><button className="prompt-card" onClick={() => setDraft(t("Help me draft a clear message"))}><strong>{t("Write something")}</strong><span>{t("Turn a rough idea into a polished first draft.")}</span><i>↗</i></button><button className="prompt-card" onClick={() => setDraft(t("Help me write a code example"))}><strong>{t("Write code")}</strong><span>{t("Explain a coding task and get a useful starting point.")}</span><i>↗</i></button></div>}</div>;
-    return <>
-      <ChatViewport messages={messages} followSignal={followSignal} empty={emptyChat} busy={chatBusy} onEditMessage={editMessage} onRegenerateMessage={regenerateMessage} onDeleteMessage={deleteMessageTurn} onBranchMessage={branchFrom} onRetryMessage={retryMessage} />
-      {messages.length > 0 && composer}
-    </>;
+
+    const contextPanel = <div className="tab-panel">
+      <div className="panel-card">
+        <h3>{t("System prompt")}</h3>
+        <textarea className="panel-textarea" value={systemPrompt} onChange={(event) => setSystemPrompt(event.target.value)} placeholder={t("Optional instructions for every reply in this conversation.")} rows={5} />
+        <p className="panel-note">{t("Sent with every message in this conversation.")}</p>
+      </div>
+      <div className="panel-card">
+        <h3>{t("Conversation")}</h3>
+        <div className="panel-row"><span>{t("Workspace")}</span><strong>{filesRoot || t("No workspace selected")}</strong></div>
+        <div className="panel-row"><span>{t("Conversation mode")}</span><strong>{composerMode === "code" ? t("Code") : t("Chat")}</strong></div>
+        <div className="panel-row"><span>{t("Model")}</span><strong>{modelTitle}</strong></div>
+        <div className="panel-row"><span>{t("Reasoning")}</span><strong>{effortLevel.label}</strong></div>
+        <div className="panel-row"><span>{t("Estimated tokens")}</span><strong>~{totalTokens}</strong></div>
+        <div className="panel-actions"><button type="button" className="btn" onClick={() => void chooseWorkspace()}>{t("Choose folder")}</button><button type="button" className="btn ghost" onClick={exportChat}>{t("Export chat")}</button></div>
+      </div>
+      <div className="panel-card">
+        <h3>{t("Telemetry")}</h3>
+        <div className="telemetry-grid">
+          {[{ label: "GPU", value: stats?.gpu }, { label: "AI", value: stats?.ai }, { label: "VRAM", value: stats?.vramTotal ? stats.vramUsed == null ? null : stats.vramUsed / stats.vramTotal * 100 : null, text: stats?.vramUsed != null && stats?.vramTotal != null ? stats.vramUsed + "/" + stats.vramTotal + " GB" : undefined }, { label: "RAM", value: stats?.ramTotal ? stats.ramUsed / stats.ramTotal * 100 : null, text: stats ? (stats.ramUsed / 1024).toFixed(1) + "/" + (stats.ramTotal / 1024).toFixed(1) + " GB" : undefined }].map((item) => <div className="telemetry-item" key={item.label}><div><span>{item.label}</span><strong>{item.text || (item.value != null ? Math.round(item.value) + "%" : "—")}</strong></div><div className="telemetry-track"><i style={{ width: Math.max(0, Math.min(100, item.value || 0)) + "%" }} /></div></div>)}
+        </div>
+      </div>
+    </div>;
+
+    const tracePanel = <div className="tab-panel">
+      <div className="panel-card">
+        <h3>{t("Tool activity")}</h3>
+        {toolCall.status === "idle"
+          ? <p className="panel-note">{t("No tool calls in this conversation yet.")}</p>
+          : <div className="trace-row"><span className={"trace-dot " + toolCall.status} aria-hidden="true" /><span>{t(toolCall.message || toolCall.status)}</span></div>}
+        {approvals.length > 0 && <div className="trace-list">{approvals.map((approval) => <div className="trace-row" key={approval.id}><span className="trace-tool">{approval.tool}</span><span className="mono">{approval.risk}</span><span className="trace-actions"><button type="button" className="btn" onClick={() => void decideApproval(approval.id, "approve")} disabled={approvalsBusy}>{t("Approve")}</button><button type="button" className="btn ghost" onClick={() => void decideApproval(approval.id, "deny")} disabled={approvalsBusy}>{t("Deny")}</button></span></div>)}</div>}
+        {approvalsError && <p className="error">{approvalsError}</p>}
+      </div>
+      <div className="panel-card">
+        <h3>{t("Recent activity")}</h3>
+        {termEntries.length === 0
+          ? <p className="panel-note">{t("Nothing has been logged yet.")}</p>
+          : <div className="trace-log">{termEntries.slice(-40).map((entry, index) => <div className="trace-line" key={index}><span className="term-time">{entry.time}</span><span className={"term-tag " + entry.tag}>{entry.tag.toUpperCase()}</span><span className="trace-text">{entry.text}</span></div>)}</div>}
+      </div>
+    </div>;
+
+    return <section className="chat-page">
+      <div className="chat-head">
+        <div className="chat-head-main">
+          {renamingSession
+            ? <form className="rename-session" onSubmit={(event) => { event.preventDefault(); commitRenameSession(); }}><input autoFocus value={renameDraft} onChange={(event) => setRenameDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setRenamingSession(false); }} aria-label={t("Conversation name")} /><button className="btn primary" type="submit">{t("Save name")}</button></form>
+            : <h1 title={t("Double-click to rename")} onDoubleClick={beginRenameSession}>{sessionName}</h1>}
+          <div className="chat-head-meta">
+            <span className={"status-pill " + (state === "ready" ? "success" : state === "error" ? "danger" : "neutral")}><span className="status-dot" />{t(state === "ready" ? "Ready" : state === "starting" ? "Starting" : state === "error" ? "Error" : "Limited")}</span>
+            <span className="meta-chip">{messages.length} {t("messages")}</span>
+            <span className="meta-chip">~{totalTokens} {t("tokens")}</span>
+            {elapsed && <span className="meta-chip">{elapsed}</span>}
+          </div>
+        </div>
+        <div className="chat-head-actions">
+          <div className="conversation-menu-wrap" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setConversationMenuOpen(false); }}>
+            <button type="button" className="btn ghost icon-button" aria-label={t("Conversation actions")} aria-haspopup="menu" aria-expanded={conversationMenuOpen} onClick={() => setConversationMenuOpen((value) => !value)}>⋯</button>
+            {conversationMenuOpen && <div className="conversation-menu" role="menu">
+              <button type="button" role="menuitem" onClick={beginRenameSession}>{t("Rename conversation")}</button>
+              <button type="button" role="menuitem" onClick={() => { toggleCurrentPin(); setConversationMenuOpen(false); }}>{t(savedSessions.find((item) => item.id === currentSessionId)?.pinned ? "Unpin conversation" : "Pin conversation")}</button>
+              <button type="button" role="menuitem" onClick={() => { exportChat(); setConversationMenuOpen(false); }}>{t("Export chat")}</button>
+              <hr />
+              <button type="button" role="menuitem" className="danger" onClick={() => { clearCurrentConversation(); setConversationMenuOpen(false); }}>{t("Clear conversation")}</button>
+            </div>}
+          </div>
+        </div>
+      </div>
+      <nav className="chat-tabs" role="tablist" aria-label={t("Conversation views")}>
+        {(["chat", "context", "trace"] as const).map((tab) => <button key={tab} type="button" role="tab" aria-selected={chatTab === tab} className={chatTab === tab ? "active" : ""} onClick={() => setChatTab(tab)}>{t(tab === "chat" ? "Chat" : tab === "context" ? "Context" : "Trace")}</button>)}
+      </nav>
+      {chatTab === "chat" && <>
+        <ChatViewport messages={messages} followSignal={followSignal} empty={emptyChat} busy={chatBusy} onEditMessage={editMessage} onRegenerateMessage={regenerateMessage} onDeleteMessage={deleteMessageTurn} onBranchMessage={branchFrom} onRetryMessage={retryMessage} />
+        {messages.length > 0 && composer}
+      </>}
+      {chatTab === "context" && <div className="chat-tab-body">{contextPanel}</div>}
+      {chatTab === "trace" && <div className="chat-tab-body">{tracePanel}</div>}
+    </section>;
+  }
+
+  function renderProviders() {
+    return <div className="models-section">
+      <div className="section-head">
+        <div><h3>{t("Cloud providers")}</h3><p className="subtitle">{t("Add a provider once, then pick any of its models from the composer.")}</p></div>
+        {!providerForm && <button type="button" className="btn primary" onClick={() => openProviderForm()}>{t("Add provider")}</button>}
+      </div>
+      {providerError && <div className="error" role="alert">{providerError}</div>}
+      {providers.length === 0 && !providerForm && <div className="card empty-state">
+        <strong>{t("No cloud provider yet.")}</strong>
+        <span>{t("Add OpenAI, DeepSeek, Claude or any OpenAI-compatible endpoint.")}</span>
+        <button type="button" className="btn primary" onClick={() => openProviderForm()}>{t("Add provider")}</button>
+      </div>}
+      {providers.length > 0 && <div className="provider-list">{providers.map((provider) => <article className={"provider-card" + (provider.id === activeProviderId ? " active" : "")} key={provider.id}>
+        <div className="provider-main">
+          <span className="provider-dot" data-kind={provider.kind} aria-hidden="true" />
+          <div><strong>{provider.label}</strong><small className="mono">{provider.base_url || "—"}</small></div>
+        </div>
+        <div className="provider-meta">
+          <span className="chip">{provider.models.length} {t("models")}</span>
+          <span className={"status-pill " + (provider.has_key ? "success" : "warning")}><span className="status-dot" />{provider.has_key ? t("Key saved") : t("No key")}</span>
+          {provider.max_effort && <span className="chip accent">Max</span>}
+        </div>
+        <div className="provider-actions">
+          {provider.id === activeProviderId
+            ? <span className="chip accent">{t("In use")}</span>
+            : <button type="button" className="btn" onClick={() => void providerAction({ action: "select", id: provider.id }).then((ok) => { if (ok) void loadCloud(); })} disabled={providersBusy}>{t("Use this provider")}</button>}
+          <button type="button" className="btn ghost" onClick={() => openProviderForm(provider.id)}>{t("Edit")}</button>
+          <button type="button" className="btn danger" onClick={() => void providerAction({ action: "delete", id: provider.id })} disabled={providersBusy}>{t("Delete")}</button>
+        </div>
+      </article>)}</div>}
+      {providerForm && renderProviderForm()}
+    </div>;
+  }
+
+  function renderProviderForm() {
+    const form = providerForm;
+    if (!form) return null;
+    const update = (patch: Partial<typeof form>) => setProviderForm((current) => current ? { ...current, ...patch } : current);
+    const addDraft = () => {
+      const name = form.modelDraft.trim();
+      if (!name) return;
+      update({ models: form.models.includes(name) ? form.models : [...form.models, name], modelDraft: "" });
+    };
+    return <div className="card provider-form">
+      <div className="provider-form-head">
+        <h3>{form.id ? t("Edit provider") : t("Add provider")}</h3>
+        <button type="button" className="btn ghost" onClick={() => setProviderForm(null)}>{t("Close")}</button>
+      </div>
+      <div className="segmented provider-form-tabs">
+        <button type="button" className={form.tab === "catalog" ? "active" : ""} onClick={() => update({ tab: "catalog" })}>{t("Provider catalog")}</button>
+        <button type="button" className={form.tab === "custom" ? "active" : ""} onClick={() => update({ tab: "custom" })}>{t("Custom API")}</button>
+      </div>
+      {form.tab === "catalog" && <div className="provider-catalog">{PROVIDER_CATALOG.map((preset) => <button type="button" key={preset.id} className={"catalog-pill" + (form.catalogId === preset.id ? " active" : "")} onClick={() => applyCatalog(preset.id)}>
+        <strong>{t(preset.label)}</strong><small className="mono">{preset.base || t("Custom endpoint")}</small>
+      </button>)}</div>}
+      <div className="setting-row"><label>{t("Name")}</label><div className="controls"><input value={form.label} onChange={(event) => update({ label: event.target.value })} placeholder="DeepSeek" /></div></div>
+      <div className="setting-row"><label>{t("Base URL")}</label><div className="controls"><input className="mono" value={form.base_url} onChange={(event) => update({ base_url: event.target.value })} placeholder="https://api.deepseek.com/v1" /></div></div>
+      <div className="setting-row"><label>{t("API key")}<span className="hint">{t("Stored on this computer by the gateway.")}</span></label><div className="controls"><input type="password" value={form.api_key} onChange={(event) => update({ api_key: event.target.value })} placeholder={form.id ? t("Leave empty to keep the saved key") : "sk-..."} /></div></div>
+      <div className="setting-row"><label>{t("Protocol")}</label><div className="controls segmented">{([["openai", "OpenAI compatible"], ["anthropic", "Anthropic"], ["openclaw", "OpenClaw"]] as const).map(([kind, label]) => <button type="button" key={kind} className={form.kind === kind ? "active" : ""} onClick={() => update({ kind })}>{t(label)}</button>)}</div></div>
+      <div className="setting-row"><label>{t("Models")}<span className="hint">{t("Fetched from the provider, or add a name by hand.")}</span></label><div className="controls"><input value={form.modelDraft} onChange={(event) => update({ modelDraft: event.target.value })} placeholder="deepseek-chat" onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addDraft(); } }} /><button type="button" className="btn" onClick={addDraft}>{t("Add")}</button>{form.id && <button type="button" className="btn" onClick={() => void providerAction({ action: "fetch_models", id: form.id })} disabled={providersBusy}>{t("Fetch from provider")}</button>}</div></div>
+      {form.models.length > 0 && <div className="chip-row">{form.models.map((name) => <span className="chip" key={name}>{name}<button type="button" aria-label={t("Remove")} onClick={() => update({ models: form.models.filter((entry) => entry !== name) })}>×</button></span>)}</div>}
+      <details className="provider-advanced">
+        <summary>{t("Advanced")}</summary>
+        <div className="setting-row"><label>{t("Agent id")}<span className="hint">{t("OpenClaw only")}</span></label><div className="controls"><input value={form.agent_id} onChange={(event) => update({ agent_id: event.target.value })} placeholder="main" /></div></div>
+        <div className="setting-row"><label>{t("Max output tokens")}</label><div className="controls"><input type="number" min={0} step={256} value={form.max_tokens || ""} placeholder="0" onChange={(event) => update({ max_tokens: Math.max(0, Math.floor(Number(event.target.value) || 0)) })} /></div></div>
+        <div className="setting-row"><label>{t("Supports Max reasoning")}<span className="hint">{t("Enable to unlock the Max stop.")}</span></label><div className="controls"><button type="button" className={"switch" + (form.max_effort ? " on" : "")} aria-pressed={form.max_effort} aria-label={t("Supports Max reasoning")} onClick={() => update({ max_effort: !form.max_effort })}><span /></button></div></div>
+      </details>
+      <div className="provider-form-actions">
+        <button type="button" className="btn" onClick={() => setProviderForm(null)}>{t("Cancel")}</button>
+        <button type="button" className="btn primary" onClick={() => void submitProviderForm()} disabled={providersBusy || !form.base_url.trim()}>{t("Save provider")}</button>
+      </div>
+    </div>;
+  }
+
+  function renderRemote() {
+    return <div className="models-section">
+      <div className="remote-intro">
+        <h3>{t("Remote hosts")}</h3>
+        <p className="subtitle">{t("Connect to a friend's computer through a tunnel and a key, and run your models on their hardware. Conversations are still stored on this device.")}</p>
+      </div>
+      <div className="card">
+        <div className="setting-row"><label>{t("Tunnel address")}</label><div className="controls"><input value={serverBase} onChange={(event) => setServerBase(event.target.value)} placeholder="https://xxxx.trycloudflare.com" /></div></div>
+        <div className="setting-row"><label>{t("Share name")}<span className="hint">{t("host name")}</span></label><div className="controls"><input value={guestName} onChange={(event) => setGuestName(event.target.value)} placeholder="Hymnix Orbit" /></div></div>
+        <div className="setting-row"><label>{t("Connection password")}<span className="hint">{t("given by the host")}</span></label><div className="controls"><input type="password" value={guestPassword} onChange={(event) => setGuestPassword(event.target.value)} /><button type="button" className="btn" onClick={() => void testConnection()} disabled={netBusy || shareTest.state === "testing"}>{t(shareTest.state === "testing" ? "Testing..." : "Test connection")}</button><button type="button" className="btn primary" onClick={() => void guestConnect().then((ok) => { if (ok) setShareTest({ state: "ok", message: t("Connected. Chats now run on the friend's hardware.") }); })} disabled={netBusy}>{netBusy ? t("Working...") : mode === "remote" ? t("Reconnect") : t("Connect")}</button></div></div>
+        {shareTest.state === "fail" && <ErrorPanel title={t("Could not connect")} cause={shareTest.category || shareTest.message} fix={t("Try again")} onFix={() => void testConnection()} details={shareTest.message} />}
+        {shareTest.state === "ok" && <p className="panel-note success-text" role="status">✓ {shareTest.message}</p>}
+        {mode === "remote" && <div className="setting-row"><label>{t("Connected")}</label><div className="controls"><span className="status-pill success"><span className="status-dot" />{serverBase}</span><button type="button" className="btn danger" onClick={disconnectGuest}>{t("Disconnect and use this computer")}</button></div></div>}
+        <div className="favourite-row"><button type="button" className="btn tonal" onClick={rememberHost} disabled={!serverBase.trim()}>{t("Save to favourites")}</button>{savedHosts.length > 0 && <span className="hint">{savedHosts.length} {t("saved hosts")}</span>}</div>
+        {savedHosts.length > 0 && <div className="host-list">{savedHosts.map((host) => <div className="host-row" key={host.url}><button type="button" className="panel-link" onClick={() => { setServerBase(host.url); setGuestName(host.name); }}><strong>{host.name}</strong><small>{host.url}</small></button><button type="button" className="btn ghost" onClick={() => forgetHost(host.url)}>{t("Remove")}</button></div>)}</div>}
+      </div>
+      <div className="card share-cta">
+        <div><h3>{t("Share this computer instead")}</h3><p className="subtitle">{t("Let a friend run their chats on your hardware.")}</p></div>
+        <button type="button" className="btn" onClick={() => setActive("Gateway")}>{t("Open sharing")}</button>
+      </div>
+    </div>;
   }
 
   function renderModels() {
     const tabs: Array<"Installed" | "Discover" | "Downloads"> = ["Installed", "Discover", "Downloads"];
-    return <section className="view-page">
-      <div className="view-heading">{backButton}<div><label>{t("MODEL CATALOG")}</label><h2>{t("Models")}</h2><p>{t("Discover models served by the local gateway.")}</p></div><button className="btn primary" onClick={() => void loadModels()}>{t("Refresh models")}</button></div>
-      {renderOllamaNotice()}
-      <div className="tab-strip model-tabs" role="tablist" aria-label={t("Model sections")}>{tabs.map((tab) => <button role="tab" aria-selected={modelsTab === tab} className={modelsTab === tab ? "tab active" : "tab"} key={tab} onClick={() => setModelsTab(tab)}>{t(tab)}{tab === "Downloads" && downloadOccupied ? <span className="count-badge">1</span> : null}</button>)}</div>
-      {modelsTab === "Installed" && <div className="card model-table-card">
-        <div className="section-heading"><div><h3 className="card-title">{t("Installed models")}</h3><p className="subtitle">{tf("{count} models on this device", { count: models.length })}</p></div></div>
-        {models.length === 0 && state === "starting" ? <SkeletonList rows={4} /> : models.length === 0 ? <div className="empty-state"><strong>{t("No model installed yet.")}</strong><span>{t("Choose a model that fits your hardware from Discover.")}</span><button className="btn primary" onClick={() => setModelsTab("Discover")}>{t("Discover models")}</button></div> : <div className="model-table"><div className="model-table-head"><span>{t("Name")}</span><span>{t("Status")}</span><span>{t("Actions")}</span></div>{models.map((item) => <div className="model-table-row" key={item.name}>
-          <span className="catalog-main"><strong>{item.name}</strong><small>{item.name.split(":")[1] || t("Installed model")}</small></span>
-          <span className={item.loaded ? "status-pill success" : "status-pill neutral"}><span className="status-dot" />{item.loaded ? t("Loaded") : t("Installed")}</span>
-          <span className="controls"><button className={item.loaded ? "btn" : "btn primary"} onClick={() => { setModel(item.name); void modelAction(item.loaded ? "stop" : "start", item.name); }} disabled={modelBusy === item.name}>{(item.name && modelBusy === item.name) ? t("Loading...") : item.loaded ? t("Unload") : t("Load")}</button><button className="btn danger" onClick={() => setModelDeleteTarget(item.name)} disabled={modelBusy === item.name}>{t("Delete")}</button></span>
-        </div>)}</div>}
+    return <section className="page models-page">
+      <div className="page-head">
+        <div className="page-head-copy"><h2>{t("Models")}</h2><p>{t("Choose where replies run: this computer, a cloud provider, or a friend's machine.")}</p></div>
+        <div className="page-actions">{modelsSection === "local" && <button type="button" className="btn" onClick={() => void loadModels()}>{t("Refresh models")}</button>}</div>
+      </div>
+      <nav className="section-tabs" role="tablist" aria-label={t("Model sources")}>
+        {([
+          ["local", t("Local models"), t("Runs on this computer.")],
+          ["api", t("Cloud API"), t("Saved provider profiles.")],
+          ["remote", t("Remote hosts"), t("Runs on a friend's machine over a tunnel.")]
+        ] as const).map(([key, label, hint]) => <button key={key} type="button" role="tab" aria-selected={modelsSection === key} className={modelsSection === key ? "active" : ""} onClick={() => setModelsSection(key)}>
+          <strong>{label}</strong><small>{hint}</small>
+        </button>)}
+      </nav>
+      {modelsSection === "local" && <div className="models-section">
+        {renderOllamaNotice()}
+        <div className="tab-strip model-tabs" role="tablist" aria-label={t("Model sections")}>{tabs.map((tab) => <button role="tab" aria-selected={modelsTab === tab} className={modelsTab === tab ? "tab active" : "tab"} key={tab} onClick={() => setModelsTab(tab)}>{t(tab)}{tab === "Downloads" && downloadOccupied ? <span className="count-badge">1</span> : null}</button>)}</div>
+        {modelsTab === "Installed" && <div className="card model-table-card">
+          <div className="section-heading"><div><h3 className="card-title">{t("Installed models")}</h3><p className="subtitle">{tf("{count} models on this device", { count: models.length })}</p></div></div>
+          {models.length === 0 && state === "starting" ? <SkeletonList rows={4} /> : models.length === 0 ? <div className="empty-state"><strong>{t("No model installed yet.")}</strong><span>{t("Choose a model that fits your hardware from Discover.")}</span><button type="button" className="btn primary" onClick={() => setModelsTab("Discover")}>{t("Discover models")}</button></div> : <div className="model-table"><div className="model-table-head"><span>{t("Name")}</span><span>{t("Status")}</span><span>{t("Actions")}</span></div>{models.map((item) => <div className="model-table-row" key={item.name}>
+            <span className="catalog-main"><strong>{item.name}</strong><small>{item.name.split(":")[1] || t("Installed model")}</small></span>
+            <span className={item.loaded ? "status-pill success" : "status-pill neutral"}><span className="status-dot" />{item.loaded ? t("Loaded") : t("Installed")}</span>
+            <span className="controls"><button type="button" className={item.loaded ? "btn" : "btn primary"} onClick={() => { setModel(item.name); void modelAction(item.loaded ? "stop" : "start", item.name); }} disabled={modelBusy === item.name}>{(item.name && modelBusy === item.name) ? t("Loading...") : item.loaded ? t("Unload") : t("Load")}</button><button type="button" className="btn danger" onClick={() => setModelDeleteTarget(item.name)} disabled={modelBusy === item.name}>{t("Delete")}</button></span>
+          </div>)}</div>}
+        </div>}
+        {modelsTab === "Discover" && <ModelCatalog installedNames={models.map((item) => item.name)} filters={catalogFilters} onFiltersChange={setCatalogFilters} lang={lang} remote={remoteActive()} downloadDisabled={!!modelBusy} activeDownload={downloadOccupied ? download?.model : undefined} downloadPaused={download?.phase === "paused"} onDownload={(name) => void pullModelByName(name)} note={modelNote} />}
+        {modelsTab === "Downloads" && <div className="card download-list"><h3 className="card-title">{t("Downloads")}</h3>{download ? (() => {
+          const percent = download.completed != null && download.total ? Math.floor(100 * download.completed / download.total) : null;
+          const eta = download.bytesPerSecond && download.total && download.completed != null && download.bytesPerSecond > 0
+            ? Math.max(0, Math.round((download.total - download.completed) / download.bytesPerSecond)) : null;
+          return <div className="download-row">
+            <span className="model-mark">↓</span>
+            <span className="catalog-main"><strong>{download.model}</strong><small>{t(download.phase)} · {download.status || downloadStage(download.status)}</small>
+              {download.phase === "downloading" && <div className="download-inline"><div className="progress"><i style={{ width: (percent ?? 0) + "%" }} /></div><small>{percent != null ? percent + "%" : ""}{download.bytesPerSecond ? " · " + downloadBytes(download.bytesPerSecond, lang) + "/s" : ""}{eta != null ? " · " + formatDuration(eta) + " " + t("left") : ""}</small></div>}
+            </span>
+            <span className="controls"><span className="status-pill">{download.phase === "downloading" ? t("In progress") : t(download.phase)}</span>
+              {download.phase === "downloading" && <button type="button" className="btn" onClick={() => stopModelDownload("pause")}>{t("Pause download")}</button>}
+              {download.phase === "paused" && <button type="button" className="btn primary" onClick={resumeModelDownload}>{t("Resume download")}</button>}
+              {download.phase !== "complete" && download.phase !== "failed" && <button type="button" className="btn danger" onClick={() => stopModelDownload("cancel")}>{t("Cancel download")}</button>}
+              {(download.phase === "complete" || download.phase === "failed" || download.phase === "cancelled") && <button type="button" className="btn" onClick={() => setDownload(null)}>{t("Close")}</button>}
+            </span>
+          </div>;
+        })() : <div className="empty-state"><strong>{t("No active downloads")}</strong><span>{t("Downloads you start will appear here.")}</span><button type="button" className="btn primary" onClick={() => setModelsTab("Discover")}>{t("Discover models")}</button></div>}</div>}
       </div>}
-      {modelsTab === "Discover" && <ModelCatalog installedNames={models.map((item) => item.name)} filters={catalogFilters} onFiltersChange={setCatalogFilters} lang={lang} remote={remoteActive()} downloadDisabled={!!modelBusy} activeDownload={downloadOccupied ? download?.model : undefined} downloadPaused={download?.phase === "paused"} onDownload={(name) => void pullModelByName(name)} note={modelNote} />}
-      {modelsTab === "Downloads" && <div className="card download-list"><h3 className="card-title">{t("Downloads")}</h3>{download ? (() => {
-        const percent = download.completed != null && download.total ? Math.floor(100 * download.completed / download.total) : null;
-        const eta = download.bytesPerSecond && download.total && download.completed != null && download.bytesPerSecond > 0
-          ? Math.max(0, Math.round((download.total - download.completed) / download.bytesPerSecond)) : null;
-        return <div className="download-row">
-          <span className="model-mark">↓</span>
-          <span className="catalog-main"><strong>{download.model}</strong><small>{t(download.phase)} · {download.status || downloadStage(download.status)}</small>
-            {download.phase === "downloading" && <div className="download-inline"><div className="progress"><i style={{ width: (percent ?? 0) + "%" }} /></div><small>{percent != null ? percent + "%" : ""}{download.bytesPerSecond ? ` · ${downloadBytes(download.bytesPerSecond, lang)}/s` : ""}{eta != null ? ` · ${formatDuration(eta)} ${t("left")}` : ""}</small></div>}
-          </span>
-          <span className="controls"><span className="status-pill">{download.phase === "downloading" ? t("In progress") : t(download.phase)}</span>
-            {download.phase === "downloading" && <button className="btn" onClick={() => stopModelDownload("pause")}>{t("Pause download")}</button>}
-            {download.phase === "paused" && <button className="btn primary" onClick={resumeModelDownload}>{t("Resume download")}</button>}
-            {download.phase !== "complete" && download.phase !== "failed" && <button className="btn danger" onClick={() => stopModelDownload("cancel")}>{t("Cancel download")}</button>}
-            {(download.phase === "complete" || download.phase === "failed" || download.phase === "cancelled") && <button className="btn" onClick={() => setDownload(null)}>{t("Close")}</button>}
-          </span>
-        </div>;
-      })() : <div className="empty-state"><strong>{t("No active downloads")}</strong><span>{t("Downloads you start will appear here.")}</span><button className="btn primary" onClick={() => setModelsTab("Discover")}>{t("Discover models")}</button></div>}</div>}
+      {modelsSection === "api" && renderProviders()}
+      {modelsSection === "remote" && renderRemote()}
     </section>;
   }
+
   function renderTerminal() {
     const hints = [t("↑ history"), "Tab " + t("complete"), t("scroll to inspect")].join(" · ");
     // System rows that carry a warning are promoted to their own level, otherwise
@@ -1661,11 +1976,10 @@ function App() {
       { key: "share", label: t("Start sharing"), done: tunnelState === "up" },
     ];
     return <section className="view-page">
-      <div className="view-heading">{backButton}<div><label>{t("SHARING & CONNECTIONS")}</label><h2>{t("Sharing & connections")}</h2><p>{t("Host this computer, connect to a friend, or configure a cloud provider.")}</p></div><button className="btn ghost" onClick={() => { void loadNetwork(); void loadCloud(); void loadHealth(); void loadHostClients(); }}>{t("Refresh")}</button></div>
+      <div className="view-heading">{backButton}<div><label>{t("SHARING & CONNECTIONS")}</label><h2>{t("Sharing & connections")}</h2><p>{t("Share this computer's model service with friends. Connecting to a friend or adding a cloud provider lives on the Models page.")}</p></div><button className="btn ghost" onClick={() => { void loadNetwork(); void loadCloud(); void loadHealth(); void loadHostClients(); }}>{t("Refresh")}</button></div>
       <div className="sharing-summary card"><span className={"status-pill " + (tunnelState === "up" ? "success" : "neutral")}><span className="status-dot" />{t(tunnelState === "up" ? "Sharing" : "Not sharing")}</span><span>{t("Clients online")}: <strong>{online}</strong></span><span className="public-link">{tunnelUrl || t("No public link yet")}</span>{tunnelUrl && <button className="btn tonal" onClick={() => void navigator.clipboard?.writeText(tunnelUrl)}>{t("Copy link")}</button>}{tunnelUrl && <button className="btn" onClick={() => setQrOpen(true)}>{t("Show QR code")}</button>}</div>
-      <div className="tab-strip" role="tablist" aria-label={t("Sharing options")}>{(["Host", "Connect", "API providers"] as const).map((tab) => <button role="tab" aria-selected={gatewayTab === tab} className={gatewayTab === tab ? "tab active" : "tab"} key={tab} onClick={() => setGatewayTab(tab)}>{t(tab)}</button>)}</div>
+      <div className="section-head"><div><h3>{t("Share this computer")}</h3><p className="subtitle">{t("People connect with the address and password below; their chats run on your hardware.")}</p></div></div>
 
-      {gatewayTab === "Host" && <>
         <div className="card">
           <h3 className="card-title">{t("Host a server")}</h3>
           <ol className="share-steps">{steps.map((step, index) => <li key={step.key} className={step.done ? "done" : ""}><span className="share-step-number">{step.done ? "✓" : index + 1}</span>{step.label}</li>)}</ol>
@@ -1687,42 +2001,6 @@ function App() {
             <button className="btn danger" onClick={() => void disconnectClient(String(client.ip || ""))} disabled={!client.ip}>{t("Disconnect")}</button>
           </div>)}</div> : <div className="empty-inline">{online ? tf("{count} connected · refresh to list them", { count: String(online) }) : t("No one is connected right now.")}</div>}
         </div>
-      </>}
-
-      {gatewayTab === "Connect" && <div className="card">
-        <h3 className="card-title">{t("Connect to a friend")}</h3>
-        <div className="setting-row"><label>{t("Server address")}<span className="hint">{t("host shares this")}</span></label><div className="controls"><input value={serverBase} onChange={(event) => setServerBase(event.target.value)} placeholder="https://xxxx.trycloudflare.com" /></div></div>
-        <div className="setting-row"><label>{t("Share name")}<span className="hint">{t("host name")}</span></label><div className="controls"><input value={guestName} onChange={(event) => setGuestName(event.target.value)} placeholder="Hymnix Orbit" /></div></div>
-        <div className="setting-row"><label>{t("Connection password")}<span className="hint">{t("given by the host")}</span></label><div className="controls"><input type="password" value={guestPassword} onChange={(event) => setGuestPassword(event.target.value)} /><button className="btn" onClick={() => void testConnection()} disabled={netBusy || shareTest.state === "testing"}>{t(shareTest.state === "testing" ? "Testing..." : "Test connection")}</button><button className="btn primary" onClick={() => void guestConnect().then((ok) => { if (ok) setShareTest({ state: "ok", message: t("Connected. Chats now run on the friend's hardware.") }); })} disabled={netBusy}>{netBusy ? t("Working...") : t("Connect")}</button></div></div>
-        {shareTest.state === "fail" && <ErrorPanel title={t("Could not connect")} cause={shareTest.category || shareTest.message} fix={t("Try again")} onFix={() => void testConnection()} details={shareTest.message} />}
-        {shareTest.state === "ok" && <p className="panel-note success-text" role="status">✓ {shareTest.message}</p>}
-        <div className="favourite-row"><button className="btn tonal" onClick={rememberHost} disabled={!serverBase.trim()}>{t("Save to favourites")}</button>{savedHosts.length > 0 && <span className="hint">{savedHosts.length} {t("saved hosts")}</span>}</div>
-        {savedHosts.length > 0 && <div className="host-list">{savedHosts.map((host) => <div className="host-row" key={host.url}><button className="panel-link" onClick={() => { setServerBase(host.url); setGuestName(host.name); }}><strong>{host.name}</strong><small>{host.url}</small></button><button className="btn ghost" onClick={() => forgetHost(host.url)}>{t("Remove")}</button></div>)}</div>}
-        <div className="setting-row">
-          <label>{t("This computer")}<span className="hint">{mode === "remote" ? tf("Chats run on {host}.", { host: serverBase || t("the friend's computer") }) : t("Chats run on this computer.")}</span></label>
-          <div className="controls">
-            {mode === "remote"
-              ? <button type="button" className="btn danger" onClick={disconnectGuest}>{t("Disconnect and use this computer")}</button>
-              : <button type="button" className="btn" disabled>{t("Chats run on this computer.")}</button>}
-          </div>
-        </div>
-        <p className="subtitle">{mode === "remote" ? t("Connected: chats run on the friend's hardware.") : t("Not connected. Chats run locally.")}</p>
-      </div>}
-
-      {gatewayTab === "API providers" && <div className="card">
-        <h3 className="card-title">{t("API providers")}</h3>
-        <div className="setting-row"><label>{t("CHAT SOURCE")}</label><div className="controls segmented"><button className={source === "local" ? "active" : ""} onClick={() => setSource("local")}>{t("Local model")}</button><button className={source === "cloud" ? "active" : ""} onClick={() => setSource("cloud")}>{t("Remote API")}</button></div></div>
-        <div className="setting-row"><label>{t("Protocol")}<span className="hint">{t("How this provider expects requests.")}</span></label><div className="controls segmented">{PROVIDER_PRESETS.map((preset) => <button key={preset.kind} className={providerKind === preset.kind ? "active" : ""} onClick={() => switchProviderKind(preset.kind)}>{t(preset.label)}</button>)}</div></div>
-        <p className="hint">{t(providerPreset(providerKind).note)}</p>
-        <div className="setting-row"><label>{t("Server address")}</label><div className="controls"><input value={cloudBase} onChange={(event) => setCloudBase(event.target.value)} placeholder={providerPreset(providerKind).base} /></div></div>
-        <div className="setting-row"><label>{t("Model")}</label><div className="controls"><input value={cloudModel} onChange={(event) => setCloudModel(event.target.value)} placeholder={providerPreset(providerKind).model} /><button className="btn" onClick={() => void fetchProviderModels()} disabled={providerBusy}>{t("Fetch models")}</button></div></div>
-        {providerKind === "openclaw" && <div className="setting-row"><label>{t("Agent")}<span className="hint">{t("gateway agent id, main by default")}</span></label><div className="controls"><input value={agentId} onChange={(event) => setAgentId(event.target.value)} placeholder="main" /></div></div>}
-        {providerKind === "anthropic" && <div className="setting-row"><label>{t("Max output tokens")}<span className="hint">{t("Anthropic requires a ceiling for every turn.")}</span></label><div className="controls"><input type="number" min={256} max={64000} step={256} value={providerMaxTokens || ""} placeholder="8192" onChange={(event) => setProviderMaxTokens(Math.max(0, Math.floor(Number(event.target.value) || 0)))} /></div></div>}
-        {providerModels.length > 0 && <div className="chip-row">{providerModels.slice(0, 24).map((name) => <button className={"chip " + (cloudModel === name ? "active" : "")} key={name} onClick={() => setCloudModel(name)}>{name}</button>)}</div>}
-        <div className="setting-row"><label>{t("API key")}</label><div className="controls"><input type="password" value={cloudKey} onChange={(event) => setCloudKey(event.target.value)} placeholder={cloudMasked || t(providerPreset(providerKind).keyHint)} /><button className="btn" onClick={() => void saveCloud()}>{t("Save")}</button><button className="btn" onClick={() => void testCloud()} disabled={providerBusy}>{providerBusy ? t("Testing...") : t("Test")}</button></div></div>
-        <p className="hint">{t("Keys are stored in the Windows credential vault when the system supports it.")}</p>
-        {cloudStatus && <p className="panel-note" role="status">{cloudStatus}</p>}
-      </div>}
 
     </section>;
   }
@@ -1849,8 +2127,8 @@ function App() {
     const nextStep = stepped.find((step) => !step.done);
     const skip = (key: string) => setWelcomeSkipped((current) => current.includes(key) ? current : [...current, key]);
     const gpu = stats?.vramTotal;
-    const chooseCloud = () => { setSource("cloud"); setActive("Gateway"); setGatewayTab("API providers"); setWelcomeOpen(false); };
-    const chooseFriend = () => { setActive("Gateway"); setGatewayTab("Connect"); setWelcomeOpen(false); };
+    const chooseCloud = () => { setSource("cloud"); setActive("Models"); setModelsSection("api"); setWelcomeOpen(false); };
+    const chooseFriend = () => { setActive("Models"); setModelsSection("remote"); setWelcomeOpen(false); };
     return <div className="welcome-mask" role="dialog" aria-modal="true" aria-label={t("Welcome")}>
       <div className="welcome-card onboarding">
         <div className="welcome-brand"><img src={brandIcon} alt="" /><div><strong>Hymnix Orbit</strong><small>{__APP_VERSION__}</small></div></div>
@@ -1949,6 +2227,76 @@ function App() {
       setProviderMaxTokens(Number(info?.max_tokens || 0) || 0);
       setCloudStatus("");
     } catch (reason) { setCloudStatus(reason instanceof Error ? reason.message : String(reason)); }
+  }
+  async function loadProviders(): Promise<void> {
+    try {
+      const data = await window.hymnix.providers.list();
+      setProviders(Array.isArray(data.providers) ? data.providers : []);
+      setActiveProviderId(String(data.active || ""));
+      setAutoApprove(data.auto_approve_tools === true);
+      setProviderError("");
+    } catch (reason) { setProviderError(reason instanceof Error ? reason.message : String(reason)); }
+  }
+  async function providerAction(payload: Record<string, unknown>): Promise<boolean> {
+    setProvidersBusy(true); setProviderError("");
+    try {
+      const data = await window.hymnix.providers.save(payload);
+      setProviders(Array.isArray(data.providers) ? data.providers : []);
+      setActiveProviderId(String(data.active || ""));
+      if (typeof data.auto_approve_tools === "boolean") setAutoApprove(data.auto_approve_tools);
+      if (data.ok === false) { setProviderError(String(data.detail || data.error || "provider_error")); return false; }
+      return true;
+    } catch (reason) { setProviderError(reason instanceof Error ? reason.message : String(reason)); return false; }
+    finally { setProvidersBusy(false); }
+  }
+  async function toggleAutoApprove(next: boolean): Promise<void> {
+    setAutoApprove(next);
+    try { await window.hymnix.config.set({ auto_approve_tools: next }); }
+    catch (reason) { setAutoApprove(!next); setStartupNote(reason instanceof Error ? reason.message : String(reason)); }
+  }
+  function openProviderForm(id?: string): void {
+    const existing = id ? providers.find((item) => item.id === id) : undefined;
+    setProviderForm({
+      id: existing?.id || "", label: existing?.label || "", kind: existing?.kind || "openai",
+      base_url: existing?.base_url || "", api_key: "", models: existing?.models ? [...existing.models] : [],
+      max_effort: existing?.max_effort || false, agent_id: existing?.agent_id || "", max_tokens: existing?.max_tokens || 0,
+      tab: existing ? "custom" : "catalog", catalogId: existing ? "custom" : "deepseek", modelDraft: ""
+    });
+  }
+  function applyCatalog(id: string): void {
+    const preset = PROVIDER_CATALOG.find((item) => item.id === id);
+    setProviderForm((current) => current ? {
+      ...current, catalogId: id,
+      label: preset ? preset.label : current.label,
+      kind: preset ? preset.kind : current.kind,
+      base_url: preset ? preset.base : current.base_url,
+      models: preset && preset.models.length ? [...preset.models] : current.models
+    } : current);
+  }
+  async function submitProviderForm(): Promise<void> {
+    if (!providerForm) return;
+    const ok = await providerAction({ action: "save", provider: {
+      id: providerForm.id, label: providerForm.label || "Provider", kind: providerForm.kind,
+      base_url: providerForm.base_url, api_key: providerForm.api_key, models: providerForm.models,
+      max_effort: providerForm.max_effort, agent_id: providerForm.agent_id, max_tokens: providerForm.max_tokens
+    } });
+    if (ok) { setProviderForm(null); setToast({ message: t("Provider saved") }); window.setTimeout(() => setToast(null), 2200); }
+  }
+  async function chooseModel(choice: { kind: "local" | "cloud" | "remote"; model: string; providerId?: string }): Promise<void> {
+    setModelPopover("closed"); setModelQuery("");
+    if (choice.kind === "local") { setSource("local"); setModel(choice.model); return; }
+    if (choice.kind === "cloud" && choice.providerId) {
+      const ok = await providerAction({ action: "select", id: choice.providerId, model: choice.model });
+      if (ok) await loadCloud();
+      return;
+    }
+    setModel(choice.model);
+  }
+  function goConfigure(target: "api" | "remote"): void {
+    setModelPopover("closed");
+    setActive("Models");
+    setModelsSection(target);
+    if (target === "api" && !providerForm) openProviderForm();
   }
   function providerDraft() {
     return { kind: providerKind, baseUrl: cloudBase.trim(), apiKey: cloudKey.trim(), model: cloudModel.trim(), agentId: agentId.trim(), maxTokens: providerMaxTokens };
@@ -2161,7 +2509,7 @@ function App() {
           <div className="setting-row"><label>{t("File preview")}<span className="hint">{t("Where a clicked file opens.")}</span></label><div className="controls segmented"><button className={uiSettings.previewMode === "inapp" ? "active" : ""} onClick={() => void setSetting("previewMode", "inapp")}>{t("In-app window")}</button><button className={uiSettings.previewMode === "browser" ? "active" : ""} onClick={() => void setSetting("previewMode", "browser")}>{t("Default browser")}</button></div></div>
           <div className="setting-row path-row"><label>{t("Data folder")}<span className="hint">{t("Sessions, settings and logs.")}</span></label><div className="controls"><input readOnly value={paths?.appData || ""} title={paths?.appData || ""} /><button className="btn" onClick={() => { if (paths?.appData) void window.hymnix.system.reveal(paths.appData); }} disabled={!paths?.appData}>{t("Open folder")}</button></div></div>
         </div>}
-        {settingsSection === "Sharing and security" && <div className="card settings-link-card">{head("Sharing and security", "Sharing and security")}<p className="subtitle">{t("Configure host sharing, connections and cloud provider credentials.")}</p><button className="btn primary" onClick={() => { setActive("Gateway"); setGatewayTab("Host"); }}>{t("Open sharing settings")}</button></div>}
+        {settingsSection === "Sharing and security" && <div className="card settings-link-card">{head("Sharing and security", "Sharing and security")}<p className="subtitle">{t("Configure host sharing, connections and cloud provider credentials.")}</p><button className="btn primary" onClick={() => setActive("Gateway")}>{t("Open sharing settings")}</button></div>}
                 {settingsSection === "Shortcuts" && <div className="card">{head("Shortcuts", "Shortcuts")}<div className="setting-row"><label>{t("Send with Shift+Enter")}<span className="hint">{t("Swap the Enter and Shift+Enter behaviour.")}</span></label><div className="controls"><button type="button" className={"switch" + (enterSwaps ? " on" : "")} aria-pressed={enterSwaps} aria-label={t("Send with Shift+Enter")} onClick={() => setEnterSwaps((value) => !value)}><span /></button></div></div><div className="shortcut-list">{[["Ctrl+N", "New session"], ["Ctrl+L", "Focus message composer"], ["Ctrl+B", "Toggle sidebar"], ["Ctrl+.", "Toggle inspector"], ["Ctrl+,", "Open settings"], ["Ctrl+/", "Open the shortcut sheet"], ["Ctrl+1–5", "Navigate primary pages"], ["Ctrl+Shift+C", "Copy last reply"], ["Ctrl+Shift+E", "Export chat"], [enterSwaps ? "Shift+Enter" : "Enter", "Send message"], [enterSwaps ? "Enter" : "Shift+Enter", "New line"], ["↑", "Edit the last message"], ["Esc", "Close or stop"]].map(([shortcut, action]) => <div key={shortcut}><kbd>{shortcut}</kbd><span>{t(action)}</span></div>)}</div></div>}
         {settingsSection === "About" && <div className="card">{head("About", "About")}<div className="about-brand"><img src={brandIcon} alt="" /><span><strong>Hymnix Orbit</strong><small>{__APP_VERSION__} · Hymnix Studio</small></span></div><div className="setting-row"><label>{t("Updates")}<span className="hint">{updateState.detail || tf("Installed version {version}", { version: __APP_VERSION__ })}</span></label><div className="controls"><button className="btn" onClick={() => void checkUpdates()} disabled={updateState.status === "checking"}>{t(updateState.status === "checking" ? "Checking..." : "Check for updates")}</button>{updateState.status === "available" && updateState.url && <button className="btn primary" onClick={() => void window.hymnix.system.openExternal(updateState.url)}>{t("Open download page")}</button>}<button className="btn ghost" onClick={() => void window.hymnix.system.openExternal("https://github.com/CarrisFlynn/hymnix-ai-server/releases")}>{t("View releases")}</button></div></div><div className="setting-row"><label>{t("Help")}</label><div className="controls"><button className="btn" onClick={() => setActive("Support")}>{t("Sponsor")}</button><button className="btn ghost" onClick={() => setActive("Changelog")}>{t("Changelog")}</button><button className="btn ghost" onClick={() => setActive("DesignLab")}>{t("Component gallery")}</button></div></div></div>}
       </div></div>
@@ -2186,9 +2534,21 @@ function App() {
 
   const terminalView = active === "Terminal";
   const chatView = active === "Chat";
-  return <div className={(terminalView ? "shell terminal-mode" : chatView ? "shell chat-mode" : "shell plain-mode") + (previewOpen ? " preview-open" : "") + (sidebarCollapsed ? " sidebar-collapsed" : "") + (chatView && inspectorOpen ? " inspector-open" : "")} data-lang={lang}>
+  const activeProvider = providers.find((item) => item.id === activeProviderId);
+  const effortIndex = Math.max(0, EFFORT_LEVELS.findIndex((level) => level.key === effort));
+  const effortLevel = EFFORT_LEVELS[effortIndex];
+  const sourceLabel = source === "cloud"
+    ? (activeProvider?.label || t("Cloud API"))
+    : mode === "remote" ? (guestName || t("Remote host")) : t("Local model");
+  const modelTitle = source === "cloud" ? (cloudModel || t("No model selected")) : (model || t("No model selected"));
+
+  return <div className={"app" + (terminalView ? " terminal-mode" : "") + (chatView ? " chat-mode" : "") + (sidebarCollapsed ? " rail-collapsed" : "")} data-lang={lang}>
     <div className="titlebar">
-      <span className="titlebar-brand"><img src={brandIcon} alt="" /><strong>Hymnix Orbit</strong></span>
+      <button type="button" className="product-switch" onClick={() => setProductMenuOpen((value) => !value)} aria-expanded={productMenuOpen} aria-haspopup="menu">
+        <img src={brandIcon} alt="" />
+        <strong>{surface === "ai" ? t("Hymnix AI") : t("Hymnix Orbit")}</strong>
+        <Icon name="Chevron" />
+      </button>
       <span className="titlebar-drag" />
       <div className="titlebar-actions">
         {previewOpen && <button type="button" className="preview-close" onClick={() => void closePreview()}>{t("Close preview")}</button>}
@@ -2196,87 +2556,89 @@ function App() {
         <button type="button" onClick={() => void window.hymnix.window.control("maximize")} aria-label={t("Maximize")}>▢</button>
         <button type="button" className="close" onClick={requestClose} aria-label={t("Close")}>✕</button>
       </div>
+      {productMenuOpen && <div className="product-menu" role="menu" onMouseLeave={() => setProductMenuOpen(false)}>
+        {SURFACES.map((item) => <button key={item.id} type="button" role="menuitemradio" aria-checked={surface === item.id} className={surface === item.id ? "active" : ""} onClick={() => { setSurface(item.id); setProductMenuOpen(false); }}>
+          <span className="product-dot" data-surface={item.id} aria-hidden="true" />
+          <span className="product-copy"><strong>{t(item.label)}</strong><small>{t(item.hint)}</small></span>
+          {surface === item.id && <span className="product-check" aria-hidden="true">✓</span>}
+        </button>)}
+      </div>}
     </div>
-    <aside className="side">
-      <div className="brand"><img src={brandIcon} alt="" /><span className="brand-text">Hymnix Orbit<small>ORBIT</small></span><button className="collapse-sidebar" type="button" onClick={() => setSidebarCollapsed(true)} aria-label={t("Collapse sidebar")}>‹</button></div>
-      <button className="new" onClick={createSession}><span className="new-plus" aria-hidden="true">＋</span><span className="new-text">{t("New chat")}</span><kbd>Ctrl N</kbd></button>
-      <div className="side-workspace">
-        <button className="workspace active" onClick={() => void chooseWorkspace()} title={filesRoot || t("Choose a workspace to browse files.")}><span className="dot" /><span className="workspace-name">{filesRoot ? filesRoot.split(/[\\/]/).filter(Boolean).pop() : t(workspace)}</span><span className="workspace-caret">▾</span></button>
-      </div>
-      <nav className="side-nav" aria-label={t("NAVIGATION")}>
-        {navGroups.map((group) => <nav className="nav-group" aria-label={t(group.title)} data-group={group.title} key={group.title}>
-          <span className="side-label">{t(group.title)}</span>
-          {group.items.map((item) => <button className={active === item ? "nav active" : "nav"} key={item} onClick={() => setActive(item)} aria-current={active === item ? "page" : undefined} title={t(item === "Gateway" ? "Sharing & connections" : item)}><Icon name={item} /><span className="nav-text">{t(item === "Gateway" ? "Sharing & connections" : item)}</span></button>)}
-        </nav>)}
-      </nav>
-      <section className="side-recent" aria-label={t("RECENT")}>
-        <div className="side-recent-head"><span className="side-label">{t("RECENT")}</span><button type="button" className="side-text-action" onClick={() => setActive("History")}>{t("See all")}</button></div>
-        <div className="session-list">
-          {sessions.length === 0 ? <span className="side-empty">{t("No sessions yet")}</span> : [{ label: "Pinned", items: pinnedSessions }, { label: "Today", items: todaySessions }, { label: "Yesterday", items: yesterdaySessions }, { label: "Earlier", items: olderSessions }].filter((section) => section.items.length > 0).map((section) => <div className="session-group" key={section.label}><span className="session-group-label">{t(section.label)}</span>{section.items.slice(0, 20).map((item) => <button className={item.id === currentSessionId ? "session-item active" : "session-item"} key={item.id} onClick={() => openSession(item.id)} title={`${item.name || t("New chat")} · ${item.count} ${t("messages")}`} aria-current={item.id === currentSessionId ? "true" : undefined}><span className="session-item-title">{item.name || t("New chat")}</span>{item.pinned && <span className="session-item-pin" aria-hidden="true">✦</span>}</button>)}</div>)}
-        </div>
-      </section>
-      <div className="side-footer"><button className={active === "Settings" ? "nav active" : "nav"} onClick={() => setActive("Settings")} aria-current={active === "Settings" ? "page" : undefined} title={t("Settings")}><Icon name="Settings" /><span className="nav-text">{t("Settings")}</span></button>
-        <button className="account" onClick={() => setWelcomeOpen(true)} title={`${t("Connection")} · ${t(state)}`}><span className="avatar">{mode === "remote" ? "R" : "L"}</span><span className="account-text"><strong>{t("Connection")}</strong><small>{mode === "local" ? t("Local mode") : t("Friend's server")}</small></span><span className="dot account-dot" data-state={state} aria-hidden="true" /></button>
-        {downloadOccupied && <button type="button" className="download-ring-wrap" onClick={() => { setActive("Models"); setModelsTab("Downloads"); }} aria-label={t("Model download progress")}><span className="download-ring" style={{ background: `conic-gradient(var(--accent-fill) ${download?.completed != null && download?.total ? Math.floor(100 * download.completed / download.total) : 0}%, var(--sunken) 0)` }}><i /></span><small>{download?.model}</small></button>}
 
+    <nav className="rail" aria-label={t("NAVIGATION")}>
+      <button type="button" className="rail-new" onClick={createSession} title={t("New chat")}>
+        <Icon name="Plus" /><span className="rail-label">{t("New chat")}</span><kbd>Ctrl N</kbd>
+      </button>
+      <div className="rail-nav">
+        {navGroups.map((group) => <div className="rail-group" key={group.title} role="group" aria-label={t(group.title)}>
+          <span className="rail-section">{t(group.title)}</span>
+          {group.items.map((item) => <button key={item} type="button" className={active === item ? "rail-item active" : "rail-item"} onClick={() => { setActive(item); if (item === "Chat") setChatTab("chat"); }} aria-current={active === item ? "page" : undefined} title={t(item === "Gateway" ? "Sharing" : item)}>
+            <Icon name={item} /><span className="rail-label">{t(item === "Gateway" ? "Sharing" : item)}</span>
+          </button>)}
+        </div>)}
+      </div>
+      <div className="rail-foot">
+        <button type="button" className={active === "Settings" ? "rail-item active" : "rail-item"} onClick={() => setActive("Settings")} aria-current={active === "Settings" ? "page" : undefined} title={t("Settings")}>
+          <Icon name="Settings" /><span className="rail-label">{t("Settings")}</span>
+        </button>
+        <button type="button" className="rail-account" onClick={() => setWelcomeOpen(true)} title={t("Connection") + " · " + t(state)}>
+          <span className="avatar">{mode === "remote" ? "R" : "L"}</span>
+          <span className="rail-label"><strong>{mode === "local" ? t("Local mode") : t("Remote host")}</strong><small>{t(state)}</small></span>
+          <span className="dot account-dot" data-state={state} aria-hidden="true" />
+        </button>
+        <button type="button" className="rail-collapse" onClick={() => setSidebarCollapsed((value) => !value)} aria-label={t(sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar")}>
+          <span aria-hidden="true">{sidebarCollapsed ? "›" : "‹"}</span>
+        </button>
+      </div>
+    </nav>
+
+    <aside className="sessions" aria-label={t("RECENT")}>
+      <div className="sessions-head">
+        <label className="sessions-search"><Icon name="Search" /><input value={historyQuery} onChange={(event) => setHistoryQuery(event.target.value)} placeholder={t("Search conversations")} aria-label={t("Search conversations")} /></label>
+        <button type="button" className="icon-button" onClick={createSession} aria-label={t("New chat")} data-tip={t("New chat")}><Icon name="Plus" /></button>
+      </div>
+      <div className="sessions-scroll">
+        {sessions.length === 0 ? <div className="sessions-empty">{t("No sessions yet")}</div> : [{ label: "Pinned", items: pinnedSessions }, { label: "Today", items: todaySessions }, { label: "Yesterday", items: yesterdaySessions }, { label: "Earlier", items: olderSessions }].filter((section) => section.items.length > 0).map((section) => {
+          const rows = section.items.filter((item) => !historyQuery.trim() || item.name.toLowerCase().includes(historyQuery.trim().toLowerCase())).slice(0, 40);
+          if (rows.length === 0) return null;
+          return <div className="sessions-group" key={section.label}>
+            <span className="sessions-label">{t(section.label)}</span>
+            {rows.map((item) => <button type="button" key={item.id} className={"session-row" + (item.id === currentSessionId && chatView ? " active" : "")} onClick={() => openSession(item.id)} title={(item.name || t("New chat")) + " · " + item.count + " " + t("messages")} aria-current={item.id === currentSessionId ? "true" : undefined}>
+              <span className="session-row-title">{item.name || t("New chat")}</span>
+              {item.pinned && <span className="session-row-pin" aria-hidden="true">✦</span>}
+            </button>)}
+          </div>;
+        })}
+      </div>
+      <div className="sessions-foot">
+        <button type="button" className="sessions-all" onClick={() => setActive("History")}>{t("See all")}</button>
+        {downloadOccupied && <button type="button" className="download-ring-wrap" onClick={() => { setActive("Models"); setModelsSection("local"); setModelsTab("Downloads"); }} aria-label={t("Model download progress")}>
+          <span className="download-ring" style={{ background: "conic-gradient(var(--accent-fill) " + (download?.completed != null && download?.total ? Math.floor(100 * download.completed / download.total) : 0) + "%, var(--sunken) 0)" }}><i /></span>
+        </button>}
       </div>
     </aside>
+
     <main className={terminalView ? "main terminal-main" : "main"}>
-      {chatView && <header className="workspace-header chat-workspace-header">
-        <div className="chat-header-title">{renamingSession ? <form className="rename-session" onSubmit={(event) => { event.preventDefault(); commitRenameSession(); }}><input autoFocus value={renameDraft} onChange={(event) => setRenameDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setRenamingSession(false); }} aria-label={t("Conversation name")} /><button className="btn primary" type="submit">{t("Save name")}</button></form> : <h1 title={t("Double-click to rename")} onDoubleClick={beginRenameSession}>{sessionName}</h1>}<span className="chat-readiness"><span className={"status-pill " + (state === "ready" ? "success" : state === "error" ? "danger" : "neutral")}><span className="status-dot" />{t(state === "ready" ? "Ready" : state === "starting" ? "Starting" : state === "error" ? "Error" : "Limited")}</span>{model || (source === "cloud" ? t(providerPreset(providerKind).label) : t("Choose a model"))}</span></div>
-        <div className="header-actions chat-header-actions"><button type="button" className="btn ghost" onClick={() => setInspectorOpen((value) => !value)} aria-expanded={inspectorOpen}>{t(inspectorOpen ? "Hide settings" : "Chat settings")}</button><div className="conversation-menu-wrap" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setConversationMenuOpen(false); }}><button type="button" className="btn ghost icon-button" aria-label={t("Conversation actions")} aria-haspopup="menu" aria-expanded={conversationMenuOpen} onClick={() => setConversationMenuOpen((value) => !value)}>⋯</button>{conversationMenuOpen && <div className="conversation-menu" role="menu"><button type="button" role="menuitem" onClick={beginRenameSession}>{t("Rename conversation")}</button><button type="button" role="menuitem" onClick={() => { toggleCurrentPin(); setConversationMenuOpen(false); }}>{t(savedSessions.find((item) => item.id === currentSessionId)?.pinned ? "Unpin conversation" : "Pin conversation")}</button><button type="button" role="menuitem" onClick={() => { exportChat(); setConversationMenuOpen(false); }}>{t("Export chat")}</button><hr /><button type="button" role="menuitem" className="danger" onClick={() => { clearCurrentConversation(); setConversationMenuOpen(false); }}>{t("Clear conversation")}</button></div>}</div></div>
-      </header>}
       {renderView()}
       {startupNote && !terminalView && <div className="notice" role="status">{startupNote}</div>}
       {(error || connectionError) && !terminalView && <div className="error" role="alert">{error || connectionError}</div>}
     </main>
-    {!terminalView && chatView && <aside className={"inspect" + (inspectorOpen ? "" : " collapsed")}>
-      <details className="inspector-section" open><summary>{t("Model source")}</summary><div className="panel-card">
-        <div className="segmented">
-          <button className={source === "local" ? "active" : ""} onClick={() => setSource("local")}>{t("Local model")}</button>
-          <button className={source === "cloud" ? "active" : ""} onClick={() => setSource("cloud")}>{t("Remote API")}</button>
-        </div>
-        {source === "cloud" && <div className="cloud-fields">
-          <select className="panel-select" value={providerKind} onChange={(event) => switchProviderKind(event.target.value as ProviderKind)} aria-label={t("Protocol")}>
-            {PROVIDER_PRESETS.map((preset) => <option key={preset.kind} value={preset.kind}>{t(preset.label)}</option>)}
-          </select>
-          <input value={cloudBase} onChange={(event) => setCloudBase(event.target.value)} placeholder={providerPreset(providerKind).base} />
-          <input value={cloudModel} onChange={(event) => setCloudModel(event.target.value)} placeholder={providerPreset(providerKind).model} />
-          {providerKind === "openclaw" && <input value={agentId} onChange={(event) => setAgentId(event.target.value)} placeholder={t("Agent")} />}
-          <input type="password" value={cloudKey} onChange={(event) => setCloudKey(event.target.value)} placeholder={cloudMasked || t(providerPreset(providerKind).keyHint)} />
-          <div className="panel-actions">
-            <button className="btn" onClick={() => void saveCloud()}>{t("Save")}</button>
-            <button className="btn" onClick={() => void testCloud()} disabled={providerBusy}>{providerBusy ? t("Testing...") : t("Test")}</button>
-          </div>
-          {cloudStatus && <p className="panel-note">{cloudStatus}</p>}
-        </div>}
-      </div></details>
-      <details className="inspector-section" open><summary>{t("Model")}</summary><div className="panel-card">
-        <select className="panel-select" value={model} onChange={(event) => setModel(event.target.value)}>
-          {models.length === 0 && <option value="">{t("No model list loaded")}</option>}
-          {models.map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}
-        </select>
-        <div className="panel-actions">
-          <button className={selectedLocalModel?.loaded ? "btn" : "btn primary"} onClick={() => void modelAction(selectedLocalModel?.loaded ? "stop" : "start", model)} disabled={!model || modelBusy === model}>{(model && modelBusy === model) ? t("Loading...") : selectedLocalModel?.loaded ? t("Unload model") : t("Load model")}</button>
-          <button className="btn" onClick={() => void loadModels()} aria-label={t("Refresh models")}>{t("Refresh")}</button>
-        </div>
-        <button type="button" className="panel-link" onClick={() => setActive("Models")}>{t("Get more models...")}</button>
-        {modelNote && <p className="panel-note">{modelNote}</p>}
-      </div></details>
-      <details className="inspector-section" open><summary>{t("Reasoning")}</summary><div className="panel-card">
-        <div className="segmented">
-          {[["low", t("Low")], ["medium", t("Medium")], ["high", t("High")]].map(([value, label]) => <button key={value} className={effort === value ? "active" : ""} onClick={() => setEffort(value)}>{label}</button>)}
-        </div>
-        <p className="panel-note">{t("Higher effort uses more tokens per reply.")}</p>
-      </div></details>
-      <details className="inspector-section" open><summary>{t("Telemetry")}</summary><div className="panel-card telemetry-grid">
-        {[{ label: "GPU", value: stats?.gpu }, { label: "AI", value: stats?.ai }, { label: "VRAM", value: stats?.vramTotal ? stats.vramUsed == null ? null : stats.vramUsed / stats.vramTotal * 100 : null, text: stats?.vramUsed != null && stats?.vramTotal != null ? `${stats.vramUsed}/${stats.vramTotal} GB` : undefined }, { label: "RAM", value: stats?.ramTotal ? stats.ramUsed / stats.ramTotal * 100 : null, text: stats ? `${(stats.ramUsed / 1024).toFixed(1)}/${(stats.ramTotal / 1024).toFixed(1)} GB` : undefined }].map((item) => <div className="telemetry-item" key={item.label}><div><span>{item.label}</span><strong>{item.text || (item.value != null ? Math.round(item.value) + "%" : "—")}</strong></div><div className="telemetry-track"><i style={{ width: `${Math.max(0, Math.min(100, item.value || 0))}%` }} /></div></div>)}
-      </div></details>
-    </aside>}
+
+    <footer className="statusbar">
+      <span className="sb-item"><span className="dot" data-state={state} aria-hidden="true" />{t(state === "ready" ? "Ready" : state === "starting" ? "Starting" : state === "error" ? "Error" : "Limited")}</span>
+      <span className="sb-item sb-model" title={modelTitle + " · " + sourceLabel}>{modelTitle}</span>
+      <span className="sb-item sb-source">{sourceLabel}</span>
+      <span className="sb-spacer" />
+      <span className="sb-hardware">
+        <span className="sb-item">{t("GPU")} {stats?.gpu != null ? stats.gpu + "%" : "—"}</span>
+        <span className="sb-item">VRAM {stats?.vramUsed != null && stats?.vramTotal != null ? stats.vramUsed + "/" + stats.vramTotal + " GB" : "—"}</span>
+        <span className="sb-item">RAM {stats ? (stats.ramUsed / 1024).toFixed(1) + "/" + (stats.ramTotal / 1024).toFixed(1) + " GB" : "—"}</span>
+      </span>
+      <span className="sb-item sb-effort" data-level={effortLevel.key}>{t("Reasoning")} {effortLevel.label}</span>
+    </footer>
     {clearAllConfirm && <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setClearAllConfirm(false); }}><section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="clear-history-title"><div className="dialog-icon">!</div><h2 id="clear-history-title">{tf("Delete {count} conversations?", { count: String(sessions.length) })}</h2><p>{t("All saved conversations will be removed. You can undo this for 10 seconds.")}</p><div className="dialog-actions"><button type="button" className="btn" autoFocus onClick={() => setClearAllConfirm(false)}>{t("Cancel")}</button><button type="button" className="btn danger" onClick={clearAllSessions}>{tf("Delete {count} conversations", { count: String(sessions.length) })}</button></div></section></div>}
     {modelDeleteTarget && <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setModelDeleteTarget(null); }}><section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-model-title"><div className="dialog-icon danger">!</div><h2 id="delete-model-title">{t("Delete model")}</h2><p>{tf("Delete model {model} from this device? This cannot be undone.", { model: modelDeleteTarget })}</p><div className="dialog-actions"><button type="button" className="btn" autoFocus onClick={() => setModelDeleteTarget(null)}>{t("Cancel")}</button><button type="button" className="btn danger" onClick={() => { void modelAction("delete", modelDeleteTarget); setModelDeleteTarget(null); }}>{t("Delete model")}</button></div></section></div>}
     {pluginDeleteTarget && <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPluginDeleteTarget(null); }}><section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="uninstall-plugin-title"><div className="dialog-icon danger">!</div><h2 id="uninstall-plugin-title">{tf("Uninstall {name}?", { name: pluginDeleteTarget.name })}</h2><p>{t("Uninstall moves the plugin to its local recovery folder.")}</p><div className="dialog-actions"><button type="button" className="btn" autoFocus onClick={() => setPluginDeleteTarget(null)}>{t("Cancel")}</button><button type="button" className="btn danger" disabled={!!pluginActionBusy} onClick={() => void uninstallPlugin()}>{t("Uninstall")}</button></div></section></div>}
-    {sidebarCollapsed && <button className="expand-sidebar" type="button" onClick={() => setSidebarCollapsed(false)} aria-label={t("Expand sidebar")}>›</button>}
     {toast && <div className="toast" role="status"><span>{toast.message}</span>{toast.action && toast.undo && <button type="button" onClick={toast.undo}>{toast.action}</button>}<button type="button" className="toast-close" onClick={() => setToast(null)} aria-label={t("Dismiss")}>×</button></div>}
     {download && <ModelDownloadFooter download={download} lang={lang} remote={remoteActive()}
       onPause={() => stopModelDownload("pause")} onResume={resumeModelDownload}

@@ -507,6 +507,38 @@ export type CloudApi = {
   test: () => Promise<Record<string, unknown>>;
 };
 
+/** A saved cloud provider profile; the key itself never leaves the gateway. */
+export type ProviderProfile = {
+  id: string;
+  label: string;
+  kind: string;
+  base_url: string;
+  models: string[];
+  agent_id: string;
+  max_tokens: number;
+  max_effort: boolean;
+  has_key: boolean;
+  api_key_masked: string;
+  api_key: string;
+};
+
+export type ProvidersResponse = {
+  ok: boolean;
+  providers: ProviderProfile[];
+  active: string;
+  chat_source: string;
+  current_model: string;
+  auto_approve_tools: boolean;
+  fetched?: string[];
+  error?: string;
+  detail?: string;
+};
+
+export type ProvidersApi = {
+  list: () => Promise<ProvidersResponse>;
+  save: (payload: Record<string, unknown>) => Promise<ProvidersResponse>;
+};
+
 export type DiskInfo = { path: string; free: number; total: number; ok: boolean };
 
 export type NotifyInput = { title: string; body: string };
@@ -572,6 +604,7 @@ export type DesktopApi = {
   github: { stars: () => Promise<{ ok: boolean; stars: number | null }> };
   updates: { check: () => Promise<{ ok: boolean; current?: string; version?: string; url?: string; newer?: boolean; error?: string }> };
   cloud: CloudApi;
+  providers: ProvidersApi;
   provider: ProviderApi;
   config: ConfigApi;
   bootstrap: () => Promise<AppBootstrap>;

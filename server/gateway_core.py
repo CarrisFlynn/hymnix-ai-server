@@ -107,6 +107,12 @@ DEFAULT_CONFIG = {
     "chat_source": "local",
     "cloud_enabled": False,
     "cloud_api": {"base_url": "", "api_key": "", "model": "", "kind": "openai", "agent_id": "", "max_tokens": 0},
+    # Named provider profiles the desktop model picker lists. cloud_api above stays
+    # the single runtime copy the chat path reads, so nothing else had to change.
+    "cloud_providers": [],
+    "cloud_active": "",
+    # When true, tool calls skip the approval queue (still logged).
+    "auto_approve_tools": False,
     "max_body_mb": 32,
     "online_timeout_s": 120,
     "keep_log_days": 30,
@@ -1352,6 +1358,7 @@ class Handler(BaseHTTPRequestHandler):
         "keep_log_days", "online_timeout_s", "max_body_mb", "billing_enabled",
         "daily_quota_tokens", "power_price", "base_power_w", "allow_remote",
         "chat_source", "timezone", "compat_mode", "inject_time", "enable_note_injection",
+        "auto_approve_tools",
     }
 
     def _admin_ollama(self, method="POST"):
@@ -1422,6 +1429,201 @@ class Handler(BaseHTTPRequestHandler):
             _sync_runtime(CFG)
             append_log("config-%s.jsonl" % _today(), {"t": time.strftime("%Y-%m-%d %H:%M:%S"), "changed": changed})
         return self._json(200, {"ok": True, "changed": changed, "rejected": rejected})
+
+    # ---------- provider profiles ----------
+    def _providers(self):
+        rows = CFG.get("cloud_providers")
+        return rows if isinstance(rows, list) else []
+
+    def _provider_view(self, row, reveal=False):
+        key = str(row.get("api_key") or "")
+        return {
+            "id": str(row.get("id") or ""),
+            "label": str(row.get("label") or ""),
+            "kind": _cloud_kind(row.get("kind")),
+            "base_url": str(row.get("base_url") or ""),
+            "models": [str(m) for m in (row.get("models") or []) if isinstance(m, str) and m.strip()][:500],
+            "agent_id": str(row.get("agent_id") or ""),
+            "max_tokens": int(row.get("max_tokens") or 0),
+            "max_effort": bool(row.get("max_effort")),
+            "has_key": bool(key),
+            "api_key_masked": self._mask_key(key),
+            "api_key": key if reveal else "",
+        }
+
+    def _providers_payload(self, reveal=False):
+        active = str(CFG.get("cloud_active") or "")
+        rows = [self._provider_view(row, reveal) for row in self._providers() if isinstance(row, dict)]
+        cloud = CFG.get("cloud_api") or {}
+        return {
+            "ok": True,
+            "providers": rows,
+            "active": active,
+            "chat_source": CFG.get("chat_source") or "local",
+            "current_model": str(cloud.get("model") or ""),
+            "auto_approve_tools": bool(CFG.get("auto_approve_tools", False)),
+        }
+
+    def _save_config_file(self):
+        try:
+            with open(CONFIG_PATH, "w", encoding="utf-8") as handle:
+                json.dump(CFG, handle, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    def _probe_provider_models(self, row):
+        kind = _cloud_kind(row.get("kind"))
+        base = str(row.get("base_url") or "").strip().rstrip("/")
+        key = str(row.get("api_key") or "")
+        if not base:
+            raise ValueError("base_url_missing")
+        _checked_base_url(base)
+        url = _cloud_url(base, "/models")
+        headers = {"Accept": "application/json"}
+        if key:
+            headers["Authorization"] = "Bearer " + key
+        if kind == "anthropic":
+            url += "?limit=100"
+            if key:
+                headers["x-api-key"] = key
+            headers["anthropic-version"] = "2023-06-01"
+        request = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(request, timeout=15) as response:
+            data = json.loads(response.read().decode("utf-8", "ignore") or "{}")
+        found = []
+        for item in (data.get("data") or data.get("models") or []):
+            if not isinstance(item, dict):
+                continue
+            name = item.get("id") or item.get("name") or item.get("model")
+            if isinstance(name, str) and name.strip():
+                found.append(name.strip())
+        return sorted(set(found))[:500]
+
+    def _admin_providers(self):
+        return self._json(200, self._providers_payload())
+
+    def _admin_providers_save(self):
+        payload = self._read_json_body()
+        action = str(payload.get("action") or "save").strip().lower()
+        rows = [dict(row) for row in self._providers() if isinstance(row, dict)]
+        by_id = {str(row.get("id") or ""): index for index, row in enumerate(rows)}
+
+        if action == "delete":
+            target = str(payload.get("id") or "")
+            if target not in by_id:
+                return self._json(404, {"ok": False, "error": "provider_not_found"})
+            rows.pop(by_id[target])
+            CFG["cloud_providers"] = rows
+            if str(CFG.get("cloud_active") or "") == target:
+                CFG["cloud_active"] = rows[0]["id"] if rows else ""
+                self._apply_active_provider(rows[0] if rows else None, "")
+            self._save_config_file()
+            return self._json(200, self._providers_payload())
+
+        if action == "select":
+            target = str(payload.get("id") or "")
+            if target not in by_id:
+                return self._json(404, {"ok": False, "error": "provider_not_found"})
+            row = rows[by_id[target]]
+            wanted = str(payload.get("model") or "").strip()
+            models = [m for m in (row.get("models") or []) if isinstance(m, str)]
+            model = wanted if wanted in models else (models[0] if models else str(row.get("model") or ""))
+            CFG["cloud_active"] = target
+            self._apply_active_provider(row, model)
+            self._save_config_file()
+            return self._json(200, self._providers_payload())
+
+        if action in ("add_model", "remove_model"):
+            target = str(payload.get("id") or "")
+            if target not in by_id:
+                return self._json(404, {"ok": False, "error": "provider_not_found"})
+            name = str(payload.get("model") or "").strip()[:200]
+            if not name or any(ord(ch) < 32 for ch in name):
+                return self._json(400, {"ok": False, "error": "invalid_model"})
+            models = [m for m in (rows[by_id[target]].get("models") or []) if isinstance(m, str)]
+            if action == "add_model":
+                if name not in models:
+                    models.append(name)
+            else:
+                models = [m for m in models if m != name]
+            rows[by_id[target]]["models"] = models[:500]
+            CFG["cloud_providers"] = rows
+            self._save_config_file()
+            return self._json(200, self._providers_payload())
+
+        if action == "fetch_models":
+            target = str(payload.get("id") or "")
+            if target not in by_id:
+                return self._json(404, {"ok": False, "error": "provider_not_found"})
+            try:
+                found = self._probe_provider_models(rows[by_id[target]])
+            except ValueError as exc:
+                return self._json(400, {"ok": False, "error": str(exc)})
+            except Exception as exc:
+                return self._json(502, {"ok": False, "error": "provider_unreachable", "detail": str(exc)[:200]})
+            merged = [m for m in (rows[by_id[target]].get("models") or []) if isinstance(m, str)]
+            for name in found:
+                if name not in merged:
+                    merged.append(name)
+            rows[by_id[target]]["models"] = merged[:500]
+            CFG["cloud_providers"] = rows
+            self._save_config_file()
+            result = self._providers_payload()
+            result["fetched"] = found
+            return self._json(200, result)
+
+        # save (create or update)
+        raw = payload.get("provider") if isinstance(payload.get("provider"), dict) else {}
+        target = str(raw.get("id") or "")
+        try:
+            base_url = _checked_base_url(raw.get("base_url"))
+        except ValueError as exc:
+            return self._json(400, {"ok": False, "error": str(exc)})
+        label = str(raw.get("label") or "").strip()[:60] or "Provider"
+        models = [str(m).strip()[:200] for m in (raw.get("models") or []) if isinstance(m, str) and m.strip()][:500]
+        key = raw.get("api_key")
+        record = {
+            "id": target if target in by_id else "p" + secrets.token_hex(6),
+            "label": label,
+            "kind": _cloud_kind(raw.get("kind")),
+            "base_url": base_url,
+            "models": models,
+            "agent_id": str(raw.get("agent_id") or "").strip()[:120],
+            "max_tokens": max(0, min(200000, int(raw.get("max_tokens") or 0) if str(raw.get("max_tokens") or 0).isdigit() else 0)),
+            "max_effort": bool(raw.get("max_effort")),
+        }
+        if target in by_id:
+            record["api_key"] = rows[by_id[target]].get("api_key", "")
+        else:
+            record["api_key"] = ""
+        if isinstance(key, str) and key.strip() and "*" not in key:
+            record["api_key"] = key.strip()
+        if target in by_id:
+            rows[by_id[target]] = record
+        else:
+            rows.append(record)
+        CFG["cloud_providers"] = rows
+        if not str(CFG.get("cloud_active") or "") or str(CFG.get("cloud_active")) == record["id"]:
+            CFG["cloud_active"] = record["id"]
+            self._apply_active_provider(record, models[0] if models else "")
+        self._save_config_file()
+        return self._json(200, self._providers_payload())
+
+    def _apply_active_provider(self, row, model):
+        """Copy the chosen profile into cloud_api so the chat path stays unchanged."""
+        if not row:
+            CFG["cloud_api"] = {"base_url": "", "api_key": "", "model": "", "kind": "openai", "agent_id": "", "max_tokens": 0}
+            CFG["chat_source"] = "local"
+            return
+        CFG["cloud_api"] = {
+            "base_url": str(row.get("base_url") or ""),
+            "api_key": str(row.get("api_key") or ""),
+            "model": str(model or (row.get("models") or [""])[0] or ""),
+            "kind": _cloud_kind(row.get("kind")),
+            "agent_id": str(row.get("agent_id") or ""),
+            "max_tokens": int(row.get("max_tokens") or 0),
+        }
+        CFG["chat_source"] = "cloud"
 
     def _admin_cloud(self):
         cloud = CFG.get("cloud_api") or {}
@@ -1647,6 +1849,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._admin_cloud()
             if path == "/admin/cloud" and method == "POST":
                 return self._admin_cloud_save()
+            if path == "/admin/providers" and method == "GET":
+                return self._admin_providers()
+            if path == "/admin/providers" and method == "POST":
+                return self._admin_providers_save()
             if path == "/admin/cloud/test" and method == "POST":
                 return self._admin_cloud_test()
             if path == "/admin/tunnel" and method == "POST":
@@ -1749,6 +1955,25 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(status, {"ok": bool(result.get("ok")), "request_id": request_id,
                                            "tool": name, "result": safe_result,
                                            "error": str(result.get("error") or "")[:128]})
+            if bool(CFG.get("auto_approve_tools", False)):
+                # Global "auto allow" switch from the composer. The call is still
+                # audited, it just never enters the approval queue.
+                if not item:
+                    return self._json(400, {"ok": False, "error": "unknown_tool"})
+                result = tool_registry.call(name, args)
+                safe_result = _approval_redact(result.get("result"))
+                try:
+                    append_log("tool-auto-%s.jsonl" % _today(), {
+                        "t": time.strftime("%Y-%m-%d %H:%M:%S"), "request_id": request_id,
+                        "tool": name, "args_sha256": approvals.args_digest(args),
+                        "ok": bool(result.get("ok")), "ip": self._ip()})
+                except Exception:
+                    pass
+                status = 200 if result.get("ok") else 400
+                return self._json(status, {"ok": bool(result.get("ok")), "request_id": request_id,
+                                           "tool": name, "result": safe_result,
+                                           "error": str(result.get("error") or "")[:128],
+                                           "auto_approved": True})
             command = "tool:" + name + " " + json.dumps(args, ensure_ascii=False, sort_keys=True)
             decision = approvals.check(command, origin="api")
             approvals.record(decision, "tool:" + name + " [args_sha256:" + approvals.args_digest(args) + "]")

@@ -2,6 +2,31 @@
 
 Only user-visible changes are listed. Internal refactors, test scaffolding and machine-specific paths are intentionally omitted.
 
+## Unreleased — Codex-style shell and a real model picker (2026-11-25)
+
+### Changed
+
+- The window is now three columns: a navigation rail (Hymnix AI / Orbit switch, New chat, pages), the conversation list, and the content area. The right-hand inspector is gone; model and reasoning live in the composer, telemetry in the status bar and the Context tab.
+- The product switch mirrors ChatGPT / Codex: **Hymnix AI** is the general assistant, **Hymnix Orbit** is the coding agent; both share one conversation history.
+- Each conversation carries three views: **Chat**, **Context** (system prompt, workspace, model, reasoning, token estimate, telemetry) and **Trace** (tool activity, approvals, recent log).
+- The composer is one rounded card with attach, a tool-approval chip (ask every time / auto allow), the model chip and a circular send that becomes Stop while generating.
+- The model chip opens a panel with the model list and a reasoning slider (Low / Medium / High / Max) whose gradient flows faster and hotter as it climbs; Max stays disabled until a provider declares support.
+- The model list is grouped: local models, cloud providers (with their own models) and remote hosts. Unconfigured sources appear as placeholders that jump straight to the right settings page.
+- Models page is organised around where replies run: **Local models**, **Cloud API**, **Remote hosts**. Cloud providers are saved profiles (vendor catalog or custom endpoint, multiple models each, optional Max support); the remote-host section carries the tunnel address, password and favourites, with the one-line explanation of what a tunnel does.
+- Sharing page now only shares this computer; connecting to a friend or adding a provider moved to the Models page.
+- Every page sits in the same three-column shell with a consistent page head, and content is capped at a comfortable reading width.
+
+### Added
+
+- A persistent status bar: connection state, current model and source, GPU / VRAM / RAM, and the active reasoning level.
+- Provider registry in the gateway (`/admin/providers`: save, edit, delete, select, add/remove model, fetch models), with the API key masked and the chosen profile copied into the runtime config the chat path already used.
+- A global tool-approval switch (`auto_approve_tools`, default off) shared by every conversation; auto-approved calls are still logged.
+
+### Fixed
+
+- The old inspector, its overlay behaviour and the chat header it duplicated are removed, so nothing covers the composer any more.
+- Long page content is centred instead of drifting right, and the status bar no longer clips at 1024-1280px.
+
 ## Unreleased — 1.3.3 patch round (2026-11-25)
 
 A hardening and repair pass over the 1.3.3 shell: the security chain in the gateway, the interaction bugs the Claude-style layout introduced, the contrast and theme defects the design gates missed, and the first visible layout work of the 2.0 plan.

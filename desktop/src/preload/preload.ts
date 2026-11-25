@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { NetworkApi, AdminClientsResponse, AdminErrorRecord, AdminHistoryQuery, AdminHistoryResponse, AdminStatus, ChatDelta, DesktopApi, FileReadRequest, FileReadResponse, FileSearchRequest, FileSearchResponse, FileTreeRequest, FileTreeResponse, LocalModel, StreamChatInput, TerminalCommandRequest, TerminalCommandResult, TerminalCompletion, TerminalOutputEvent, ToolCallRequest, ToolCallResponse, ToolsResponse, ApprovalListResponse, ApprovalDecisionResponse, WorkspaceRoot } from "../shared/protocol";
+import type { NetworkApi, AdminClientsResponse, AdminErrorRecord, AdminHistoryQuery, AdminHistoryResponse, AdminStatus, ChatDelta, DesktopApi, FileReadRequest, FileReadResponse, FileSearchRequest, FileSearchResponse, FileTreeRequest, FileTreeResponse, LocalModel, ProvidersResponse, StreamChatInput, TerminalCommandRequest, TerminalCommandResult, TerminalCompletion, TerminalOutputEvent, ToolCallRequest, ToolCallResponse, ToolsResponse, ApprovalListResponse, ApprovalDecisionResponse, WorkspaceRoot } from "../shared/protocol";
 
 // Main owns AbortController, api/tags, v1/chat/completions, and Authorization handling; preload only forwards typed IPC events.
 const channels = { toolsList: "tools:list", toolsCall: "tools:call", toolsPending: "tools:pending", toolsApprove: "tools:approve", toolsDeny: "tools:deny", health: "gateway:health", models: "gateway:models", stream: "gateway:stream", cancel: "gateway:cancel", delta: "gateway:delta", complete: "gateway:complete", adminHistory: "gateway:admin-history", adminStatus: "gateway:admin-status", adminErrors: "gateway:admin-errors", adminClients: "gateway:admin-clients" } as const;
@@ -32,6 +32,10 @@ const api: DesktopApi & { adminHistory: (adminKey: string, query?: AdminHistoryQ
   config: {
     get: () => ipcRenderer.invoke("config:get"),
     set: (values: Record<string, unknown>) => ipcRenderer.invoke("config:set", values),
+  },
+  providers: {
+    list: (): Promise<ProvidersResponse> => ipcRenderer.invoke("providers:list"),
+    save: (payload: Record<string, unknown>): Promise<ProvidersResponse> => ipcRenderer.invoke("providers:save", payload),
   },
   cloud: {
     get: () => ipcRenderer.invoke("cloud:get"),

@@ -90,7 +90,7 @@ The 1.3.0 release is not a skin change. The whole delivery model was rebuilt:
 
 ## What the 1.3.3 desktop build actually ships
 
-The Electron app is a focused workspace, not a catalogue of pages. It ships **seven pages**: Chat, Models, Sharing & connections, Plugins, Changelog and Sponsor, plus Monitor and Terminal for developers; Settings is the shell for preferences.
+The Electron app is a focused workspace, not a catalogue of pages. It ships **seven pages**: Chat, Models, Sharing & connections, Plugins, Changelog and Sponsor, plus Monitor and Terminal for developers; Settings is the shell for preferences. The window itself is three columns — a navigation rail, the conversation list and the content area — with a status bar along the bottom.
 
 Capabilities that exist only in the Python console build (`server/hymnix_main.py`, `server/hxcore/`) are **not reachable from the desktop UI**: the Files/Tools/Approvals/Logs pages, the OCR page, the Git proxy and the diff review pages. The gateway side is still there (`/api/tools`, `/admin/approvals`, plugins, the files API); what is missing is a page to drive them.
 ## Features
