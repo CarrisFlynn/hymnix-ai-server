@@ -917,7 +917,9 @@ function createWindow(){
     : join(productRoot, "desktop", "src", "renderer", "assets", "hymnix-red-white-star.png");
   const bootAppearance = readSettings();
   const storedBackground = /^#[\da-f]{6}$/i.test(bootAppearance.windowBackground) ? bootAppearance.windowBackground : "";
-  const win=new BrowserWindow({width:1440,height:900,minWidth:800,minHeight:560,frame:false,titleBarStyle:"hidden",fullscreen:bootAppearance.startFullscreen,backgroundColor:storedBackground || (nativeTheme.shouldUseDarkColors?"#151c27":"#fdf7f7"),...(existsSync(icon)?{icon}:{}),webPreferences:{preload:join(__dirname,"../preload/preload.js"),contextIsolation:true,sandbox:true,nodeIntegration:false,webSecurity:true}});win.webContents.setWindowOpenHandler(()=>({action:"deny"}));win.webContents.on("will-navigate",(event,url)=>{if(!isAllowedRendererUrl(url))event.preventDefault()});void win.loadURL(rendererUrl);mainWindow=win;
+  const win=new BrowserWindow({width: Math.min(1294, Math.round(screen.getPrimaryDisplay().workAreaSize.width * 0.94)),
+    height: Math.min(830, Math.round(screen.getPrimaryDisplay().workAreaSize.height * 0.92)),
+    minWidth: 800, minHeight: 560,frame:false,titleBarStyle:"hidden",fullscreen:bootAppearance.startFullscreen,backgroundColor:storedBackground || (nativeTheme.shouldUseDarkColors?"#151c27":"#fdf7f7"),...(existsSync(icon)?{icon}:{}),webPreferences:{preload:join(__dirname,"../preload/preload.js"),contextIsolation:true,sandbox:true,nodeIntegration:false,webSecurity:true}});win.webContents.setWindowOpenHandler(()=>({action:"deny"}));win.webContents.on("will-navigate",(event,url)=>{if(!isAllowedRendererUrl(url))event.preventDefault()});void win.loadURL(rendererUrl);mainWindow=win;
   win.webContents.on("did-start-loading", () => terminalBridge.stop());
   win.webContents.on("did-fail-load", (_event, code, description, url, isMainFrame) => { if (isMainFrame) bootLog(`renderer load failed code=${code} description=${description} url=${url}`); });
   win.webContents.on("did-finish-load", () => bootLog("renderer finished loading"));
