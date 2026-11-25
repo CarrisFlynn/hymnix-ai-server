@@ -36,6 +36,10 @@ const api: DesktopApi & { adminHistory: (adminKey: string, query?: AdminHistoryQ
     save: (payload: Record<string, unknown>) => ipcRenderer.invoke("cloud:save", payload),
     test: () => ipcRenderer.invoke("cloud:test"),
   },
+  provider: {
+    probe: (config) => ipcRenderer.invoke("provider:probe", config),
+    models: (config) => ipcRenderer.invoke("provider:models", config),
+  },
   system: {
     stats: () => ipcRenderer.invoke("system:stats"),
     openExternal: (url: string) => ipcRenderer.invoke("shell:open", url),
@@ -122,7 +126,7 @@ const api: DesktopApi & { adminHistory: (adminKey: string, query?: AdminHistoryQ
       const onDelta = (_event: Electron.IpcRendererEvent, message: { requestId: string; delta: ChatDelta }) => { if (message.requestId === input.requestId) input.onDelta(message.delta); };
       const onComplete = (_event: Electron.IpcRendererEvent, message: { requestId: string; error?: {status?: number; code?: string; message: string} }) => { if (message.requestId === input.requestId) { if (message.error) { const error = new Error(message.error.message) as Error & {status?: number; code?: string}; error.status = message.error.status; error.code = message.error.code; finish(error); } else finish(); } };
       ipcRenderer.on(channels.delta, onDelta); ipcRenderer.on(channels.complete, onComplete);
-      ipcRenderer.invoke(channels.stream, { requestId: input.requestId, baseUrl: input.baseUrl, apiKey: input.apiKey, model: input.model, messages: input.messages }).catch((reason: unknown) => finish(reason instanceof Error ? reason : new Error(String(reason))));
+      ipcRenderer.invoke(channels.stream, { requestId: input.requestId, baseUrl: input.baseUrl, apiKey: input.apiKey, model: input.model, messages: input.messages, kind: input.kind, agentId: input.agentId, maxTokens: input.maxTokens, reasoningEffort: input.reasoningEffort }).catch((reason: unknown) => finish(reason instanceof Error ? reason : new Error(String(reason))));
     });
   }
 } };

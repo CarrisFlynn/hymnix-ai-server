@@ -22,6 +22,7 @@ import time
 import traceback
 import re
 import urllib.parse
+import urllib.request
 from collections import deque
 from datetime import datetime
 import socketserver
@@ -103,7 +104,7 @@ DEFAULT_CONFIG = {
     "allow_remote": True,
     "chat_source": "local",
     "cloud_enabled": False,
-    "cloud_api": {"base_url": "", "api_key": "", "model": ""},
+    "cloud_api": {"base_url": "", "api_key": "", "model": "", "kind": "openai", "agent_id": "", "max_tokens": 0},
     "max_body_mb": 32,
     "online_timeout_s": 120,
     "keep_log_days": 30,
@@ -710,6 +711,29 @@ def log_event(kind, **kw):
     append_log("events-%s.jsonl" % _today(), kw)
 
 
+_CLOUD_KINDS = ("openai", "anthropic", "openclaw")
+
+
+def _cloud_kind(value):
+    """Normalise the three dialects the desktop client can speak."""
+    text = str(value or "").strip().lower().replace("-", "").replace("_", "").replace(" ", "")
+    if text in ("anthropic", "claude", "claudecode"):
+        return "anthropic"
+    if text in ("openclaw", "claw"):
+        return "openclaw"
+    return "openai"
+
+
+def _cloud_url(base, suffix):
+    """Join a base URL with an API path without duplicating a version segment."""
+    root = str(base or "").strip().rstrip("/")
+    if root.endswith(suffix):
+        return root
+    if re.search(r"/v[0-9]+[a-z]*(?:/[^/]+)*$", root):
+        return root + suffix
+    return root + "/v1" + suffix
+
+
 def _redact_upstream_url(value):
     try:
         parts = urllib.parse.urlsplit(str(value or ""))
@@ -1275,15 +1299,24 @@ class Handler(BaseHTTPRequestHandler):
 
     def _admin_cloud(self):
         cloud = CFG.get("cloud_api") or {}
-        return self._json(200, {
+        payload = {
             "ok": True,
             "chat_source": CFG.get("chat_source") or "local",
             "cloud_enabled": bool(CFG.get("cloud_enabled", False)),
+            "kind": _cloud_kind(cloud.get("kind")),
             "base_url": cloud.get("base_url") or "",
             "model": cloud.get("model") or "",
+            "agent_id": cloud.get("agent_id") or "",
+            "max_tokens": int(cloud.get("max_tokens") or 0),
             "api_key_masked": self._mask_key(cloud.get("api_key")),
             "has_key": bool(cloud.get("api_key")),
-        })
+        }
+        # The desktop client streams chat itself, so it needs the real key after a
+        # restart. Hand it out only to a direct loopback caller that already proved
+        # the admin key — a request through the public tunnel fails the IP check.
+        if "reveal=1" in (self.path or "") and self._ip() in ("127.0.0.1", "::1"):
+            payload["api_key"] = cloud.get("api_key") or ""
+        return self._json(200, payload)
 
     def _admin_cloud_save(self):
         body = self._read_body()
@@ -1294,10 +1327,20 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(payload, dict):
             return self._json(400, {"ok": False, "error": "invalid_payload"})
         cloud = dict(CFG.get("cloud_api") or {})
+        cloud.setdefault("kind", "openai")
+        if "kind" in payload:
+            cloud["kind"] = _cloud_kind(payload.get("kind"))
         if "base_url" in payload:
             cloud["base_url"] = str(payload.get("base_url") or "").strip()
         if "model" in payload:
             cloud["model"] = str(payload.get("model") or "").strip()
+        if "agent_id" in payload:
+            cloud["agent_id"] = str(payload.get("agent_id") or "").strip()[:120]
+        if "max_tokens" in payload:
+            try:
+                cloud["max_tokens"] = max(0, min(200000, int(payload.get("max_tokens") or 0)))
+            except (TypeError, ValueError):
+                cloud["max_tokens"] = 0
         api_key = payload.get("api_key")
         if isinstance(api_key, str) and api_key.strip() and "*" not in api_key:
             cloud["api_key"] = api_key.strip()
@@ -1314,20 +1357,35 @@ class Handler(BaseHTTPRequestHandler):
         return self._admin_cloud()
 
     def _admin_cloud_test(self):
+        """Probe the saved provider with the headers its protocol actually needs."""
         cloud = CFG.get("cloud_api") or {}
-        base = str(cloud.get("base_url") or "").rstrip("/")
+        kind = _cloud_kind(cloud.get("kind"))
+        base = str(cloud.get("base_url") or "").strip().rstrip("/")
         key = str(cloud.get("api_key") or "")
+        model = str(cloud.get("model") or "")
         if not base:
             return self._json(400, {"ok": False, "error": "base_url_missing"})
-        url = base + "/models" if base.endswith("/v1") else base + "/v1/models"
+        url = _cloud_url(base, "/models")
+        headers = {"Accept": "application/json"}
+        if key:
+            headers["Authorization"] = "Bearer " + key
+        if kind == "anthropic":
+            url += "?limit=100"
+            if key:
+                headers["x-api-key"] = key
+            headers["anthropic-version"] = "2023-06-01"
         try:
-            request = urllib.request.Request(url, headers={"Authorization": "Bearer " + key, "Accept": "application/json"})
+            request = urllib.request.Request(url, headers=headers)
             with urllib.request.urlopen(request, timeout=15) as response:
                 data = json.loads(response.read().decode("utf-8", "ignore") or "{}")
             models = [item.get("id") for item in (data.get("data") or []) if isinstance(item, dict)]
-            return self._json(200, {"ok": True, "count": len(models), "models": models[:20]})
+            return self._json(200, {"ok": True, "kind": kind, "count": len(models), "models": models[:20]})
         except Exception as exc:
-            return self._json(502, {"ok": False, "error": "cloud_unreachable", "detail": str(exc)[:200]})
+            detail = str(exc)[:200]
+            if kind == "openclaw" and ("404" in detail or "Not Found" in detail):
+                detail = "OpenClaw 的 OpenAI 兼容端点未开启：设置 gateway.http.endpoints.chatCompletions.enabled = true 后重启网关。"
+            return self._json(502, {"ok": False, "kind": kind, "error": "cloud_unreachable",
+                                    "model": model, "detail": detail})
 
 
     def _admin_network_save(self):

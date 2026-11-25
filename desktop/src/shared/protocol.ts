@@ -73,6 +73,9 @@ export type ChatDelta = {
     delta?: {
       role?: GatewayMessageRole;
       content?: string | null;
+      /** Reasoning traces: DeepSeek spells it `reasoning_content`, others `reasoning`. */
+      reasoning_content?: string | null;
+      reasoning?: string | null;
       tool_calls?: ChatToolCallDelta[];
     };
     finish_reason?: string | null;
@@ -194,12 +197,47 @@ export type AdminClientsResponse = {
   clients?: AdminClientRecord[];
 };
 
+/**
+ * The three upstream dialects Hymnix can speak. `anthropic` is the Messages API
+ * Claude Code uses; `openclaw` is an OpenClaw gateway, which routes by agent.
+ */
+export type ProviderKind = "openai" | "anthropic" | "openclaw";
+
+export type ProviderConfig = {
+  kind: ProviderKind;
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  /** OpenClaw: gateway agent id (`main`, `research`). */
+  agentId?: string;
+  /** Anthropic: max_tokens for the turn. */
+  maxTokens?: number;
+  reasoningEffort?: string;
+};
+
+export type ProviderProbeResult = {
+  ok: boolean;
+  kind: ProviderKind;
+  latencyMs: number;
+  models: string[];
+  message: string;
+};
+
+export type ProviderApi = {
+  probe: (config: ProviderConfig) => Promise<ProviderProbeResult>;
+  models: (config: ProviderConfig) => Promise<{ ok: boolean; models: string[]; message: string }>;
+};
+
 export type StreamChatInput = {
   reasoningEffort?: string;
   requestId: string;
   baseUrl: string;
   apiKey: string;
   model: string;
+  /** Omitted or "openai" keeps the original Chat Completions path. */
+  kind?: ProviderKind;
+  agentId?: string;
+  maxTokens?: number;
   messages: GatewayMessage[];
   onDelta: (delta: ChatDelta) => void;
 };
@@ -531,6 +569,7 @@ export type DesktopApi = {
   credentials: CredentialsApi;
   github: { stars: () => Promise<{ ok: boolean; stars: number | null }> };
   cloud: CloudApi;
+  provider: ProviderApi;
   config: ConfigApi;
   bootstrap: () => Promise<AppBootstrap>;
   log: (message: string) => Promise<boolean>;

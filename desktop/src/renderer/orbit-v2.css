@@ -238,11 +238,16 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 .bubble-actions button:disabled { opacity: .4; }
 .editing-banner { display: flex; align-items: center; justify-content: space-between; margin: -2px 0 5px; padding: 4px 7px; border-radius: 5px; background: var(--accent-soft); color: var(--accent-text); font-size: calc(11px * var(--text-scale, 1)); }
 .editing-banner button { border: 0; background: transparent; color: inherit; text-decoration: underline; font-size: calc(11px * var(--text-scale, 1)); }
-.chat-empty-state { display: flex; width: min(680px, 100%); min-height: 100%; flex-direction: column; align-items: center; justify-content: center; margin: 0 auto; padding: 20px 0 34px; text-align: center; }
+/* New-chat landing mirrors Claude: greeting, then the composer, then the prompt chips. */
+.chat-empty-state { display: flex; width: min(760px, 100%); min-height: 100%; flex-direction: column; align-items: center; justify-content: center; margin: 0 auto; padding: 16px 0 40px; text-align: center; }
+.chat-empty-state .composer { width: 100%; margin: 22px 0 2px; text-align: left; }
+.chat-empty-state.has-card { gap: 14px; }
+.chat-empty-state.has-card .chat-ready-card { margin: 0; width: min(660px, 100%); }
+.chat-landing-head { display: flex; flex-direction: column; align-items: center; }
 .empty-orbit { display: grid; width: 56px; height: 56px; place-items: center; margin-bottom: 14px; }
 .empty-orbit img { width: 56px; height: 56px; object-fit: contain; }
 .eyebrow { color: var(--accent-text); font-size: calc(10px * var(--text-scale, 1)); font-weight: 600; letter-spacing: .13em; }
-.chat-empty-state h2 { margin: 8px 0 5px; color: var(--text); font-size: clamp(21px, 2.4vw, 29px); font-weight: 600; letter-spacing: -.04em; }
+.chat-empty-state h2 { margin: 10px 0 6px; color: var(--text); font-size: clamp(24px, 2.8vw, 34px); font-weight: 600; letter-spacing: -.035em; }
 .chat-empty-state > p { margin: 0; color: var(--muted); font-size: calc(13px * var(--text-scale, 1)); }
 .prompt-grid { display: grid; width: min(600px, 100%); grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 26px; text-align: left; }
 .prompt-card { position: relative; display: flex; min-height: 78px; flex-direction: column; gap: 5px; padding: 13px 34px 12px 13px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); text-align: left; }
@@ -262,12 +267,18 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 .chat-tools { display: flex; align-items: center; gap: 6px; padding: 5px clamp(14px, 4vw, 42px); border-top: 1px solid var(--border); background: var(--surface); }
 .chat-tools .btn { min-height: 26px; padding: 3px 8px; font-size: calc(11px * var(--text-scale, 1)); }
 .chat-stat { margin-left: auto; color: var(--muted); font-size: calc(11px * var(--text-scale, 1)); }
-.composer { flex: 0 0 auto; margin: 10px clamp(14px, 4vw, 42px) 12px; padding: 8px 11px 7px; border: 1px solid var(--border-strong); border-radius: 11px; background: var(--surface); box-shadow: 0 4px 14px rgba(0,0,0,.035); }
+/* Docked composer: a centred card the width of the reading column, not a full-bleed bar. */
+.composer { flex: 0 0 auto; width: min(760px, calc(100% - 32px)); margin: 10px auto 14px; padding: 10px 14px 8px; border: 1px solid var(--border-strong); border-radius: 16px; background: var(--surface); box-shadow: 0 6px 20px rgba(0,0,0,.05); }
 .composer:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent); }
 .composer textarea { display: block; width: 100%; min-height: 55px; max-height: 200px; resize: vertical; padding: 4px; border: 0; outline: 0; background: transparent; color: var(--text); font: 13px/1.55 var(--font-ui); }
 .composer textarea::placeholder { color: var(--faint); }
 .composer footer { display: flex; min-height: 33px; align-items: center; justify-content: space-between; gap: 8px; border-top: 1px solid var(--border); padding-top: 6px; }
 .composer footer > div { display: flex; align-items: center; gap: 6px; }
+.mode-switch { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--border); border-radius: 999px; background: var(--sunken); }
+.mode-switch button { height: 22px; padding: 0 10px; border: 0; border-radius: 999px; background: transparent; color: var(--muted); font-size: var(--fs-caption); }
+.mode-switch button.active { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+.mode-switch button:hover { color: var(--text); }
+
 .composer select.btn { max-width: 210px; }
 .composer textarea { min-height: 24px; max-height: 200px; resize: none; overflow-y: hidden; }
 .composer-effort { min-width: 78px; }
@@ -628,6 +639,10 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 .chip.warning { border-color: color-mix(in srgb, var(--warning) 34%, var(--border)); background: var(--warning-soft); color: var(--warning); }
 .chip.muted { opacity: .55; }
 .chip.danger { border-color: color-mix(in srgb, var(--danger) 34%, var(--border)); background: var(--danger-soft); color: var(--danger); }
+/* Model ids fetched from a remote provider: they are long, so let them wrap. */
+.chip-row { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 0 12px; }
+.chip-row .chip { font-family: var(--font-mono); cursor: pointer; }
+.chip-row .chip.active { border-color: var(--accent-fill); background: var(--accent-soft); color: var(--accent-text); }
 
 .status-pill.neutral { border-color: var(--border); background: var(--sunken); color: var(--muted); }
 .status-pill.warning { border-color: color-mix(in srgb, var(--warning) 35%, var(--border)); background: var(--warning-soft); color: var(--warning); }

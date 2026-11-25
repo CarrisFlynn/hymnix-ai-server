@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import type { ApprovalRecord, DesktopApi, GatewayHealth, PluginDescriptor, TerminalBridgeReply, ToolDescriptor } from "../shared/protocol";
+import type { ApprovalRecord, DesktopApi, GatewayHealth, PluginDescriptor, ProviderKind, TerminalBridgeReply, ToolDescriptor } from "../shared/protocol";
 import "../styles/index.css";
 import "./styles.css";
 import "./orbit-v2.css";
@@ -69,6 +69,25 @@ const SLASH_COMMANDS = [
 ];
 
 const DEFAULT_UI_SETTINGS = { betaChannel: false, runAtStartup: false, dpiScaling: false, startFullscreen: false, autoUpdate: true, smoothScroll: true, gpuAcceleration: true, cacheDir: "", previewMode: "inapp" as "inapp" | "browser" };
+
+/**
+ * The three upstream dialects, in the order the settings page lists them. `note`
+ * is an i18n key so the explanation stays bilingual; `base` and `model` are the
+ * defaults written the first time someone picks the protocol.
+ */
+const PROVIDER_PRESETS: Array<{ kind: ProviderKind; label: string; base: string; model: string; note: string; keyHint: string }> = [
+  { kind: "openai", label: "OpenAI compatible", base: "https://api.openai.com", model: "gpt-4o-mini", keyHint: "API key", note: "Any endpoint that serves chat completions: OpenAI, DeepSeek, Moonshot, OpenRouter." },
+  { kind: "anthropic", label: "Anthropic (Claude Code)", base: "https://api.anthropic.com", model: "claude-sonnet-4-5", keyHint: "API key", note: "The Messages API Claude Code speaks: x-api-key, anthropic-version, content blocks." },
+  { kind: "openclaw", label: "OpenClaw", base: "http://127.0.0.1:18789", model: "openclaw/default", keyHint: "Gateway token", note: "OpenClaw gateway on your machine; the model field addresses an agent, not a model id." },
+];
+
+function normalizeProviderKind(value: unknown): ProviderKind {
+  const text = String(value || "").trim().toLowerCase().replace(/[\s_-]+/g, "");
+  if (text === "anthropic" || text === "claude" || text === "claudecode") return "anthropic";
+  if (text === "openclaw" || text === "claw") return "openclaw";
+  return "openai";
+}
+function providerPreset(kind: ProviderKind) { return PROVIDER_PRESETS.find((item) => item.kind === kind) || PROVIDER_PRESETS[0]; }
 
 function stamp(): string { return new Date().toISOString(); }
 function formatDuration(seconds: number | undefined): string {
@@ -215,14 +234,15 @@ function App() {
   const [savedSessions, setSavedSessions] = useState<LocalChatSession[]>(() => initialSessionsRef.current || []);
   const [currentSessionId, setCurrentSessionId] = useState(() => initialSessionsRef.current?.[0]?.id || newSessionId());
   const [sessionName, setSessionName] = useState(() => initialSessionsRef.current?.[0]?.name || "New chat");
-  const [inspectorOpen, setInspectorOpen] = useState(true);
+  // Claude-style layout: the conversation owns the width, settings are a toggle.
+  const [inspectorOpen, setInspectorOpen] = useState(false);
   const [welcomeOpen, setWelcomeOpen] = useState(() => { try { return localStorage.getItem("hymnix.welcome") !== "1"; } catch { return true; } });
   const [welcomeStep, setWelcomeStep] = useState(0);
   const [welcomeSkipped, setWelcomeSkipped] = useState<string[]>([]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => { try { return localStorage.getItem("hymnix.sidebar.collapsed") === "1"; } catch { return false; } });
   const [historyQuery, setHistoryQuery] = useState("");
   const [modelsTab, setModelsTab] = useState<"Installed" | "Discover" | "Downloads">("Installed");
-  const [gatewayTab, setGatewayTab] = useState<"Host" | "Connect" | "Cloud API">("Host");
+  const [gatewayTab, setGatewayTab] = useState<"Host" | "Connect" | "API providers">("Host");
   const [settingsSection, setSettingsSection] = useState("General");
   const [terminalFilter, setTerminalFilter] = useState("All");
   const [terminalSearch, setTerminalSearch] = useState("");
@@ -280,6 +300,10 @@ function App() {
   const [guestPassword, setGuestPassword] = useState("");
   const [netBusy, setNetBusy] = useState(false);
   const [effort, setEffort] = useState("medium");
+  // One page, two jobs: a plain conversation, or a coding session that leans on
+  // the workspace. The mode only changes the system prompt, so every existing
+  // control (attachments, slash commands, stop, terminal) keeps working.
+  const [composerMode, setComposerMode] = useState<"chat" | "code">("chat");
   const [uiSettings, setUiSettings] = useState(DEFAULT_UI_SETTINGS);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [stars, setStars] = useState<number | null>(null);
@@ -289,6 +313,13 @@ function App() {
   const [cloudKey, setCloudKey] = useState("");
   const [cloudMasked, setCloudMasked] = useState("");
   const [cloudStatus, setCloudStatus] = useState("");
+  // Which wire protocol the remote provider speaks. The chat pipeline stays the
+  // same; only the adapter in the main process changes.
+  const [providerKind, setProviderKind] = useState<ProviderKind>("openai");
+  const [agentId, setAgentId] = useState("");
+  const [providerMaxTokens, setProviderMaxTokens] = useState(0);
+  const [providerModels, setProviderModels] = useState<string[]>([]);
+  const [providerBusy, setProviderBusy] = useState(false);
   const sessions = savedSessions.map(({ id, name, updatedAt, count, model, pinned }) => ({ id, name, at: updatedAt, count, model, pinned }));
   const todayKey = new Date().toDateString();
   const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
@@ -861,14 +892,16 @@ function App() {
     transport.current = { startedAt: performance.now(), chars: 0, reasoningStartedAt: null, reasoningMs: 0 };
     try {
       const cloudMode = source === "cloud";
-      const chatBase = cloudMode ? cloudBase.trim().replace(/\/+$/, "").replace(/\/v1$/, "") : (remoteActive() ? serverBase.trim() : gatewayBase);
+      // The adapter in the main process owns URL joining, so cloud addresses go out
+      // as typed; only the local gateway path is normalised here.
+      const chatBase = cloudMode ? cloudBase.trim() : (remoteActive() ? serverBase.trim() : gatewayBase);
       const chatKey = cloudMode ? cloudKey.trim() : (remoteActive() ? apiKey.trim() : "");
       const chatModel = cloudMode ? (cloudModel.trim() || model) : model;
       const outbound = [
-        ...(systemPrompt.trim() ? [{ role: "system" as const, content: systemPrompt.trim() }] : []),
+        ...(composerMode === "code" || systemPrompt.trim() ? [{ role: "system" as const, content: [systemPrompt.trim(), composerMode === "code" ? t("CODE_MODE_PROMPT") : ""].filter(Boolean).join("\n\n") }] : []),
         ...next.slice(0, -1).map((item) => ({ role: item.role, content: item.content })),
       ];
-      await window.hymnix.gateway.streamChat({ requestId, baseUrl: chatBase, apiKey: chatKey, model: chatModel, reasoningEffort: effort, messages: outbound, onDelta: (part: any) => {
+      await window.hymnix.gateway.streamChat({ requestId, baseUrl: chatBase, apiKey: chatKey, model: chatModel, reasoningEffort: effort, kind: cloudMode ? providerKind : "openai", agentId: cloudMode ? agentId.trim() : "", maxTokens: cloudMode ? providerMaxTokens : 0, messages: outbound, onDelta: (part: any) => {
         const payload = part?.choices?.[0]?.delta || {};
         const content = payload.content || ""; const thinking = payload.reasoning_content || payload.reasoning || "";
         if (requestRef.current !== requestId || (!content && !thinking)) return;
@@ -1383,23 +1416,6 @@ function App() {
     const modelNeedsLoad = source === "local" && !!selectedLocalModel && selectedLocalModel.loaded === false;
     const checkingService = source === "local" && !remoteActive() && health === null;
     const cloudUnconfigured = source === "cloud" && (!cloudBase.trim() || !cloudModel.trim());
-    const emptyChat = checkingService ? <div className="chat-ready-card readiness-checking" role="status"><span className="orbit-loader" aria-hidden="true" /><div className="ready-copy"><span className="eyebrow">{t("GET STARTED")}</span><h2>{t("Checking the model service")}</h2><p>{t("Checking whether the local model service is ready...")}</p></div></div> : localOffline ? <div className="chat-ready-card">
-      <div className="ready-icon"><Icon name="Models" /></div><div className="ready-copy"><span className="eyebrow">{t("GET STARTED")}</span><h2>{t("Model service is offline")}</h2><p>{t("Start Ollama to list and run local models. Your conversations stay on this device.")}</p>{ollamaError && <p className="error" role="alert">{ollamaError}</p>}</div>
-      <div className="ready-actions"><button className="btn primary" onClick={() => void startOllama()} disabled={ollamaBusy}>{t(ollamaBusy ? "Starting Ollama..." : "Start Ollama")}</button><button className="btn" onClick={() => setActive("Models")}>{t("View models")}</button></div>
-    </div> : noLocalModels ? <div className="chat-ready-card">
-      <div className="ready-icon"><Icon name="Models" /></div><div className="ready-copy"><span className="eyebrow">{t("GET STARTED")}</span><h2>{t("Choose a model to begin")}</h2><p>{t("Browse available local models, or switch to Cloud API in the chat settings.")}</p></div>
-      <div className="ready-actions"><button className="btn primary" onClick={() => { setActive("Models"); setModelsTab("Discover"); }}>{t("Discover models")}</button><button className="btn" onClick={() => { setSource("cloud"); setInspectorOpen(true); }}>{t("Use Cloud API")}</button></div>
-    </div> : modelNeedsLoad ? <div className="chat-ready-card">
-      <div className="ready-icon"><Icon name="Models" /></div><div className="ready-copy"><span className="eyebrow">{t("MODEL READY")}</span><h2>{tf("Load {model} to begin", { model })}</h2><p>{t("The model is installed but not loaded. Load it before starting a conversation.")}</p></div>
-      <div className="ready-actions"><button className="btn primary" onClick={() => void modelAction("start", model)} disabled={!!modelBusy}>{t(model && modelBusy === model ? "Loading..." : "Load model")}</button><button className="btn" onClick={() => setActive("Models")}>{t("Choose another model")}</button></div>
-    </div> : cloudUnconfigured ? <div className="chat-ready-card">
-      <div className="ready-icon"><span>✦</span></div><div className="ready-copy"><span className="eyebrow">{t("CLOUD API")}</span><h2>{t("Configure a cloud model")}</h2><p>{t("Add an API endpoint and model name in Chat settings before sending a message.")}</p></div>
-      <div className="ready-actions"><button className="btn primary" onClick={() => setInspectorOpen(true)}>{t("Open chat settings")}</button><button className="btn" onClick={() => setSource("local")}>{t("Use local model")}</button></div>
-    </div> : <div className="chat-empty-state">
-      <div className="empty-orbit" aria-hidden="true"><img src={brandIcon} alt="" /></div><span className="eyebrow">{t("HYMNIX ORBIT")}</span><h2>{t("What are you working on?")}</h2>
-      <p>{tf("Start with {workspace} or choose a prompt.", { workspace: t(workspace) })}</p>
-      <div className="prompt-grid"><button className="prompt-card" onClick={() => setDraft(t("Summarize the current workspace"))}><strong>{t("Summarize workspace")}</strong><span>{t("Get a concise overview of your files and project context.")}</span><i>↗</i></button><button className="prompt-card" onClick={() => setDraft(t("Help me inspect a model"))}><strong>{t("Inspect a model")}</strong><span>{t("Compare model details and find a good fit.")}</span><i>↗</i></button><button className="prompt-card" onClick={() => setDraft(t("Help me draft a clear message"))}><strong>{t("Write something")}</strong><span>{t("Turn a rough idea into a polished first draft.")}</span><i>↗</i></button><button className="prompt-card" onClick={() => setDraft(t("Help me write a code example"))}><strong>{t("Write code")}</strong><span>{t("Explain a coding task and get a useful starting point.")}</span><i>↗</i></button></div>
-    </div>;
     const slashQuery = draft.startsWith("/") && !draft.includes("\n") ? draft.split(/\s/)[0].toLowerCase() : "";
     const slashMatches = slashQuery ? SLASH_COMMANDS.filter((item) => item.name.startsWith(slashQuery)) : [];
     const lastAssistant = [...messages].reverse().find((item) => item.role === "assistant");
@@ -1408,50 +1424,78 @@ function App() {
       : null;
     const lastRate = !chatBusy ? lastAssistant?.tokensPerSecond : undefined;
     const totalTokens = estimateTokens(messages.map((item) => item.content).join(" "));
+    const composer = (
+        <form className={"composer" + (dropActive ? " drop-active" : "")} onSubmit={(event) => { event.preventDefault(); void send(); }}
+          onDragOver={(event) => { if (event.dataTransfer?.types.includes("Files")) { event.preventDefault(); setDropActive(true); } }}
+          onDragLeave={() => setDropActive(false)}
+          onDrop={(event) => { event.preventDefault(); setDropActive(false); if (event.dataTransfer?.files.length) void addFiles(event.dataTransfer.files); }}>
+          {editingMessageIndex !== null && <div className="editing-banner"><span>{t("Editing prompt")}</span><button type="button" onClick={() => { setEditingMessageIndex(null); setDraft(""); }}>{t("Cancel edit")}</button></div>}
+          {attachments.length > 0 && <div className="attachment-strip" aria-label={t("Attachments")}>{attachments.map((item) => <span className="attachment-chip" key={item.id}><span aria-hidden="true">{item.kind === "image" ? "▣" : "▤"}</span><span className="attachment-name">{item.name}</span><small>{Math.max(1, Math.round(item.size / 1024))} KB</small><button type="button" aria-label={tf("Remove {name}", { name: item.name })} onClick={() => setAttachments((current) => current.filter((entry) => entry.id !== item.id))}>×</button></span>)}</div>}
+          {slashMatches.length > 0 && <div className="slash-menu" role="listbox" aria-label={t("Slash commands")}>
+            {slashMatches.map((item, index) => <button type="button" role="option" aria-selected={index === slashIndex} key={item.name} className={index === slashIndex ? "active" : ""}
+              onMouseEnter={() => setSlashIndex(index)}
+              onClick={() => { if (item.insert) { setDraft(item.insert); window.setTimeout(() => composerRef.current?.focus(), 0); } else { runSlash(item.name); setDraft(""); } setSlashIndex(0); }}>
+              <code>{item.name}</code><span>{t(item.detail)}</span>
+            </button>)}
+          </div>}
+          <textarea ref={composerRef} aria-label={t("Message")} rows={1} value={draft} onChange={(event) => { setDraft(event.target.value); setSlashIndex(0); }}
+            onPaste={(event) => { const files = event.clipboardData?.files; if (files && files.length) { event.preventDefault(); void addFiles(files); } }}
+            onKeyDown={(event) => {
+              if (slashMatches.length && !event.nativeEvent.isComposing) {
+                if (event.key === "ArrowDown") { event.preventDefault(); setSlashIndex((index) => (index + 1) % slashMatches.length); return; }
+                if (event.key === "ArrowUp") { event.preventDefault(); setSlashIndex((index) => (index - 1 + slashMatches.length) % slashMatches.length); return; }
+                if (event.key === "Tab" || (event.key === "Enter" && !event.shiftKey)) {
+                  event.preventDefault();
+                  const item = slashMatches[Math.min(slashIndex, slashMatches.length - 1)];
+                  if (item.insert) setDraft(item.insert); else { runSlash(item.name); setDraft(""); }
+                  return;
+                }
+              }
+              const shouldSend = enterSwaps ? event.key === "Enter" && event.shiftKey : event.key === "Enter" && !event.shiftKey;
+              if (shouldSend && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); }
+              if (event.key === "ArrowUp" && !draft.trim() && !event.nativeEvent.isComposing) { const lastUser = messages.map((item, index) => item.role === "user" ? index : -1).filter((index) => index >= 0).at(-1); if (lastUser != null) { event.preventDefault(); editMessage(lastUser); } }
+            }} placeholder={t(source === "local" && health?.ollama === false ? "Start the model service to chat." : "Ask Hymnix anything...")} />
+          <footer>
+            <div>
+              <input ref={fileInputRef} type="file" multiple hidden onChange={(event) => { if (event.target.files?.length) void addFiles(event.target.files); event.target.value = ""; }} />
+              <button type="button" className="btn icon attach-button" data-tip={t("Attach a file")} aria-label={t("Attach a file")} onClick={() => fileInputRef.current?.click()}>+</button>
+            <div className="mode-switch" role="group" aria-label={t("Conversation mode")}>
+              <button type="button" className={composerMode === "chat" ? "active" : ""} aria-pressed={composerMode === "chat"} onClick={() => setComposerMode("chat")}>{t("Chat")}</button>
+              <button type="button" className={composerMode === "code" ? "active" : ""} aria-pressed={composerMode === "code"} onClick={() => setComposerMode("code")}>{t("Code")}</button>
+            </div>
+              <span className="composer-hint">{t(enterSwaps ? "Shift+Enter to send · Enter for new line" : "Enter to send · Shift+Enter for new line")}</span>
+            </div>
+            <div>
+              {liveRate != null && <span className="composer-rate" data-no-translate>{liveRate.toFixed(1)} tok/s</span>}
+              {chatBusy ? <button type="button" className="btn composer-stop" onClick={cancel} aria-label={t("Stop generating")} data-tip={t("Stop generating")} data-tip-key="Esc">■</button> : <button type="submit" className="btn primary composer-send" disabled={!draft.trim() && !attachments.length} aria-label={t("Send")} data-tip={t("Send")} data-tip-key={enterSwaps ? "Shift+Enter" : "Enter"}>↑</button>}
+            </div>
+          </footer>
+        </form>
+    );
+    const emptyLead = checkingService ? <div className="chat-ready-card readiness-checking" role="status"><span className="orbit-loader" aria-hidden="true" /><div className="ready-copy"><span className="eyebrow">{t("GET STARTED")}</span><h2>{t("Checking the model service")}</h2><p>{t("Checking whether the local model service is ready...")}</p></div></div> : localOffline ? <div className="chat-ready-card">
+      <div className="ready-icon"><Icon name="Models" /></div><div className="ready-copy"><span className="eyebrow">{t("GET STARTED")}</span><h2>{t("Model service is offline")}</h2><p>{t("Start Ollama to list and run local models. Your conversations stay on this device.")}</p>{ollamaError && <p className="error" role="alert">{ollamaError}</p>}</div>
+      <div className="ready-actions"><button className="btn primary" onClick={() => void startOllama()} disabled={ollamaBusy}>{t(ollamaBusy ? "Starting Ollama..." : "Start Ollama")}</button><button className="btn" onClick={() => setActive("Models")}>{t("View models")}</button></div>
+    </div> : noLocalModels ? <div className="chat-ready-card">
+      <div className="ready-icon"><Icon name="Models" /></div><div className="ready-copy"><span className="eyebrow">{t("GET STARTED")}</span><h2>{t("Choose a model to begin")}</h2><p>{t("Browse available local models, or switch to Cloud API in the chat settings.")}</p></div>
+      <div className="ready-actions"><button className="btn primary" onClick={() => { setActive("Models"); setModelsTab("Discover"); }}>{t("Discover models")}</button><button className="btn" onClick={() => { setSource("cloud"); setInspectorOpen(true); }}>{t("Use a remote API")}</button></div>
+    </div> : modelNeedsLoad ? <div className="chat-ready-card">
+      <div className="ready-icon"><Icon name="Models" /></div><div className="ready-copy"><span className="eyebrow">{t("MODEL READY")}</span><h2>{tf("Load {model} to begin", { model })}</h2><p>{t("The model is installed but not loaded. Load it before starting a conversation.")}</p></div>
+      <div className="ready-actions"><button className="btn primary" onClick={() => void modelAction("start", model)} disabled={!!modelBusy}>{t(model && modelBusy === model ? "Loading..." : "Load model")}</button><button className="btn" onClick={() => setActive("Models")}>{t("Choose another model")}</button></div>
+    </div> : cloudUnconfigured ? <div className="chat-ready-card">
+      <div className="ready-icon"><span>✦</span></div><div className="ready-copy"><span className="eyebrow">{t("CLOUD API")}</span><h2>{t("Configure a cloud model")}</h2><p>{t("Add an API endpoint and model name in Chat settings before sending a message.")}</p></div>
+      <div className="ready-actions"><button className="btn primary" onClick={() => setInspectorOpen(true)}>{t("Open chat settings")}</button><button className="btn" onClick={() => setSource("local")}>{t("Use local model")}</button></div>
+    </div> : <div className="chat-landing-head">
+      <div className="empty-orbit" aria-hidden="true"><img src={brandIcon} alt="" /></div><span className="eyebrow">{t("HYMNIX ORBIT")}</span><h2>{t("What are you working on?")}</h2>
+      <p>{tf("Start with {workspace} or choose a prompt.", { workspace: t(workspace) })}</p>
+      
+    </div>;
+    // Every empty state keeps the composer reachable: the reference layout puts
+    // the input in the middle of the page, not pinned under a blank canvas.
+    const plainEmpty = !checkingService && !localOffline && !noLocalModels && !modelNeedsLoad && !cloudUnconfigured;
+    const emptyChat = <div className={plainEmpty ? "chat-empty-state" : "chat-empty-state has-card"}>{emptyLead}{composer}{plainEmpty && <div className="prompt-grid"><button className="prompt-card" onClick={() => setDraft(t("Summarize the current workspace"))}><strong>{t("Summarize workspace")}</strong><span>{t("Get a concise overview of your files and project context.")}</span><i>↗</i></button><button className="prompt-card" onClick={() => setDraft(t("Help me inspect a model"))}><strong>{t("Inspect a model")}</strong><span>{t("Compare model details and find a good fit.")}</span><i>↗</i></button><button className="prompt-card" onClick={() => setDraft(t("Help me draft a clear message"))}><strong>{t("Write something")}</strong><span>{t("Turn a rough idea into a polished first draft.")}</span><i>↗</i></button><button className="prompt-card" onClick={() => setDraft(t("Help me write a code example"))}><strong>{t("Write code")}</strong><span>{t("Explain a coding task and get a useful starting point.")}</span><i>↗</i></button></div>}</div>;
     return <>
       <ChatViewport messages={messages} followSignal={followSignal} empty={emptyChat} busy={chatBusy} onEditMessage={editMessage} onRegenerateMessage={regenerateMessage} onDeleteMessage={deleteMessageTurn} onBranchMessage={branchFrom} onRetryMessage={retryMessage} />
-      <form className={"composer" + (dropActive ? " drop-active" : "")} onSubmit={(event) => { event.preventDefault(); void send(); }}
-        onDragOver={(event) => { if (event.dataTransfer?.types.includes("Files")) { event.preventDefault(); setDropActive(true); } }}
-        onDragLeave={() => setDropActive(false)}
-        onDrop={(event) => { event.preventDefault(); setDropActive(false); if (event.dataTransfer?.files.length) void addFiles(event.dataTransfer.files); }}>
-        {editingMessageIndex !== null && <div className="editing-banner"><span>{t("Editing prompt")}</span><button type="button" onClick={() => { setEditingMessageIndex(null); setDraft(""); }}>{t("Cancel edit")}</button></div>}
-        {attachments.length > 0 && <div className="attachment-strip" aria-label={t("Attachments")}>{attachments.map((item) => <span className="attachment-chip" key={item.id}><span aria-hidden="true">{item.kind === "image" ? "▣" : "▤"}</span><span className="attachment-name">{item.name}</span><small>{Math.max(1, Math.round(item.size / 1024))} KB</small><button type="button" aria-label={tf("Remove {name}", { name: item.name })} onClick={() => setAttachments((current) => current.filter((entry) => entry.id !== item.id))}>×</button></span>)}</div>}
-        {slashMatches.length > 0 && <div className="slash-menu" role="listbox" aria-label={t("Slash commands")}>
-          {slashMatches.map((item, index) => <button type="button" role="option" aria-selected={index === slashIndex} key={item.name} className={index === slashIndex ? "active" : ""}
-            onMouseEnter={() => setSlashIndex(index)}
-            onClick={() => { if (item.insert) { setDraft(item.insert); window.setTimeout(() => composerRef.current?.focus(), 0); } else { runSlash(item.name); setDraft(""); } setSlashIndex(0); }}>
-            <code>{item.name}</code><span>{t(item.detail)}</span>
-          </button>)}
-        </div>}
-        <textarea ref={composerRef} aria-label={t("Message")} rows={1} value={draft} onChange={(event) => { setDraft(event.target.value); setSlashIndex(0); }}
-          onPaste={(event) => { const files = event.clipboardData?.files; if (files && files.length) { event.preventDefault(); void addFiles(files); } }}
-          onKeyDown={(event) => {
-            if (slashMatches.length && !event.nativeEvent.isComposing) {
-              if (event.key === "ArrowDown") { event.preventDefault(); setSlashIndex((index) => (index + 1) % slashMatches.length); return; }
-              if (event.key === "ArrowUp") { event.preventDefault(); setSlashIndex((index) => (index - 1 + slashMatches.length) % slashMatches.length); return; }
-              if (event.key === "Tab" || (event.key === "Enter" && !event.shiftKey)) {
-                event.preventDefault();
-                const item = slashMatches[Math.min(slashIndex, slashMatches.length - 1)];
-                if (item.insert) setDraft(item.insert); else { runSlash(item.name); setDraft(""); }
-                return;
-              }
-            }
-            const shouldSend = enterSwaps ? event.key === "Enter" && event.shiftKey : event.key === "Enter" && !event.shiftKey;
-            if (shouldSend && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); }
-            if (event.key === "ArrowUp" && !draft.trim() && !event.nativeEvent.isComposing) { const lastUser = messages.map((item, index) => item.role === "user" ? index : -1).filter((index) => index >= 0).at(-1); if (lastUser != null) { event.preventDefault(); editMessage(lastUser); } }
-          }} placeholder={t(source === "local" && health?.ollama === false ? "Start the model service to chat." : "Ask Hymnix anything...")} />
-        <footer>
-          <div>
-            <input ref={fileInputRef} type="file" multiple hidden onChange={(event) => { if (event.target.files?.length) void addFiles(event.target.files); event.target.value = ""; }} />
-            <button type="button" className="btn icon attach-button" data-tip={t("Attach a file")} aria-label={t("Attach a file")} onClick={() => fileInputRef.current?.click()}>+</button>
-            <span className="composer-hint">{t(enterSwaps ? "Shift+Enter to send · Enter for new line" : "Enter to send · Shift+Enter for new line")}</span>
-          </div>
-          <div>
-            {liveRate != null && <span className="composer-rate" data-no-translate>{liveRate.toFixed(1)} tok/s</span>}
-            {chatBusy ? <button type="button" className="btn composer-stop" onClick={cancel} aria-label={t("Stop generating")} data-tip={t("Stop generating")} data-tip-key="Esc">■</button> : <button type="submit" className="btn primary composer-send" disabled={!draft.trim() && !attachments.length} aria-label={t("Send")} data-tip={t("Send")} data-tip-key={enterSwaps ? "Shift+Enter" : "Enter"}>↑</button>}
-          </div>
-        </footer>
-      </form>
+      {messages.length > 0 && composer}
     </>;
   }
 
@@ -1573,15 +1617,10 @@ function App() {
       { key: "password", label: t("Set a share password"), done: !!hostPassword.trim() && passwordScore >= 2 },
       { key: "share", label: t("Start sharing"), done: tunnelState === "up" },
     ];
-    const presets = [
-      { label: "DeepSeek", base: "https://api.deepseek.com", model: "deepseek-chat" },
-      { label: "OpenAI", base: "https://api.openai.com", model: "gpt-4o-mini" },
-      { label: "Moonshot", base: "https://api.moonshot.cn", model: "moonshot-v1-8k" },
-    ];
     return <section className="view-page">
       <div className="view-heading">{backButton}<div><label>{t("SHARING & CONNECTIONS")}</label><h2>{t("Sharing & connections")}</h2><p>{t("Host this computer, connect to a friend, or configure a cloud provider.")}</p></div><button className="btn ghost" onClick={() => { void loadNetwork(); void loadCloud(); void loadHealth(); void loadHostClients(); }}>{t("Refresh")}</button></div>
       <div className="sharing-summary card"><span className={"status-pill " + (tunnelState === "up" ? "success" : "neutral")}><span className="status-dot" />{t(tunnelState === "up" ? "Sharing" : "Not sharing")}</span><span>{t("Clients online")}: <strong>{online}</strong></span><span className="public-link">{tunnelUrl || t("No public link yet")}</span>{tunnelUrl && <button className="btn tonal" onClick={() => void navigator.clipboard?.writeText(tunnelUrl)}>{t("Copy link")}</button>}{tunnelUrl && <button className="btn" onClick={() => setQrOpen(true)}>{t("Show QR code")}</button>}</div>
-      <div className="tab-strip" role="tablist" aria-label={t("Sharing options")}>{(["Host", "Connect", "Cloud API"] as const).map((tab) => <button role="tab" aria-selected={gatewayTab === tab} className={gatewayTab === tab ? "tab active" : "tab"} key={tab} onClick={() => setGatewayTab(tab)}>{t(tab)}</button>)}</div>
+      <div className="tab-strip" role="tablist" aria-label={t("Sharing options")}>{(["Host", "Connect", "API providers"] as const).map((tab) => <button role="tab" aria-selected={gatewayTab === tab} className={gatewayTab === tab ? "tab active" : "tab"} key={tab} onClick={() => setGatewayTab(tab)}>{t(tab)}</button>)}</div>
 
       {gatewayTab === "Host" && <>
         <div className="card">
@@ -1619,13 +1658,17 @@ function App() {
         <p className="subtitle">{mode === "remote" ? t("Connected: chats run on the friend's hardware.") : t("Not connected. Chats run locally.")}</p>
       </div>}
 
-      {gatewayTab === "Cloud API" && <div className="card">
-        <h3 className="card-title">{t("Cloud API")}</h3>
-        <div className="setting-row"><label>{t("CHAT SOURCE")}</label><div className="controls segmented"><button className={source === "local" ? "active" : ""} onClick={() => setSource("local")}>{t("Local model")}</button><button className={source === "cloud" ? "active" : ""} onClick={() => setSource("cloud")}>{t("Cloud API")}</button></div></div>
-        <div className="setting-row"><label>{t("Provider preset")}</label><div className="controls">{presets.map((preset) => <button className="chip" key={preset.label} onClick={() => { setCloudBase(preset.base); setCloudModel(preset.model); }}>{preset.label}</button>)}<button className="chip" onClick={() => { setCloudBase(""); setCloudModel(""); }}>{t("Custom")}</button></div></div>
-        <div className="setting-row"><label>{t("Server address")}</label><div className="controls"><input value={cloudBase} onChange={(event) => setCloudBase(event.target.value)} placeholder="https://api.deepseek.com" /></div></div>
-        <div className="setting-row"><label>{t("Model")}</label><div className="controls"><input value={cloudModel} onChange={(event) => setCloudModel(event.target.value)} placeholder="deepseek-chat" /></div></div>
-        <div className="setting-row"><label>{t("API key")}</label><div className="controls"><input type="password" value={cloudKey} onChange={(event) => setCloudKey(event.target.value)} placeholder={cloudMasked || t("API key")} /><button className="btn" onClick={() => void saveCloud()}>{t("Save")}</button><button className="btn" onClick={() => void testCloud()}>{t("Test")}</button></div></div>
+      {gatewayTab === "API providers" && <div className="card">
+        <h3 className="card-title">{t("API providers")}</h3>
+        <div className="setting-row"><label>{t("CHAT SOURCE")}</label><div className="controls segmented"><button className={source === "local" ? "active" : ""} onClick={() => setSource("local")}>{t("Local model")}</button><button className={source === "cloud" ? "active" : ""} onClick={() => setSource("cloud")}>{t("Remote API")}</button></div></div>
+        <div className="setting-row"><label>{t("Protocol")}<span className="hint">{t("How this provider expects requests.")}</span></label><div className="controls segmented">{PROVIDER_PRESETS.map((preset) => <button key={preset.kind} className={providerKind === preset.kind ? "active" : ""} onClick={() => switchProviderKind(preset.kind)}>{t(preset.label)}</button>)}</div></div>
+        <p className="hint">{t(providerPreset(providerKind).note)}</p>
+        <div className="setting-row"><label>{t("Server address")}</label><div className="controls"><input value={cloudBase} onChange={(event) => setCloudBase(event.target.value)} placeholder={providerPreset(providerKind).base} /></div></div>
+        <div className="setting-row"><label>{t("Model")}</label><div className="controls"><input value={cloudModel} onChange={(event) => setCloudModel(event.target.value)} placeholder={providerPreset(providerKind).model} /><button className="btn" onClick={() => void fetchProviderModels()} disabled={providerBusy}>{t("Fetch models")}</button></div></div>
+        {providerKind === "openclaw" && <div className="setting-row"><label>{t("Agent")}<span className="hint">{t("gateway agent id, main by default")}</span></label><div className="controls"><input value={agentId} onChange={(event) => setAgentId(event.target.value)} placeholder="main" /></div></div>}
+        {providerKind === "anthropic" && <div className="setting-row"><label>{t("Max output tokens")}<span className="hint">{t("Anthropic requires a ceiling for every turn.")}</span></label><div className="controls"><input type="number" min={256} max={64000} step={256} value={providerMaxTokens || 8192} onChange={(event) => setProviderMaxTokens(Number(event.target.value) || 0)} /></div></div>}
+        {providerModels.length > 0 && <div className="chip-row">{providerModels.slice(0, 24).map((name) => <button className={"chip " + (cloudModel === name ? "active" : "")} key={name} onClick={() => setCloudModel(name)}>{name}</button>)}</div>}
+        <div className="setting-row"><label>{t("API key")}</label><div className="controls"><input type="password" value={cloudKey} onChange={(event) => setCloudKey(event.target.value)} placeholder={cloudMasked || t(providerPreset(providerKind).keyHint)} /><button className="btn" onClick={() => void saveCloud()}>{t("Save")}</button><button className="btn" onClick={() => void testCloud()} disabled={providerBusy}>{providerBusy ? t("Testing...") : t("Test")}</button></div></div>
         <p className="hint">{t("Keys are stored in the Windows credential vault when the system supports it.")}</p>
         {cloudStatus && <p className="panel-note" role="status">{cloudStatus}</p>}
       </div>}
@@ -1755,7 +1798,7 @@ function App() {
     const nextStep = stepped.find((step) => !step.done);
     const skip = (key: string) => setWelcomeSkipped((current) => current.includes(key) ? current : [...current, key]);
     const gpu = stats?.vramTotal;
-    const chooseCloud = () => { setSource("cloud"); setActive("Gateway"); setGatewayTab("Cloud API"); setWelcomeOpen(false); };
+    const chooseCloud = () => { setSource("cloud"); setActive("Gateway"); setGatewayTab("API providers"); setWelcomeOpen(false); };
     const chooseFriend = () => { setActive("Gateway"); setGatewayTab("Connect"); setWelcomeOpen(false); };
     return <div className="welcome-mask" role="dialog" aria-modal="true" aria-label={t("Welcome")}>
       <div className="welcome-card onboarding">
@@ -1842,30 +1885,64 @@ function App() {
       setCloudBase(String(info?.base_url || ""));
       setCloudModel(String(info?.model || ""));
       setCloudMasked(String(info?.api_key_masked || ""));
+      // The stored key comes back only over loopback; keeping it in state is what
+      // makes a chat turn work right after a restart.
+      setCloudKey(String(info?.api_key || ""));
       setSource(info?.chat_source === "cloud" ? "cloud" : "local");
+      setProviderKind(normalizeProviderKind(info?.kind));
+      setAgentId(String(info?.agent_id || ""));
+      setProviderMaxTokens(Number(info?.max_tokens || 0) || 0);
       setCloudStatus("");
     } catch (reason) { setCloudStatus(reason instanceof Error ? reason.message : String(reason)); }
   }
+  function providerDraft() {
+    return { kind: providerKind, baseUrl: cloudBase.trim(), apiKey: cloudKey.trim(), model: cloudModel.trim(), agentId: agentId.trim(), maxTokens: providerMaxTokens };
+  }
+  function switchProviderKind(kind: ProviderKind): void {
+    setProviderKind(kind);
+    const preset = PROVIDER_PRESETS.find((item) => item.kind === kind) || PROVIDER_PRESETS[0];
+    // Only replace an address or model that came from a preset; anything the user
+    // typed for a different backend must survive the switch.
+    setCloudBase((current) => (!current.trim() || PROVIDER_PRESETS.some((item) => item.base === current.trim()) ? preset.base : current));
+    setCloudModel((current) => (!current.trim() || PROVIDER_PRESETS.some((item) => item.model === current.trim()) ? preset.model : current));
+    setProviderModels([]);
+    setCloudStatus("");
+  }
   async function saveCloud() {
     try {
-      const info: any = await window.hymnix.cloud.save({ base_url: cloudBase.trim(), model: cloudModel.trim(), api_key: cloudKey.trim(), chat_source: source, cloud_enabled: source === "cloud" });
+      const info: any = await window.hymnix.cloud.save({ kind: providerKind, base_url: cloudBase.trim(), model: cloudModel.trim(), api_key: cloudKey.trim(), agent_id: agentId.trim(), max_tokens: providerMaxTokens, chat_source: source, cloud_enabled: source === "cloud" });
       setCloudMasked(String(info?.api_key_masked || ""));
-      setCloudKey("");
-      setCloudStatus(t("Cloud settings saved."));
+      // Keep the key in state: the field is masked on screen, and the next chat
+      // turn must not go out without it.
+      setCloudStatus(t("Provider settings saved."));
     } catch (reason) { setCloudStatus(reason instanceof Error ? reason.message : String(reason)); }
   }
   async function testCloud() {
-    const started = performance.now();
+    setProviderBusy(true);
+    setCloudStatus(t("Testing..."));
     try {
-      const result: any = await window.hymnix.cloud.test();
-      const ms = Math.round(performance.now() - started);
+      const result: any = await window.hymnix.provider.probe(providerDraft());
       if (result?.ok) {
-        const names = Array.isArray(result.models) ? result.models.slice(0, 6).join(", ") : "";
-        setCloudStatus(`${ms} ms · ${t("Cloud reachable, models:")} ${result.count ?? 0}${names ? " · " + names : ""}`);
+        const list: string[] = Array.isArray(result.models) ? result.models : [];
+        setProviderModels(list);
+        const names = list.slice(0, 4).join(", ");
+        setCloudStatus(`${result.latencyMs ?? 0} ms · ${t("Reachable, models:")} ${list.length}${names ? " · " + names : ""}`);
       } else {
-        setCloudStatus(String(result?.detail || result?.error || "failed"));
+        setCloudStatus(String(result?.message || t("Could not reach this provider.")));
       }
     } catch (reason) { setCloudStatus(reason instanceof Error ? reason.message : String(reason)); }
+    finally { setProviderBusy(false); }
+  }
+  async function fetchProviderModels() {
+    setProviderBusy(true);
+    setCloudStatus(t("Fetching models..."));
+    try {
+      const result: any = await window.hymnix.provider.models(providerDraft());
+      const list: string[] = Array.isArray(result?.models) ? result.models : [];
+      setProviderModels(list);
+      setCloudStatus(result?.ok ? tf("{count} models returned", { count: String(list.length) }) : String(result?.message || t("No models were returned.")));
+    } catch (reason) { setCloudStatus(reason instanceof Error ? reason.message : String(reason)); }
+    finally { setProviderBusy(false); }
   }
   async function loadNetwork() {
     try { const info: any = await window.hymnix.network.info(); setHostName(String(info?.host_name || "")); setHostPassword(String(info?.host_password || "")); setTunnelUrl(String(info?.tunnel || "")); }
@@ -2059,7 +2136,7 @@ function App() {
     </aside>
     <main className={terminalView ? "main terminal-main" : "main"}>
       {chatView && <header className="workspace-header chat-workspace-header">
-        <div className="chat-header-title">{renamingSession ? <form className="rename-session" onSubmit={(event) => { event.preventDefault(); commitRenameSession(); }}><input autoFocus value={renameDraft} onChange={(event) => setRenameDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setRenamingSession(false); }} aria-label={t("Conversation name")} /><button className="btn primary" type="submit">{t("Save name")}</button></form> : <h1 title={t("Double-click to rename")} onDoubleClick={beginRenameSession}>{sessionName}</h1>}<span className="chat-readiness"><span className={"status-pill " + (state === "ready" ? "success" : state === "error" ? "danger" : "neutral")}><span className="status-dot" />{t(state === "ready" ? "Ready" : state === "starting" ? "Starting" : state === "error" ? "Error" : "Limited")}</span>{model || (source === "cloud" ? t("Cloud API") : t("Choose a model"))}</span></div>
+        <div className="chat-header-title">{renamingSession ? <form className="rename-session" onSubmit={(event) => { event.preventDefault(); commitRenameSession(); }}><input autoFocus value={renameDraft} onChange={(event) => setRenameDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setRenamingSession(false); }} aria-label={t("Conversation name")} /><button className="btn primary" type="submit">{t("Save name")}</button></form> : <h1 title={t("Double-click to rename")} onDoubleClick={beginRenameSession}>{sessionName}</h1>}<span className="chat-readiness"><span className={"status-pill " + (state === "ready" ? "success" : state === "error" ? "danger" : "neutral")}><span className="status-dot" />{t(state === "ready" ? "Ready" : state === "starting" ? "Starting" : state === "error" ? "Error" : "Limited")}</span>{model || (source === "cloud" ? t(providerPreset(providerKind).label) : t("Choose a model"))}</span></div>
         <div className="header-actions chat-header-actions"><button type="button" className="btn ghost" onClick={() => setInspectorOpen((value) => !value)} aria-expanded={inspectorOpen}>{t(inspectorOpen ? "Hide settings" : "Chat settings")}</button><div className="conversation-menu-wrap" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setConversationMenuOpen(false); }}><button type="button" className="btn ghost icon-button" aria-label={t("Conversation actions")} aria-haspopup="menu" aria-expanded={conversationMenuOpen} onClick={() => setConversationMenuOpen((value) => !value)}>⋯</button>{conversationMenuOpen && <div className="conversation-menu" role="menu"><button type="button" role="menuitem" onClick={beginRenameSession}>{t("Rename conversation")}</button><button type="button" role="menuitem" onClick={() => { toggleCurrentPin(); setConversationMenuOpen(false); }}>{t(savedSessions.find((item) => item.id === currentSessionId)?.pinned ? "Unpin conversation" : "Pin conversation")}</button><button type="button" role="menuitem" onClick={() => { exportChat(); setConversationMenuOpen(false); }}>{t("Export chat")}</button><hr /><button type="button" role="menuitem" className="danger" onClick={() => { clearCurrentConversation(); setConversationMenuOpen(false); }}>{t("Clear conversation")}</button></div>}</div></div>
       </header>}
       {renderView()}
@@ -2070,15 +2147,19 @@ function App() {
       <details className="inspector-section" open><summary>{t("Model source")}</summary><div className="panel-card">
         <div className="segmented">
           <button className={source === "local" ? "active" : ""} onClick={() => setSource("local")}>{t("Local model")}</button>
-          <button className={source === "cloud" ? "active" : ""} onClick={() => setSource("cloud")}>{t("Cloud API")}</button>
+          <button className={source === "cloud" ? "active" : ""} onClick={() => setSource("cloud")}>{t("Remote API")}</button>
         </div>
         {source === "cloud" && <div className="cloud-fields">
-          <input value={cloudBase} onChange={(event) => setCloudBase(event.target.value)} placeholder="https://api.deepseek.com" />
-          <input value={cloudModel} onChange={(event) => setCloudModel(event.target.value)} placeholder="deepseek-chat" />
-          <input type="password" value={cloudKey} onChange={(event) => setCloudKey(event.target.value)} placeholder={cloudMasked || t("API key")} />
+          <select className="panel-select" value={providerKind} onChange={(event) => switchProviderKind(event.target.value as ProviderKind)} aria-label={t("Protocol")}>
+            {PROVIDER_PRESETS.map((preset) => <option key={preset.kind} value={preset.kind}>{t(preset.label)}</option>)}
+          </select>
+          <input value={cloudBase} onChange={(event) => setCloudBase(event.target.value)} placeholder={providerPreset(providerKind).base} />
+          <input value={cloudModel} onChange={(event) => setCloudModel(event.target.value)} placeholder={providerPreset(providerKind).model} />
+          {providerKind === "openclaw" && <input value={agentId} onChange={(event) => setAgentId(event.target.value)} placeholder={t("Agent")} />}
+          <input type="password" value={cloudKey} onChange={(event) => setCloudKey(event.target.value)} placeholder={cloudMasked || t(providerPreset(providerKind).keyHint)} />
           <div className="panel-actions">
             <button className="btn" onClick={() => void saveCloud()}>{t("Save")}</button>
-            <button className="btn" onClick={() => void testCloud()}>{t("Test")}</button>
+            <button className="btn" onClick={() => void testCloud()} disabled={providerBusy}>{providerBusy ? t("Testing...") : t("Test")}</button>
           </div>
           {cloudStatus && <p className="panel-note">{cloudStatus}</p>}
         </div>}

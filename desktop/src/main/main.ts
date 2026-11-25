@@ -6,6 +6,7 @@ import {existsSync,realpathSync,statfsSync,statSync,readdirSync,readFileSync,wri
 import {spawn,execFile,ChildProcess} from "node:child_process";
 import os from "node:os";
 import {readPullStream} from "./pull-stream";
+import {listProviderModels,normalizeKind,probeProvider,streamProvider} from "./providers";
 import {TerminalBridge} from "./terminal-bridge";
 import type {AdminClientsResponse,AdminErrorRecord,AdminHistoryQuery,AdminHistoryResponse,AdminStatus,ChatDelta,GatewayHealth,GatewayMessage,GatewayModelsResponse,OllamaControlResult} from "../shared/protocol";
 
@@ -232,7 +233,27 @@ function registerGatewayIpc(): void {
     let completed=false; let doneSeen=false;
     const sendComplete=(error?:GatewayError) => { if (completed || (!error && !doneSeen)) return; completed=true; event.sender.send(channels.complete,{requestId,error}); };
     try {
-      const base = suppliedKey ? requestedBase : gatewayBase();
+      const kind = normalizeKind(value.kind);
+      // The bundled Python gateway only speaks Chat Completions against Ollama.
+      // Anthropic and OpenClaw requests, plus every keyed provider, go straight
+      // out through the adapter that understands their dialect.
+      const direct = kind !== "openai" || !!suppliedKey;
+      if (direct) {
+        await streamProvider({
+          kind,
+          baseUrl: requestedBase,
+          apiKey: suppliedKey,
+          model,
+          agentId: typeof value.agentId === "string" ? value.agentId : "",
+          maxTokens: typeof value.maxTokens === "number" ? value.maxTokens : 0,
+          reasoningEffort: typeof value.reasoningEffort === "string" ? value.reasoningEffort : "",
+        }, messages as GatewayMessage[], controller.signal, (delta) => {
+          if (!event.sender.isDestroyed()) event.sender.send(channels.delta,{requestId,delta});
+        });
+        doneSeen = true; sendComplete();
+        return;
+      }
+      const base = gatewayBase();
       const apiKey = suppliedKey || localApiKey();
       const response = await fetch(gatewayUrl(base,"v1/chat/completions"), {method:"POST",signal:controller.signal,headers:{Accept:"text/event-stream","Content-Type":"application/json",Authorization:"Bearer "+apiKey},body:JSON.stringify({model,messages:messages as GatewayMessage[],stream:true,...(typeof value.reasoningEffort==="string"&&value.reasoningEffort?{reasoning_effort:value.reasoningEffort}:{})})});
       if (!response.ok) { const body=await response.json().catch(()=>null); throw new Error(JSON.stringify(errorPayload(response.status,body,"Gateway chat HTTP "+response.status))); }
@@ -669,10 +690,47 @@ function registerCloudIpc(): void {
   ipcMain.handle("cloud:get", async (event) => {
     assertSender(event);
     await gateway.bootstrap();
-    return adminJson("admin/cloud");
+    // `reveal=1` returns the stored key to the loopback caller only, so a chat turn
+    // after a restart still authenticates without asking the user to retype it.
+    return adminJson("admin/cloud?reveal=1");
   });
   ipcMain.handle("cloud:save", async (event, raw: unknown) => { assertSender(event); return adminJson("admin/cloud", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(raw && typeof raw === "object" ? raw : {}) }); });
   ipcMain.handle("cloud:test", async (event) => { assertSender(event); return adminJson("admin/cloud/test", { method:"POST", headers:{ "Content-Type":"application/json" }, body: "{}" }); });
+  // Protocol probes run here rather than in the Python gateway: the adapters and
+  // their auth headers live in this process, so testing matches chatting exactly.
+  const providerInput = (raw: unknown): Record<string, unknown> => {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error(JSON.stringify({ code: "invalid_request", message: "Provider settings must be an object" }));
+    const value = raw as Record<string, unknown>;
+    return {
+      kind: normalizeKind(value.kind),
+      baseUrl: typeof value.baseUrl === "string" ? value.baseUrl.slice(0, 400) : "",
+      apiKey: typeof value.apiKey === "string" ? value.apiKey.slice(0, 400) : "",
+      model: typeof value.model === "string" ? value.model.slice(0, 200) : "",
+      agentId: typeof value.agentId === "string" ? value.agentId.slice(0, 120) : "",
+      maxTokens: typeof value.maxTokens === "number" ? value.maxTokens : 0,
+    };
+  };
+  ipcMain.handle("provider:probe", async (event, raw: unknown) => {
+    assertSender(event);
+    const config = providerInput(raw);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 25000);
+    try { return await probeProvider(config, controller.signal); }
+    finally { clearTimeout(timer); }
+  });
+  ipcMain.handle("provider:models", async (event, raw: unknown) => {
+    assertSender(event);
+    const config = providerInput(raw);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15000);
+    try { return { ok: true, models: await listProviderModels(config, controller.signal), message: "" }; }
+    catch (reason) {
+      const message = reason instanceof Error ? reason.message : String(reason);
+      let detail = message;
+      try { const parsed = JSON.parse(message) as { message?: string }; if (parsed && typeof parsed.message === "string") detail = parsed.message; } catch { /* plain text */ }
+      return { ok: false, models: [], message: detail.slice(0, 300) };
+    } finally { clearTimeout(timer); }
+  });
 }
 // ---------- tray ----------
 // Hiding to the tray is only offered when sharing is on, so a user who keeps the

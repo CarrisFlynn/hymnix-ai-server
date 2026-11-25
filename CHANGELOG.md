@@ -22,6 +22,13 @@ Only user-visible changes are listed. Internal refactors, test scaffolding and m
 - A three-step first-run card walks from starting the model service to downloading a model and sending the first message.
 - Settings gained a per-section Reset to default, `Restart needed` chips with a sticky restart bar, and an autosave confirmation.
 - A "What's new" card appears once per version.
+- **One chat core, three wire protocols**: alongside the existing OpenAI-compatible path, Hymnix now speaks **Anthropic's Messages API (what Claude Code uses)** and an **OpenClaw gateway**. Pick the protocol in Sharing & connections -> API providers; each one brings its own default address and model name.
+- Anthropic: requests go to `POST /v1/messages` with `anthropic-version: 2023-06-01` and `x-api-key`. System prompts move to the top-level field, consecutive same-role turns are merged, `thinking_delta` maps onto the existing reasoning pane, and `max_tokens` is configurable per provider.
+- OpenClaw: defaults to `http://127.0.0.1:18789`, writes the model field as `openclaw/<agent>` and sends `x-openclaw-agent-id`. An agent name can be set on its own; otherwise `openclaw/default` is used. When the endpoint is disabled the app names the config key that turns it on.
+- All three protocols share one streaming event shape: text, reasoning and errors are normalised in the main process, so the UI and the chat pipeline stay protocol-agnostic.
+- "Fetch models" reads the provider's model list with the right headers and shows the ids as clickable chips; "Test" lists models first and falls back to a one-token probe, reporting round-trip time.
+- The chat page now follows the Claude arrangement: conversation and composer share a centred 760px reading column, a new session stacks heading, composer and example prompts down the middle, and the right-hand inspector starts collapsed behind "Chat settings".
+- The composer gained a Chat / Code switch: code mode injects a coding-agent prompt (state paths and minimal diffs, confirm destructive work first) while every other control - attachments, slash commands, stop, token speed - behaves identically in both modes.
 - Added Light, Dark and Auto appearance, live theme previews, spacing density, text scaling and reduced-motion controls.
 - Conversations autosave into searchable history with pin, delete and undo; messages support copy, edit and resend, regenerate, and turn deletion.
 - Chat and management screens now show explicit service/setup states, with focused model, sharing and monitoring views.

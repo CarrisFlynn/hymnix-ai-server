@@ -63,4 +63,23 @@ assert.equal(pkg.build.productName, "Hymnix Orbit", "product name must be Hymnix
 assert.equal(pkg.build.appId, "com.hymnix.orbit", "app id must match the Orbit identity");
 assert.ok(/scheduler/i.test(pkg.description) && /gateway/i.test(pkg.description), "description must state scheduler + local gateway");
 assert.equal(pkg.build.nsis.displayLanguageSelector, true, "installer must show the language selector");
+// --- provider adapters: three dialects behind one chat contract -------------
+const providers = read("../src/main/providers.ts");
+const protocol = read("../src/shared/protocol.ts");
+for (const token of ['export type ProviderKind = "openai" | "anthropic" | "openclaw"', "ProviderApi", "ProviderProbeResult"]) {
+  assert.ok(protocol.includes(token), `protocol must declare ${token}`);
+}
+for (const token of ["streamAnthropic", "streamOpenClaw", "toAnthropicMessages", "openClawModel", "probeProvider", '"/v1/messages"']) {
+  assert.ok(providers.includes(token) || providers.includes(token.replace(/"/g, "")), `adapter layer missing ${token}`);
+}
+assert.ok(providers.includes("anthropic-version"), "Anthropic requests must carry anthropic-version");
+assert.ok(providers.includes("x-openclaw-agent-id"), "OpenClaw requests must carry the agent header");
+assert.ok(!providers.includes('from "./'), "the adapter layer must stay self-contained so the test can import it directly");
+assert.ok(main.includes("normalizeKind(value.kind)") && main.includes("streamProvider"), "the main process must dispatch on the provider kind");
+assert.ok(main.includes('"provider:probe"') && main.includes('"provider:models"'), "provider probes must be exposed over IPC");
+assert.ok(preload.includes("kind: input.kind") && preload.includes("provider: {"), "preload must forward the provider kind");
+for (const token of ["PROVIDER_PRESETS", "switchProviderKind", "providerDraft", 'kind: cloudMode ? providerKind : "openai"']) {
+  assert.ok(renderer.includes(token), `renderer must wire ${token}`);
+}
+assert.ok(!renderer.includes('gatewayTab === "Cloud API"'), "the cloud tab is now the API providers tab");
 console.log("PASS: secure shell protocol/static contract");

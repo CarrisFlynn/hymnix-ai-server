@@ -133,6 +133,42 @@ PRESETS: Dict[str, Dict[str, Any]] = {
             "X-Title": "Hymnix",
         },
     },
+    "anthropic": {
+        "name": "Anthropic (Claude Code)",
+        # Messages API：Claude Code 与 Anthropic SDK 说的就是这套协议
+        "base_url": "https://api.anthropic.com",
+        "default_model": "claude-sonnet-4-5",
+        "models": [
+            "claude-opus-4-1",
+            "claude-sonnet-4-5",
+            "claude-haiku-4-5",
+            "claude-3-7-sonnet-latest",
+        ],
+        "docs": "https://docs.claude.com/en/api/messages",
+        "kind": "anthropic",
+        "protocol": "messages",
+        "auth_header": "x-api-key",
+        "extra_headers": {"anthropic-version": "2023-06-01"},
+        "pricing": {
+            "claude-opus-4-1": {"input": 15.00, "output": 75.00},
+            "claude-sonnet-4-5": {"input": 3.00, "output": 15.00},
+            "claude-haiku-4-5": {"input": 1.00, "output": 5.00},
+            "claude-3-7-sonnet-latest": {"input": 3.00, "output": 15.00},
+        },
+    },
+    "openclaw": {
+        "name": "OpenClaw",
+        # 本地网关，model 字段是 agent 目标（openclaw/<agent>）而不是模型 id
+        "base_url": "http://127.0.0.1:18789",
+        "default_model": "openclaw/default",
+        "models": ["openclaw/default", "openclaw/main", "openclaw/research"],
+        "docs": "https://docs.openclaw.ai/gateway/openai-http-api",
+        "kind": "openclaw",
+        "protocol": "chat_completions",
+        # 需要先在 OpenClaw 配置里打开 gateway.http.endpoints.chatCompletions
+        "requires_config": "gateway.http.endpoints.chatCompletions.enabled = true",
+        "pricing": {},
+    },
 }
 
 _CFG_LOCKS: Dict[str, "threading.RLock"] = {}
@@ -167,6 +203,9 @@ def default_config() -> Dict[str, Any]:
             "base_url": preset["base_url"],
             "api_key": "",
             "model": preset["default_model"],
+            # Wire protocol: openai (Chat Completions), anthropic (Messages),
+            # openclaw (a gateway that routes the model field to an agent).
+            "kind": preset.get("kind", "openai"),
         }
     return {"active": "deepseek", "providers": providers}
 
@@ -208,7 +247,7 @@ def load_config(path: Optional[Union[str, os.PathLike]] = None) -> Dict[str, Any
                 key, {"base_url": "", "api_key": "", "model": ""}
             )
             merged = dict(base)
-            for field in ("base_url", "api_key", "model"):
+            for field in ("base_url", "api_key", "model", "kind"):
                 field_value = value.get(field)
                 if isinstance(field_value, str):
                     merged[field] = field_value
@@ -307,6 +346,16 @@ def can_unload_provider(provider: str, active_streams: Any) -> bool:
 # ---------------------------------------------------------------------------
 # 连通性测试
 # ---------------------------------------------------------------------------
+
+
+def _provider_kind(value: Any) -> str:
+    """把 kind / protocol / 厂商别名收敛成 openai | anthropic | openclaw。"""
+    text = str(value or "").strip().lower().replace("-", "").replace("_", "").replace(" ", "")
+    if text in ("anthropic", "claude", "claudecode", "messages"):
+        return "anthropic"
+    if text in ("openclaw", "claw"):
+        return "openclaw"
+    return "openai"
 
 
 def _normalize_base_url(base_url: str) -> str:
@@ -409,6 +458,42 @@ def _fetch_models(
     return response.status_code, _model_ids(data), data
 
 
+# ---------------------------------------------------------------------------
+# Anthropic Messages 协议（Claude Code 用的那套）
+# ---------------------------------------------------------------------------
+
+
+def _messages_root(base_url: str) -> str:
+    """Anthropic 的路径是 /v1/messages，base 上没有版本段时要补上。"""
+    text = str(base_url or "").strip().rstrip("/")
+    for tail in ("/v1/messages", "/messages"):
+        if text.endswith(tail):
+            return text[: -len(tail)]
+    return text if text.endswith("/v1") else text + "/v1"
+
+
+def _anthropic_headers(api_key: str) -> Dict[str, str]:
+    return {
+        "x-api-key": api_key,
+        "Authorization": "Bearer " + api_key,
+        "anthropic-version": "2023-06-01",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+
+
+def _anthropic_fetch_models(session: Any, base_url: str, headers: Dict[str, str], timeout: float) -> Tuple[int, List[str], Any]:
+    response = session.get(_messages_root(base_url) + "/models", params={"limit": 100}, headers=headers, timeout=timeout)
+    data = _safe_json(response)
+    return response.status_code, _model_ids(data), data
+
+
+def _anthropic_probe(session: Any, base_url: str, headers: Dict[str, str], model: str, timeout: float) -> Tuple[int, Any]:
+    payload = {"model": model, "max_tokens": 1, "messages": [{"role": "user", "content": "."}]}
+    response = session.post(_messages_root(base_url) + "/messages", headers=headers, json=payload, timeout=timeout)
+    return response.status_code, _safe_json(response)
+
+
 def _chat_probe(
     session: Any,
     base_url: str,
@@ -482,7 +567,7 @@ def smoke_cloud(provider: str, model: str, prompt: str = "ping", timeout: float 
 
 
 def test_connection(
-    base_url: str, api_key: str, model: str = "", timeout: float = 15
+    base_url: str, api_key: str, model: str = "", timeout: float = 15, kind: str = "openai"
 ) -> Tuple[bool, str, float, List[str]]:
     """测试 provider 是否可用。
 
@@ -491,6 +576,9 @@ def test_connection(
     - message: 可读中文提示（异常、401、超时等都会返回中文说明）
     - latency_ms: 本次测试耗时（毫秒）
     - models: /models 返回的模型 id 列表（拿不到则为 []）
+
+    kind 决定用哪套协议探测：openai（Chat Completions，默认）、
+    anthropic（Messages，Claude Code 同款）、openclaw（本地网关，仍走 OpenAI 路径）。
     """
     started = time.perf_counter()
 
@@ -514,6 +602,8 @@ def test_connection(
         "Content-Type": "application/json",
         "Accept": "application/json",
     }
+    if _provider_kind(kind) == "anthropic":
+        headers.update(_anthropic_headers(key))
     if "openrouter.ai" in base:
         headers.setdefault("HTTP-Referer", "https://hymnix.local")
         headers.setdefault("X-Title", "Hymnix")
@@ -524,9 +614,12 @@ def test_connection(
         models: List[str] = []
 
         try:
-            models_status, model_ids, models_data = _fetch_models(
-                session, base, headers, timeout
-            )
+            if _provider_kind(kind) == "anthropic":
+                models_status, model_ids, models_data = _anthropic_fetch_models(session, base, headers, timeout)
+            else:
+                models_status, model_ids, models_data = _fetch_models(
+                    session, base, headers, timeout
+                )
         except requests.exceptions.RequestException:
             raise
         if models_status == 200:
@@ -551,9 +644,12 @@ def test_connection(
                 [],
             )
 
-        chat_status, chat_data, _ = _chat_probe(
-            session, base, headers, model_name, timeout
-        )
+        if _provider_kind(kind) == "anthropic":
+            chat_status, chat_data = _anthropic_probe(session, base, headers, model_name, timeout)
+        else:
+            chat_status, chat_data, _ = _chat_probe(
+                session, base, headers, model_name, timeout
+            )
         latency = elapsed_ms()
 
         if chat_status == 200:
