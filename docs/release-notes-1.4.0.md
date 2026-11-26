@@ -1,125 +1,101 @@
 # Hymnix Orbit 1.4.0
 
-## 中文
-
-1.4.0 补上桌面端缺的六件事，把接口层扩展到四套方言，并关掉了三轮安全审计发现的全部问题。
-
-**计划**
-对话页新增第四个标签「计划」。Orbit 通过 `todo_write` 工具调用发布步骤，界面显示实时状态、每步耗时，以及每一步背后的证据（调用过哪些工具、等你审批了多久、计划被重写过几次）。任何一步也可以由你手动标记完成或跳过，标签上的徽标显示 `完成/总数`。
-
-**审批收件箱**
-标题栏的徽标（Ctrl+Shift+A）打开右侧抽屉：待审批按危险等级排序，每条都能展开脱敏参数，支持批量允许 / 拒绝，也可以对某个工具选择「总是允许」或「本次会话允许」。处理过的记录会归档；窗口在后台时新到的审批会发系统通知。开启「完全权限」或「总是允许」之前都会先弹风险确认，说明具体会少掉哪些拦截。
-
-**后台任务**
-长命令、模型下载、网关重启统一进「任务」页：实时输出、耗时、退出码，取消会清掉整棵进程树。终端里跑的命令同时出现在这里——它们本来就是同一个进程。
-
-**可改快捷键**
-Ctrl+/ 打开全部全局命令的参考表。设置 → 快捷键 可以就地录制新组合；重复的组合会告诉你已经被哪条命令占用（包括 Enter / Escape 这类固定键）；只保存改动。
-
-**自动化任务**
-新增「自动化」页：一次、每隔 N 分钟、每天、每周。到点自动新开一个对话并发送你写好的提示词；错过的任务只补最近一次，不会成串重放。任务可以暂停、立即运行、编辑和删除，列表里直接显示下次与上次触发时间。
-
-**四套模型接口**
-- Ollama 原生 `/api/chat`：逐帧流式、结构化 `tool_calls`、不需要 Key。
-- OpenAI 兼容 `/v1/chat/completions`。
-- Anthropic `/v1/messages`：`tool_use` / `tool_result` 内容块。
-- OpenClaw：OpenAI 形状加 agent 头。
-粘贴地址会按形态自动识别方言，四套都支持工具调用，且各有一组桩服务器测试。
-
-**共享与监控**
-「监控」并入「共享」页：服务详情、已连接客户端、最近活动与主机设置同页，导航从 9 项减为 8 项。
-
-**安全审计**
-三轮审计发现的问题全部关闭，其中真正影响边界的几条：
-- 插件沙箱可经异常回溯（`__traceback__ → tb_frame → f_globals`）逃逸到主机；已封堵，并移除了 `type` / `object` 这类动态类型入口。
-- 管理端点可被 `/api/%70ull`、`/api/%2570ull`、`//api/pull` 等编码变形绕过；现在先循环解码、折叠斜杠，并**用同一条归一化路径转发**。
-- 分块请求与带 body 的 OPTIONS 可走私第二条请求；现在两者都在入口拒绝并关闭连接。
-- 错误响应不读请求体会污染 keep-alive 上的下一条请求；现在所有 4xx/5xx 都关闭连接。
-- cloudflared 只校验文件头，且哈希只算了前 4KB；现在按整文件流式校验。
-- 转发头默认不再被信任（隧道运行期间才打开），代理也不再透传 `CF-*` / `X-Forwarded-*`。
-- MCP 命令拒绝 shell 元字符，只允许已知运行时；预览视图限制在工作区、缓存与应用数据目录内。
-- 审批执行链修复：`fs.write` 缺少 `import tempfile`，导致所有已批准的写入抛异常。
-
-**修复**
-- 1.4.0 的构建起不来自己的网关：就绪闸门只认 1.3.x，版本号一升就整体报废。已修并加回归测试。
-- 本地能力不再依赖可选网关：健康检查、模型列表、加载/卸载/删除模型、启动 Ollama、本地聊天全部直连 Ollama；网关停掉也能正常聊天。
-- 桌面端审批此前从未真正生效：发出的判定词和网关期望的不一致，返回体也按另一种形状解析。现在「允许」会直接执行工具并带回结果，「总是允许」同时批准当前请求并记住偏好。
-- 本地模型被误发 `reasoning_effort`；选中模型必须先预加载才能发送；模型把工具调用写成文本时不被识别——三处都已修。
-- 中文界面此前靠改写 DOM 实现，切回英文不还原；现在全部走 `t()`，语言切换可逆。
-- Hymnix AI 不再显示成 Orbit：两个产品各有标记、首屏文案与提示任务。
-- 英文界面会把 `CODE_MODE_PROMPT` 这个字面键当成系统提示词发出去，现在是真正的英文提示词。
-- 未安装 Ollama 时点「启动」会让主进程闪退；已挂错误监听。
-- 审批等待窗口从 90 秒改为 55 秒，落在网关 60 秒 TTL 内。
-- 「总是允许」原先只按工具名放行任意参数，且不决策当前请求；现在按 DSH 的语义作答。
-- 快捷键冲突检测遗漏固定键；批量审批在空选择时不再等于全部批准；停止回复会显示停止标记；重启应用会走与退出相同的清理流程。
-- 遗留 Tk 控制台默认监听 `0.0.0.0`；改回 `127.0.0.1`。
-- README 与 `docs/SIGNING.md` 的签名声明改为如实描述：当前产物**未签名**。
-
-**布局**
-- 计划、任务、快捷键的行改成固定列宽，耗时与按钮的右边缘逐行对齐。
-- 快捷键面板居中显示并留出等距边距；可滚动列表显示细滚动条，不再切掉半行。
-
 ## English
 
-1.4.0 closes the six gaps that kept the desktop shell a viewer, extends the provider layer to four dialects, and resolves every finding from three rounds of security review.
+### Highlights
+- **Plan tab.** Orbit publishes its steps through a `todo_write` tool call and the fourth conversation tab renders them with live status, per-step duration and the evidence behind each step.
+- **Approval inbox.** A title-bar badge (Ctrl+Shift+A) opens a drawer with risk-sorted requests, redacted arguments, batch decisions and per-tool "always allow".
+- **Automation.** A new page schedules prompts — once, every N minutes, daily or weekly — and opens a conversation to send them when they fall due.
+- **Four provider dialects.** Native Ollama, OpenAI-compatible, Anthropic Messages and OpenClaw, all carrying tool calls, with the dialect recognised from the pasted address.
+- **Three security review rounds closed.** Sandbox escape, encoded-path bypass, request smuggling and the approval execution chain are fixed and re-tested.
 
-**Plan**
-A fourth conversation tab. Orbit publishes its steps through a `todo_write` tool call; the shell shows live status, per-step duration and the evidence behind each step — which tools ran, how long an approval waited, how often the plan was rewritten. Any step can also be closed or skipped by hand, and the tab badge tracks `done/total`.
+### Added
+- **Plan tab**: live step status, per-step duration, evidence per step, manual done/skip, and a `done/total` badge.
+- **Approval inbox**: risk ordering, redacted arguments, batch allow/deny, "always allow" (persisted) and "allow this session", an archive of decisions, and an OS notification while the window is in the background.
+- **Background jobs**: long commands, model downloads and gateway restarts in one page with streamed output, elapsed time, exit code and a cancel that kills the process tree.
+- **Editable shortcuts**: Ctrl+/ reference sheet, inline recording, duplicate detection including fixed keys, and only the changes are stored.
+- **Automation**: once / interval / daily / weekly rules, pause, run now, edit and delete, with next and last run times in the list.
+- **Providers**: native Ollama `/api/chat` (frame-by-frame streaming, structured `tool_calls`, no key), OpenAI `/v1/chat/completions`, Anthropic `/v1/messages` with `tool_use`/`tool_result` blocks, and OpenClaw with its agent header.
+- **Risk acknowledgement dialogs** before full access or a tool-wide "always allow".
+- **Sharing carries the monitor**: service details, connected clients and recent activity moved into the Sharing page; the rail drops to eight entries.
 
-**Approval inbox**
-The title-bar badge (Ctrl+Shift+A) opens a drawer: pending requests sorted by risk, each row expanding its redacted arguments, with batch allow/deny plus per-tool "always allow" or "allow this session". Decisions are archived, and a request that arrives while the window is in the background raises an OS notification. Turning on full access, or "always allow", now opens a risk dialog that names exactly what stops being intercepted.
+### Changed
+- **The gateway is optional.** Health, model list, load/unload/delete, Ollama start and a local chat turn talk to Ollama directly.
+- **"Always allow" answers the request.** It approves the pending call and remembers the preference in one action, and the row disables while the answer is in flight.
+- **Language switching is reversible.** The DOM-rewriting translator is gone; every string goes through `t()`.
+- **Signing is documented honestly.** README and `docs/SIGNING.md` state that the builds are unsigned.
 
-**Background jobs**
-Long commands, model downloads and gateway restarts share one Jobs page: streamed output, elapsed time, exit code, and a cancel that kills the whole process tree. Terminal commands show up here too — they are the same process.
+### Fixed
+- **A 1.4.0 build could not start its own gateway.** The readiness gate only accepted 1.3.x; fixed with a regression test.
+- **Approving a tool call never worked.** The verdict word and the response shape disagreed with the gateway, and `fs.write` was missing `import tempfile`, so approved writes raised an exception.
+- **The gateway's auto-approve branch was `if True:`**, so every tool ran unattended.
+- **Local turns sent `reasoning_effort`; a picked model had to be preloaded; a tool call written as text was not recognised.**
+- **Starting Ollama when it is not installed** no longer takes the main process down.
+- **An English session sent the literal `CODE_MODE_PROMPT` key** instead of a system prompt.
+- **The approval window was 90 s against a 60 s gateway TTL**; it is 55 s now.
+- **Shortcut conflicts ignored fixed keys; an empty batch selection approved everything; a stopped reply showed no marker; restart skipped cleanup.**
+- **The legacy Tk console listens on `127.0.0.1`**, not `0.0.0.0`.
 
-**Editable shortcuts**
-Ctrl+/ opens a reference sheet of every global command. Settings → Shortcuts records a new combination inline; a duplicate names the command that already owns it (including fixed keys such as Enter and Escape); only the changes are stored.
+### Security
+- Plugin sandbox escape through exception tracebacks is blocked, and `type`/`object` are no longer reachable inside the sandbox.
+- Admin API bypass through encoded paths (`/api/%70ull`, `/api/%2570ull`, `//api/pull`) is closed; paths are decoded repeatedly and the normalised path is forwarded.
+- Chunked requests and OPTIONS with a body can no longer smuggle a second request; both close the connection.
+- Error responses close the connection so an unread body cannot be parsed as the next request.
+- cloudflared is hashed over the whole file, and a reused binary is verified.
+- Forwarded headers are trusted only while a tunnel runs, and stripped when proxying.
+- Admin keys are no longer accepted from the query string on the admin API.
+- MCP commands reject shell metacharacters and only launch known runtimes.
+- The preview view is limited to the workspace, cache and app data folders.
+- A token is never sent over plain http to a remote host.
+- `terminal.unsubscribe` no longer cancels the running process.
+- File writes use a unique temp file and an atomic replace.
 
-**Automation**
-The new Automation page schedules prompts: once, every N minutes, daily or weekly. When a task is due the app opens a fresh conversation and sends its prompt; missed runs collapse into one catch-up delivery instead of replaying a backlog. Tasks can be paused, run now, edited and deleted, and the list shows the next and last run times.
+## 中文
 
-**Four provider dialects**
-- Ollama native `/api/chat`: frame-by-frame streaming, structured `tool_calls`, no key required.
-- OpenAI-compatible `/v1/chat/completions`.
-- Anthropic `/v1/messages`: `tool_use` / `tool_result` content blocks.
-- OpenClaw: the OpenAI shape with its agent header.
-A pasted address is recognised by shape, all four carry tool calls, and each has a stub-server test.
+### 重点
+- **计划标签页。** Orbit 通过 `todo_write` 工具调用发布步骤，对话的第四个标签显示实时状态、每步耗时与每一步背后的证据。
+- **审批收件箱。** 标题栏徽标（Ctrl+Shift+A）打开抽屉，按危险等级排序，可展开脱敏参数、批量决策，并对单个工具「总是允许」。
+- **自动化。** 新页面可创建定时提示：一次、每隔 N 分钟、每天、每周；到点自动新开对话并发送提示词。
+- **四套模型接口。** Ollama 原生、OpenAI 兼容、Anthropic Messages、OpenClaw，都支持工具调用，粘贴地址会按形态自动识别。
+- **三轮安全审计全部关闭。** 沙箱逃逸、编码路径绕过、请求走私与审批执行链均已修复并复测。
 
-**Sharing and monitoring**
-Monitor is part of Sharing now: service details, connected clients and recent activity sit beside the host settings, and the rail drops from nine entries to eight.
+### 新增
+- **计划标签页**：步骤实时状态、每步耗时、逐步证据、手动完成/跳过，以及 `完成/总数` 徽标。
+- **审批收件箱**：按风险排序、脱敏参数、批量允许/拒绝、「总是允许」（持久化）与「本次会话允许」、决策归档，窗口在后台时发系统通知。
+- **后台任务**：长命令、模型下载、网关重启统一一页，实时输出、耗时、退出码，取消会清掉进程树。
+- **可改快捷键**：Ctrl+/ 参考表、就地录制、重复检测（含固定键），只保存改动。
+- **自动化**：一次 / 间隔 / 每天 / 每周，支持暂停、立即运行、编辑、删除，列表显示下次与上次触发时间。
+- **四套接口**：Ollama 原生 `/api/chat`（逐帧流式、结构化 `tool_calls`、无需 Key）、OpenAI `/v1/chat/completions`、Anthropic `/v1/messages`（`tool_use`/`tool_result` 块）、OpenClaw（带 agent 头）。
+- **风险确认对话框**：开启完全权限或对工具「总是允许」前先说明影响面。
+- **监控并入共享**：服务详情、已连接客户端、最近活动移到共享页；导航从 9 项减为 8 项。
 
-**Security review**
-All findings from three review rounds are closed. The ones that mattered:
-- The plugin sandbox could escape through exception tracebacks (`__traceback__ → tb_frame → f_globals`); closed, and `type` / `object` are no longer reachable inside the sandbox.
-- The admin API could be reached through encoded paths (`/api/%70ull`, `/api/%2570ull`, `//api/pull`); paths are decoded repeatedly, slashes collapsed, and the normalised path is what gets forwarded.
-- Chunked requests and OPTIONS with a body could smuggle a second request; both are rejected at the door and the connection is closed.
-- An error response that left its request body unread corrupted the next request on the same connection; every 4xx/5xx now closes the connection.
-- cloudflared was checked by magic bytes and its hash covered only the first 4 KB; the whole file is hashed now.
-- Forwarded headers are no longer trusted by default (only while a tunnel runs), and the proxy strips `CF-*` / `X-Forwarded-*`.
-- MCP commands reject shell metacharacters and only launch known runtimes; the preview view is limited to the workspace, cache and app data folders.
-- The approval execution path was broken: `fs.write` was missing `import tempfile`, so every approved write raised an exception.
+### 变更
+- **网关变成可选项。** 健康检查、模型列表、加载/卸载/删除、启动 Ollama、本地聊天全部直连 Ollama。
+- **「总是允许」改为对当前请求的一次回答。** 同时批准待审调用并记住偏好，处理期间该行按钮禁用。
+- **语言切换可逆。** 删除了改写 DOM 的翻译器，所有文案走 `t()`。
+- **如实说明签名状态。** README 与 `docs/SIGNING.md` 写明当前构建未签名。
 
-**Fixes**
-- A 1.4.0 build could not start its own gateway (the readiness gate only accepted 1.3.x); fixed with a regression test.
-- Local capability no longer needs the optional gateway: health, model list, load/unload/delete, Ollama start and a local chat turn all talk to Ollama directly.
-- Approving a tool call from the desktop never worked: the shell sent a different verdict word than the gateway accepts and parsed its reply as another shape. "Allow" now runs the tool and returns its result; "always allow" approves the current request and remembers the preference.
-- Local turns sent `reasoning_effort`; a picked model had to be preloaded before it could be used; a tool call written as text was not recognised.
-- A Chinese interface used to rewrite the DOM and could not switch back; every string goes through `t()` now, so the switch is reversible.
-- Hymnix AI no longer opens looking like Orbit: each surface has its own badge, hero copy and starter prompts.
-- An English session used to send the literal `CODE_MODE_PROMPT` key as its system prompt.
-- Starting Ollama when it is not installed no longer takes the main process down.
-- The approval window is 55 s, inside the gateway's 60 s TTL.
-- "Always allow" used to approve any arguments without deciding the current request; it now answers the request, the way DSH's approval card does.
-- Shortcut conflict detection includes fixed keys; an empty batch selection no longer approves everything; a stopped reply is marked stopped; restart runs the same cleanup as quit.
-- The legacy Tk console listens on `127.0.0.1`, not `0.0.0.0`.
-- README and `docs/SIGNING.md` now state the truth: the builds are **unsigned**.
+### 修复
+- **1.4.0 的构建起不来自己的网关。** 就绪闸门只认 1.3.x；已修并加回归测试。
+- **桌面端审批从未真正生效。** 判定词与返回体形状和网关不一致，且 `fs.write` 缺 `import tempfile`，批准后的写入必抛异常。
+- **网关的自动放行分支写成 `if True:`**，所有工具不问就执行。
+- **本地模型被误发 `reasoning_effort`、选中的模型必须先预加载、文本形式的工具调用不被识别。**
+- **未安装 Ollama 时点「启动」**会让主进程闪退。
+- **英文界面把 `CODE_MODE_PROMPT` 这个字面键当系统提示词**发出去。
+- **审批等待窗口 90 秒，网关 TTL 只有 60 秒**；改为 55 秒。
+- **快捷键冲突忽略固定键；批量审批空选择等于全部批准；停止回复没有标记；重启跳过清理。**
+- **遗留 Tk 控制台**改回监听 `127.0.0.1`。
 
-**Layout**
-- Plan, job and shortcut rows share fixed column widths, so durations and buttons line up down the list.
-- The shortcut sheet is centred with equal margins, and scrollable lists show a thin scrollbar instead of slicing the last row.
-
-## 安装 / Install
-
-- `Hymnix-Orbit-1.4.0-Setup.exe` — Windows x64 安装版（中英文安装界面）
-- `Hymnix-Orbit-1.4.0-Portable.exe` — 免安装单文件
-- 校验：`SHA256SUMS.txt`
+### 安全
+- 插件沙箱经异常回溯逃逸已封堵，沙箱内也不再提供 `type`/`object`。
+- 管理端点经编码路径绕过（`/api/%70ull`、`/api/%2570ull`、`//api/pull`）已关闭；路径循环解码，并以归一化路径转发。
+- 分块请求与带 body 的 OPTIONS 不再能走私第二条请求，两者都会关闭连接。
+- 错误响应关闭连接，未读的请求体不会被当成下一条请求。
+- cloudflared 按整文件哈希校验，复用已有二进制也会校验。
+- 转发头只在隧道运行期间被信任，代理时剥离。
+- 管理接口不再接受 URL 查询串里的 admin key。
+- MCP 命令拒绝 shell 元字符，只允许已知运行时。
+- 预览视图限制在工作区、缓存与应用数据目录内。
+- token 不会通过明文 http 发往远端。
+- `terminal.unsubscribe` 不再取消正在运行的进程。
+- 文件写入使用唯一临时文件并原子替换。
