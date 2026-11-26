@@ -89,7 +89,16 @@ test("every interface string has Chinese copy", () => {
   const keys = new Set();
   for (const file of sources) {
     const text = fs.readFileSync(new URL(file, dir), "utf8");
-    for (const match of text.matchAll(/\btf?\("((?:[^"\\]|\\.)*)"/g)) keys.add(match[1]);
+    // Every string that reaches t()/tf() as copy, including the branches of a
+    // ternary. Comparison operands ("danger", "running") are skipped: they are
+    // values the code compares against, not sentences a reader ever sees.
+    for (const call of text.matchAll(/\btf?\((?:[^()]|\([^()]*\))*\)/g)) {
+      for (const literal of call[0].matchAll(/"((?:[^"\\]|\\.)*)"/g)) {
+        const before = call[0].slice(0, literal.index).replace(/\s+$/, "").slice(-1);
+        if (before === "=" || before === "!" || before === ">" || before === "<") continue;
+        keys.add(literal[1]);
+      }
+    }
   }
   const i18n = fs.readFileSync(new URL("i18n.ts", dir), "utf8");
   const translated = new Set([...i18n.matchAll(/^ {2}"((?:[^"\\]|\\.)*)":/gm)].map((match) => match[1]));
@@ -122,4 +131,137 @@ test("theme swatches mirror the accent colour in each theme file", () => {
     assert.equal(definition.bg, bg[1].toLowerCase(), `${definition.id} preview background must match --bg`);
     assert.equal(definition.surface, surface[1].toLowerCase(), `${definition.id} preview panel must match --surface`);
   }
+});
+import { createToolCallCollector } from "../src/renderer/lib/tool-stream.js";
+import { DEFAULT_SHORTCUTS, bindingKey, eventBinding, findConflicts, formatBinding, matchesBinding, resolveShortcuts, withOverride, withoutOverride } from "../src/renderer/lib/shortcuts.js";
+import { applyTodos, attachEvidence, createPlan, markStep, planPercent, planStats } from "../src/renderer/lib/plan.js";
+import { activeJobCount, filterJobs, formatElapsed, jobElapsed, mergeJob, sortJobs } from "../src/renderer/lib/jobs.js";
+
+// --- 1.4: plan, jobs and rebindable shortcuts -------------------------------
+
+
+test("tool-call fragments from either dialect assemble into one call", () => {
+  // OpenAI: name once, arguments streamed as JSON text, keyed by index.
+  const openai = createToolCallCollector();
+  openai.push([{ index: 0, id: "call_1", function: { name: "todo_write", arguments: '{"todos":[{"content":"a",' } }]);
+  openai.push([{ index: 0, function: { arguments: '"status":"pending"}]}' } }]);
+  const first = openai.calls(() => "generated");
+  assert.equal(first.length, 1);
+  assert.equal(first[0].id, "call_1");
+  assert.equal(first[0].name, "todo_write");
+  assert.deepEqual(JSON.parse(first[0].arguments).todos, [{ content: "a", status: "pending" }]);
+
+  // Ollama: the whole call in one delta, arguments already parsed as an object.
+  const ollama = createToolCallCollector();
+  ollama.push([{ function: { name: "fs.list", arguments: { path: "." } } }]);
+  const second = ollama.calls(() => "generated");
+  assert.equal(second.length, 1);
+  assert.equal(second[0].id, "generated");
+  assert.equal(second[0].arguments, '{"path":"."}');
+});
+
+test("a nameless fragment is dropped and parallel calls keep their order", () => {
+  const collector = createToolCallCollector();
+  collector.push([{ index: 0, id: "a", function: { name: "fs.read", arguments: "{}" } }]);
+  collector.push([{ index: 1, id: "b", function: { arguments: "{}" } }]);   // name never arrives
+  collector.push([{ index: 2, id: "c", function: { name: "calc", arguments: '{"expr":"1+1"}' } }]);
+  const calls = collector.calls(() => "x");
+  assert.deepEqual(calls.map((call) => call.id), ["a", "c"]);
+  assert.equal(calls[1].name, "calc");
+  // A second read of the same collector must not duplicate anything.
+  assert.equal(collector.calls(() => "x").length, 2);
+});
+
+test("a shortcut is compared by physical code and modifier set", () => {
+  assert.equal(formatBinding({ code: "Slash", modifiers: ["ctrl"] }), "Ctrl+/");
+  assert.equal(formatBinding({ code: "Digit1", modifiers: ["ctrl"] }), "Ctrl+1");
+  assert.equal(bindingKey({ code: "KeyK", modifiers: ["ctrl"] }), bindingKey({ code: "KeyK", modifiers: ["ctrl"] }));
+  // A missing modifier is a different command, not a looser match.
+  assert.notEqual(bindingKey({ code: "KeyK", modifiers: ["ctrl"] }), bindingKey({ code: "KeyK", modifiers: ["ctrl", "shift"] }));
+  assert.ok(matchesBinding({ code: "KeyK", modifiers: ["ctrl"] }, { code: "KeyK", ctrlKey: true, key: "k" }));
+  assert.ok(!matchesBinding({ code: "KeyK", modifiers: ["ctrl"] }, { code: "KeyK", ctrlKey: true, shiftKey: true, key: "K" }));
+  // A bare modifier is not a binding.
+  assert.equal(eventBinding({ code: "ControlLeft", ctrlKey: true, key: "Control" }), null);
+});
+
+test("the editor refuses a combination another command already owns", () => {
+  const owner = findConflicts(DEFAULT_SHORTCUTS, "session.new", { code: "KeyK", modifiers: ["ctrl"] });
+  assert.deepEqual(owner.map((row) => row.id), ["palette.open"]);
+  // Rebinding a command onto its own key is not a conflict.
+  assert.deepEqual(findConflicts(DEFAULT_SHORTCUTS, "session.new", { code: "KeyN", modifiers: ["ctrl"] }), []);
+  // Fixed rows never lose their key to an editor change.
+  assert.deepEqual(findConflicts(DEFAULT_SHORTCUTS, "session.new", { code: "Escape", modifiers: [] }), []);
+});
+
+test("overrides store only the changes and reset cleanly", () => {
+  const plain = resolveShortcuts(DEFAULT_SHORTCUTS, {}, "win32");
+  assert.equal(plain.every((command) => command.overridden === false), true);
+  const moved = withOverride({}, "session.new", { code: "KeyT", modifiers: ["ctrl", "shift"] });
+  const applied = resolveShortcuts(DEFAULT_SHORTCUTS, moved, "win32");
+  const session = applied.find((command) => command.id === "session.new");
+  assert.equal(session.binding.code, "KeyT");
+  assert.equal(session.overridden, true);
+  const reset = resolveShortcuts(DEFAULT_SHORTCUTS, withoutOverride(moved, "session.new"), "win32");
+  assert.equal(reset.find((command) => command.id === "session.new").binding.code, "KeyN");
+});
+
+test("a rewritten plan keeps step identity and never rewinds a step", () => {
+  const plan = createPlan("session-1", 1000);
+  const first = applyTodos(plan, { todos: [
+    { content: "Read the failing test", status: "in_progress" },
+    { content: "Fix the code", status: "pending" },
+    { content: "Run the suite", status: "pending" },
+  ] }, 1000);
+  assert.equal(first.steps.length, 3);
+  assert.equal(first.steps[0].status, "running");
+  assert.equal(first.steps[0].startedAt, 1000);
+  const openedId = first.steps[0].id;
+
+  const second = applyTodos(first, { todos: [
+    { content: "Read the failing test", status: "completed" },
+    { content: "Fix the code", status: "in_progress" },
+    { content: "Run the suite", status: "pending" },
+  ] }, 5000);
+  assert.equal(second.steps[0].id, openedId, "a step keeps its identity across rewrites");
+  assert.equal(second.steps[0].status, "done");
+  assert.equal(second.steps[0].finishedAt, 5000);
+  assert.equal(second.steps[1].status, "running");
+  assert.equal(planPercent(second), 33);
+
+  // The model saying "pending" again must not undo a finished step.
+  const third = applyTodos(second, { todos: [
+    { content: "Read the failing test", status: "pending" },
+    { content: "Fix the code", status: "pending" },
+  ] }, 9000);
+  assert.equal(third.steps[0].status, "done");
+  // A step that was running when it disappeared is closed, not left hanging.
+  assert.equal(third.steps.find((step) => step.intent === "Run the suite"), undefined);
+  assert.equal(third.steps[1].status, "running", "running never rewinds to pending");
+  assert.equal(planStats(third).running + planStats(third).done, 2);
+});
+
+test("manual marks and evidence attach to the right step", () => {
+  const plan = applyTodos(createPlan("s", 0), { todos: [{ content: "One", status: "in_progress" }, { content: "Two", status: "pending" }] }, 100);
+  const done = markStep(plan, plan.steps[0].id, "done", 400);
+  assert.equal(done.steps[0].status, "done");
+  assert.equal(done.steps[0].finishedAt, 400);
+  const withEvidence = attachEvidence(plan, plan.steps[0].id, "ev-1");
+  assert.deepEqual(withEvidence.steps[0].evidenceIds, ["ev-1"]);
+  // Attaching twice is a no-op, not a duplicate.
+  assert.deepEqual(attachEvidence(withEvidence, plan.steps[0].id, "ev-1").steps[0].evidenceIds, ["ev-1"]);
+});
+
+test("jobs sort by liveness and one job never appears twice", () => {
+  const running = { id: "a", status: "running", startedAt: 100, finishedAt: null, kind: "shell", title: "build" };
+  const done = { id: "b", status: "done", startedAt: 50, finishedAt: 200, kind: "shell", title: "test" };
+  const sorted = sortJobs([done, running]);
+  assert.deepEqual(sorted.map((job) => job.id), ["a", "b"]);
+  assert.equal(activeJobCount([running, done]), 1);
+  const merged = mergeJob(mergeJob([], running), { ...running, status: "done", finishedAt: 300 });
+  assert.equal(merged.length, 1, "an update replaces the row instead of appending");
+  assert.equal(merged[0].status, "done");
+  assert.equal(jobElapsed({ ...done, finishedAt: 1250 }, 9999), 1200);
+  assert.equal(formatElapsed(65_000), "1:05");
+  assert.equal(filterJobs([running, done], "running").length, 1);
+  assert.equal(filterJobs([running, done], "finished").length, 1);
 });

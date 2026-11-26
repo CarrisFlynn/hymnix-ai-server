@@ -67,7 +67,7 @@ test("capture every page in every theme", async () => {
   // captures; reset the stored preferences before taking any picture.
   await window.evaluate(() => {
     localStorage.setItem("hymnix.welcome", "1");
-    localStorage.setItem("hymnix.whatsNew", "1.3.3");
+    localStorage.setItem("hymnix.whatsNew", "1.4.0");
     localStorage.setItem("hymnix.sidebar.collapsed", "0");
     localStorage.removeItem("hymnix.chat.sessions.v2");
     localStorage.removeItem("hymnix.chat.saved");

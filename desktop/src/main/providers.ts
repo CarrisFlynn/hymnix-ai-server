@@ -18,7 +18,7 @@
  * imports: `tests/providers.test.mjs` loads it directly through Node's type
  * stripping.
  */
-import type { ChatDelta, GatewayMessage } from "../shared/protocol";
+import type { ChatDelta, ChatToolCallDelta, GatewayMessage } from "../shared/protocol";
 
 export type ProviderKind = "openai" | "anthropic" | "openclaw";
 
@@ -33,6 +33,8 @@ export type ProviderConfig = {
   reasoningEffort: string;
   /** Anthropic requires max_tokens; 0 means "use the built-in default". */
   maxTokens: number;
+  /** OpenAI-compatible dialects: function definitions the model may call. */
+  tools?: unknown[];
 };
 
 export type ProviderProbe = {
@@ -98,6 +100,7 @@ export function providerConfig(input: Partial<ProviderConfig> | null | undefined
     agentId,
     reasoningEffort: String(raw.reasoningEffort ?? "").trim(),
     maxTokens: Number.isFinite(maxTokens) && maxTokens > 0 ? Math.min(200000, Math.round(maxTokens)) : 0,
+    ...(Array.isArray(raw.tools) && raw.tools.length ? { tools: raw.tools } : {}),
   };
 }
 
@@ -262,6 +265,9 @@ async function streamOpenai(config: ProviderConfig, messages: GatewayMessage[], 
   const body: Record<string, unknown> = { model: config.model, messages, stream: true };
   if (config.reasoningEffort) body.reasoning_effort = config.reasoningEffort;
   if (config.maxTokens > 0) body.max_tokens = config.maxTokens;
+  // Tools go out verbatim; the model answers with tool_calls deltas, which the
+  // renderer assembles into one call per index.
+  if (config.tools?.length) body.tools = config.tools;
   const response = await postJson(chatEndpoint(config.baseUrl), authHeaders(config, "bearer"), body, signal);
   await consumeStream(response, (payload) => {
     const choices = Array.isArray(payload.choices) ? (payload.choices as Array<Record<string, unknown>>) : [];
@@ -271,8 +277,17 @@ async function streamOpenai(config: ProviderConfig, messages: GatewayMessage[], 
     const reasoning = typeof rawDelta.reasoning_content === "string"
       ? rawDelta.reasoning_content
       : typeof rawDelta.reasoning === "string" ? rawDelta.reasoning : "";
-    if (!content && !reasoning) return;
-    emit({ choices: [{ delta: { ...(content ? { content } : {}), ...(reasoning ? { reasoning_content: reasoning } : {}) } }] });
+    const toolCalls = Array.isArray(rawDelta.tool_calls) ? rawDelta.tool_calls as ChatToolCallDelta[] : undefined;
+    const finishReason = typeof first.finish_reason === "string" ? first.finish_reason : undefined;
+    if (!content && !reasoning && !toolCalls && !finishReason) return;
+    emit({ choices: [{
+      ...(finishReason ? { finish_reason: finishReason } : {}),
+      delta: {
+        ...(content ? { content } : {}),
+        ...(reasoning ? { reasoning_content: reasoning } : {}),
+        ...(toolCalls ? { tool_calls: toolCalls } : {}),
+      },
+    }] });
   });
 }
 

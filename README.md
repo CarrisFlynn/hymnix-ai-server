@@ -8,7 +8,7 @@ Hymnix connects Ollama-compatible models to a practical desktop workflow: chat, 
 
 ![License](https://img.shields.io/badge/license-AGPL--3.0-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey)
-![Release](https://img.shields.io/badge/release-1.3.3-blueviolet)
+![Release](https://img.shields.io/badge/release-1.4.0-blueviolet)
 ![Python](https://img.shields.io/badge/python-3.11%2B-3776AB)
 
 ## Screenshots
@@ -88,11 +88,20 @@ The 1.3.0 release is not a skin change. The whole delivery model was rebuilt:
 - Per-request usage and cost visibility, cloud hub, git acceleration, and a hardened one-click update path.
 - English-first interface with Chinese, French, Russian and Spanish; full high-DPI rendering.
 
-## What the 1.3.3 desktop build actually ships
+## What the 1.4.0 desktop build actually ships
 
-The Electron app is a focused workspace, not a catalogue of pages. It ships **seven pages**: Chat, Models, Sharing & connections, Plugins, Changelog and Sponsor, plus Monitor and Terminal for developers; Settings is the shell for preferences. The window itself is three columns — a navigation rail, the conversation list and the content area — with a status bar along the bottom.
+The Electron app is a focused workspace, not a catalogue of pages. It ships **eight pages**: Chat, Models, Sharing & connections, Plugins, Changelog and Sponsor, plus Monitor, Terminal and Jobs for developers; Settings is the shell for preferences. The window itself is three columns — a navigation rail, the conversation list and the content area — with a status bar along the bottom.
 
-Capabilities that exist only in the Python console build (`server/hymnix_main.py`, `server/hxcore/`) are **not reachable from the desktop UI**: the Files/Tools/Approvals/Logs pages, the OCR page, the Git proxy and the diff review pages. The gateway side is still there (`/api/tools`, `/admin/approvals`, plugins, the files API); what is missing is a page to drive them.
+1.4.0 closes the four gaps that made the desktop shell a viewer rather than an agent:
+
+- **Plan** — the fourth conversation tab. The model publishes its steps through a `todo_write` tool call; the shell renders them with live status, per-step duration and the evidence (tool calls, approvals) behind each one, and any step can be closed or skipped by hand.
+- **Approval inbox** — a title-bar badge and a drawer: every pending request with its risk level, reasons, redacted arguments and expiry, batch allow/deny, and "always allow" (persisted) or "allow this session" per tool. Decisions are archived so a finished turn can still be explained.
+- **Background jobs** — one list for long shell commands, model downloads and gateway restarts, with streamed output, elapsed time and a cancel that kills the whole process tree.
+- **Editable shortcuts** — Ctrl+/ opens a reference sheet of every global command; Settings → Shortcuts records a new combination inline, refuses one another command already owns, locks the two physical keys it cannot rebind (Escape, Enter) and persists the rest.
+
+Orbit also runs the tool loop end to end: a coding turn may call the gateway's read-only tools (files, repository search, web fetch, calculator) and re-enter the model with their results, pausing for an approval whenever the risk rules ask for one.
+
+Capabilities that exist only in the Python console build (`server/hymnix_main.py`, `server/hxcore/`) are **still not reachable from the desktop UI**: the Files/Tools/Logs pages, the OCR page, the Git proxy and the diff review pages. Approvals no longer need a page of their own — the drawer covers the desktop workflow — and jobs, plans and shortcuts never had one.
 ## Features
 
 ### Local gateway and OpenAI-compatible API

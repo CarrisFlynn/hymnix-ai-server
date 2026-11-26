@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { NetworkApi, AdminClientsResponse, AdminErrorRecord, AdminHistoryQuery, AdminHistoryResponse, AdminStatus, ChatDelta, DesktopApi, FileReadRequest, FileReadResponse, FileSearchRequest, FileSearchResponse, FileTreeRequest, FileTreeResponse, LocalModel, ProvidersResponse, StreamChatInput, TerminalCommandRequest, TerminalCommandResult, TerminalCompletion, TerminalOutputEvent, ToolCallRequest, ToolCallResponse, ToolsResponse, ApprovalListResponse, ApprovalDecisionResponse, WorkspaceRoot } from "../shared/protocol";
+import type { NetworkApi, AdminClientsResponse, AdminErrorRecord, AdminHistoryQuery, AdminHistoryResponse, AdminStatus, ChatDelta, DesktopApi, FileReadRequest, FileReadResponse, FileSearchRequest, FileSearchResponse, FileTreeRequest, FileTreeResponse, JobView, LocalModel, ProvidersResponse, StreamChatInput, TerminalCommandRequest, TerminalCommandResult, TerminalCompletion, TerminalOutputEvent, ToolCallRequest, ToolCallResponse, ToolsResponse, ApprovalListResponse, ApprovalDecisionResponse, WorkspaceRoot } from "../shared/protocol";
 
 // Main owns AbortController, api/tags, v1/chat/completions, and Authorization handling; preload only forwards typed IPC events.
 const channels = { toolsList: "tools:list", toolsCall: "tools:call", toolsPending: "tools:pending", toolsApprove: "tools:approve", toolsDeny: "tools:deny", health: "gateway:health", models: "gateway:models", stream: "gateway:stream", cancel: "gateway:cancel", delta: "gateway:delta", complete: "gateway:complete", adminHistory: "gateway:admin-history", adminStatus: "gateway:admin-status", adminErrors: "gateway:admin-errors", adminClients: "gateway:admin-clients" } as const;
@@ -119,6 +119,22 @@ const api: DesktopApi & { adminHistory: (adminKey: string, query?: AdminHistoryQ
     search: (request: FileSearchRequest): Promise<FileSearchResponse> => ipcRenderer.invoke("files:search", request),
     read: (request: FileReadRequest): Promise<FileReadResponse> => ipcRenderer.invoke("files:read", request),
   },
+  jobs: {
+    list: (): Promise<{ ok: boolean; jobs: JobView[] }> => ipcRenderer.invoke("jobs:list"),
+    start: (request) => ipcRenderer.invoke("jobs:start", request),
+    stop: (id: string): Promise<{ ok: boolean; id: string }> => ipcRenderer.invoke("jobs:stop", id),
+    clear: (): Promise<{ ok: boolean }> => ipcRenderer.invoke("jobs:clear"),
+    onUpdate: (listener: (job: JobView) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, job: JobView) => listener(job);
+      ipcRenderer.on("jobs:update", handler);
+      return () => { ipcRenderer.removeListener("jobs:update", handler); };
+    },
+    onData: (listener: (event: { id: string; stream: string; text: string }) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, payload: { id: string; stream: string; text: string }) => listener(payload);
+      ipcRenderer.on("jobs:data", handler);
+      return () => { ipcRenderer.removeListener("jobs:data", handler); };
+    },
+  },
   gateway: {
     adminStatus: (adminKey: string): Promise<AdminStatus> => ipcRenderer.invoke(channels.adminStatus, adminKey),
     adminErrors: (adminKey: string, limit?: number): Promise<AdminErrorRecord[]> => ipcRenderer.invoke(channels.adminErrors, adminKey, limit),
@@ -133,7 +149,7 @@ const api: DesktopApi & { adminHistory: (adminKey: string, query?: AdminHistoryQ
       const onDelta = (_event: Electron.IpcRendererEvent, message: { requestId: string; delta: ChatDelta }) => { if (message.requestId === input.requestId) input.onDelta(message.delta); };
       const onComplete = (_event: Electron.IpcRendererEvent, message: { requestId: string; error?: {status?: number; code?: string; message: string} }) => { if (message.requestId === input.requestId) { if (message.error) { const error = new Error(message.error.message) as Error & {status?: number; code?: string}; error.status = message.error.status; error.code = message.error.code; finish(error); } else finish(); } };
       ipcRenderer.on(channels.delta, onDelta); ipcRenderer.on(channels.complete, onComplete);
-      ipcRenderer.invoke(channels.stream, { requestId: input.requestId, baseUrl: input.baseUrl, apiKey: input.apiKey, model: input.model, messages: input.messages, kind: input.kind, agentId: input.agentId, maxTokens: input.maxTokens, reasoningEffort: input.reasoningEffort }).catch((reason: unknown) => finish(reason instanceof Error ? reason : new Error(String(reason))));
+      ipcRenderer.invoke(channels.stream, { requestId: input.requestId, baseUrl: input.baseUrl, apiKey: input.apiKey, model: input.model, messages: input.messages, kind: input.kind, agentId: input.agentId, maxTokens: input.maxTokens, reasoningEffort: input.reasoningEffort, tools: input.tools }).catch((reason: unknown) => finish(reason instanceof Error ? reason : new Error(String(reason))));
     });
   }
 } };

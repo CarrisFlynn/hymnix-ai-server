@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { ApprovalRecord, DesktopApi, GatewayHealth, PluginDescriptor, ProviderKind, ProviderProfile, TerminalBridgeReply, ToolDescriptor } from "../shared/protocol";
 import "../styles/index.css";
@@ -15,6 +15,10 @@ import { DEFAULT_CATALOG_FILTERS, type CatalogFilters } from "./model-catalog";
 import { MODEL_CATALOG } from "./model-catalog-data";
 import { ModelCombobox, PasswordMeter, QrCode, SkeletonList, ErrorPanel, TooltipLayer, passwordStrength } from "./components";
 import { estimateTokens, parseSlashCommand, classifyConnectError, downloadBytes } from "./lib/pure.js";
+import { DEFAULT_SHORTCUTS, bindingKeycaps, eventBinding, findConflicts, matchesBinding, resolveShortcuts, shortcutGroups, withOverride, withoutOverride, type ShortcutOverrides } from "./lib/shortcuts.js";
+import { activeStep, applyTodos, attachEvidence, createPlan, formatDuration as formatPlanDuration, markStep, planPercent, planStats, type PlanState, type PlanStep, type PlanStatus } from "./lib/plan.js";
+import { activeJobCount, filterJobs, formatElapsed, jobElapsed, jobStatusLabel, mergeJob, sortJobs } from "./lib/jobs.js";
+import { createToolCallCollector } from "./lib/tool-stream.js";
 
 declare global { interface Window { hymnix: DesktopApi } }
 
@@ -31,6 +35,102 @@ const SAFE_TOOL_PRESETS: Record<string, ToolArgs> = {
   sysinfo: {},
   "fs.list": { path: "." },
 };
+
+/** One recorded piece of work behind a plan step. */
+type Evidence = {
+  id: string;
+  kind: "tool" | "plan" | "approval";
+  title: string;
+  detail: string;
+  at: number;
+  durationMs: number | null;
+  status: "ok" | "error" | "denied";
+};
+
+/** One tool call assembled from the stream (arguments arrive in fragments). */
+type ToolCallPart = { id: string; name: string; arguments: string };
+
+/** The wire message the provider sees: assistant turns may carry tool calls. */
+type WireMessage = {
+  role: "system" | "user" | "assistant" | "tool";
+  content: string;
+  tool_calls?: Array<{ id: string; type: "function"; function: { name: string; arguments: string } }>;
+  tool_call_id?: string;
+};
+
+/** A decided approval kept for the "processed" list. */
+type ApprovalArchiveRow = ApprovalRecord & { decided: "approved" | "denied"; decidedAt: number };
+
+/** Command-Control on macOS; the app is Windows-first but the table is portable. */
+const PLATFORM = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform || "") ? "darwin" : "win32";
+
+/** How many model→tool→model rounds one send may take before it stops. */
+const TOOL_ROUND_LIMIT = 6;
+
+/** Evidence kept per conversation: enough to explain a turn, not a transcript. */
+const MAX_EVIDENCE = 80;
+const MAX_APPROVAL_ARCHIVE = 60;
+
+const ALWAYS_ALLOW_KEY = "hymnix.approvals.always.v1";
+const APPROVAL_ARCHIVE_KEY = "hymnix.approvals.archive.v1";
+const SHORTCUT_KEY = "hymnix.shortcuts.v1";
+
+/** Read-only tools the model is allowed to call mid-turn. */
+const ADVERTISED_TOOLS = new Set(["time.now", "calc", "sysinfo", "fs.list", "fs.read", "fs.stat", "repo.tree", "repo.search", "repo.read", "web.fetch"]);
+
+/**
+ * The model's own plan channel. It is handled in this process — no IPC, no
+ * approval — because publishing a step list changes nothing outside the view.
+ */
+const TODO_TOOL_SPEC = {
+  type: "function" as const,
+  function: {
+    name: "todo_write",
+    description: "Publish or update the plan for the current task. Send the complete list every time; keep 3-6 steps. Mark exactly one step in_progress while you work on it and completed as soon as it is done.",
+    parameters: {
+      type: "object",
+      properties: {
+        todos: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              content: { type: "string", description: "One imperative sentence: what will be done." },
+              status: { type: "string", enum: ["pending", "in_progress", "completed", "cancelled"] },
+            },
+            required: ["content", "status"],
+          },
+        },
+      },
+      required: ["todos"],
+    },
+  },
+};
+
+/** Orbit's coding brief. One English sentence so t() can translate it as a whole. */
+const CODE_MODE_PROMPT = "You are a coding agent working inside this project's workspace. Inspect files with the read tools before you answer, and publish the plan with todo_write as soon as a task needs more than one step: 3 to 6 imperative steps, exactly one in_progress, and complete each step as its work lands. Answer concretely with file paths, the smallest edit, and a command that can be run. Ask before deleting, overwriting or going to the network. Answer in the user's language.";
+
+function readJsonArray<T>(key: string): T[] {
+  try { const raw = localStorage.getItem(key); const parsed = raw ? JSON.parse(raw) : null; return Array.isArray(parsed) ? (parsed as T[]) : []; } catch { return []; }
+}
+function writeJsonArray(key: string, value: unknown[]): void {
+  try { localStorage.setItem(key, JSON.stringify(value.slice(0, MAX_APPROVAL_ARCHIVE))); } catch { /* private mode */ }
+}
+function readShortcuts(): ShortcutOverrides {
+  try { const raw = localStorage.getItem(SHORTCUT_KEY); const parsed = raw ? JSON.parse(raw) : null; return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as ShortcutOverrides) : {}; } catch { return {}; }
+}
+function writeShortcuts(next: ShortcutOverrides): void {
+  try { localStorage.setItem(SHORTCUT_KEY, JSON.stringify(next)); } catch { /* private mode */ }
+}
+
+/** Danger first, then moderate, then the rest: the row that can hurt you is on top. */
+function riskRank(risk: string): number {
+  const value = String(risk || "").toLowerCase();
+  if (value === "danger") return 3;
+  if (value === "moderate") return 2;
+  if (value === "safe") return 1;
+  return 0;
+}
 
 function redactArgs(args: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(Object.keys(args).map((key) => [key, "[redacted]"]));
@@ -64,7 +164,7 @@ function Icon({ name }: { name: string }) { return <svg viewBox="0 0 24 24" aria
 
 const navGroups = [
   { title: "WORKSPACE", items: ["Chat", "Models", "Gateway", "Plugins", "Changelog", "Support"] },
-  { title: "DEVELOPER", items: ["Monitor", "Terminal"] }
+  { title: "DEVELOPER", items: ["Monitor", "Terminal", "Jobs"] }
 ];
 
 /** The two product surfaces, mirroring ChatGPT / Codex: same history, different agent. */
@@ -301,14 +401,6 @@ function App() {
   const [conversationMenuOpen, setConversationMenuOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState("");
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") { event.preventDefault(); setPaletteOpen((value) => !value); setPaletteQuery(""); }
-      else if (event.key === "Escape") setPaletteOpen(false);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
   const [renamingSession, setRenamingSession] = useState(false);
   const [renameDraft, setRenameDraft] = useState("");
   const [clearAllConfirm, setClearAllConfirm] = useState(false);
@@ -342,7 +434,40 @@ function App() {
   // ---- Codex-style shell state -------------------------------------------
   const [surface, setSurface] = useState<"ai" | "orbit">(() => { try { return localStorage.getItem("hymnix.surface") === "orbit" ? "orbit" : "ai"; } catch { return "ai"; } });
   const [productMenuOpen, setProductMenuOpen] = useState(false);
-  const [chatTab, setChatTab] = useState<"chat" | "context" | "trace">("chat");
+  const [chatTab, setChatTab] = useState<"chat" | "context" | "trace" | "plan">("chat");
+  // ---- plan / evidence -----------------------------------------------------
+  const [plan, setPlan] = useState<PlanState | null>(null);
+  const planRef = useRef<PlanState | null>(null);
+  const [evidence, setEvidence] = useState<Evidence[]>([]);
+  const [openStepId, setOpenStepId] = useState<string | null>(null);
+  const [loopState, setLoopState] = useState<{ round: number; waitingFor: string } | null>(null);
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  // ---- approvals -----------------------------------------------------------
+  const [approvalsOpen, setApprovalsOpen] = useState(false);
+  const [approvalsTab, setApprovalsTab] = useState<"pending" | "decided">("pending");
+  const [approvalsArchive, setApprovalsArchive] = useState<ApprovalArchiveRow[]>(() => readJsonArray<ApprovalArchiveRow>(APPROVAL_ARCHIVE_KEY));
+  const [alwaysAllow, setAlwaysAllow] = useState<string[]>(() => readJsonArray<string>(ALWAYS_ALLOW_KEY));
+  const [approvalsSelected, setApprovalsSelected] = useState<string[]>([]);
+  const [approvalsExpanded, setApprovalsExpanded] = useState<string | null>(null);
+  const [approvalsRiskFirst, setApprovalsRiskFirst] = useState(true);
+  const sessionAllowRef = useRef<Set<string>>(new Set());
+  const [sessionAllow, setSessionAllow] = useState<string[]>([]);
+  const approvalWaiters = useRef(new Map<string, (outcome: { decision: "approve" | "deny"; result?: unknown }) => void>());
+  const approvalsCount = useRef(0);
+  // ---- jobs ----------------------------------------------------------------
+  const [jobs, setJobs] = useState<import("../shared/protocol").JobView[]>([]);
+  const [jobFilter, setJobFilter] = useState<"all" | "running" | "finished">("all");
+  const [jobSelected, setJobSelected] = useState("");
+  const [jobCommand, setJobCommand] = useState("");
+  const [jobBusy, setJobBusy] = useState(false);
+  // ---- shortcuts -----------------------------------------------------------
+  const [shortcutOverrides, setShortcutOverrides] = useState<ShortcutOverrides>(readShortcuts);
+  const [recordingId, setRecordingId] = useState<string | null>(null);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [shortcutError, setShortcutError] = useState("");
+  const shortcuts = useMemo(() => resolveShortcuts(DEFAULT_SHORTCUTS, shortcutOverrides, PLATFORM), [shortcutOverrides]);
+  const shortcutFor = (id: string) => shortcuts.find((command) => command.id === id)?.binding || null;
+  const pressed = (id: string, event: KeyboardEvent) => matchesBinding(shortcutFor(id), event, PLATFORM);
   const [modelsSection, setModelsSection] = useState<"local" | "api" | "remote">("local");
   const [providers, setProviders] = useState<ProviderProfile[]>([]);
   const [activeProviderId, setActiveProviderId] = useState("");
@@ -482,6 +607,15 @@ function App() {
   const [approvals, setApprovals] = useState<ApprovalRecord[]>([]);
   const [approvalsBusy, setApprovalsBusy] = useState(false);
   const [approvalsError, setApprovalsError] = useState("");
+  const pendingApprovals = useMemo(() => {
+    const list = approvals.slice();
+    if (approvalsRiskFirst) list.sort((left, right) => riskRank(right.risk) - riskRank(left.risk) || left.createdAt.localeCompare(right.createdAt));
+    return list;
+  }, [approvals, approvalsRiskFirst]);
+  const runningJobs = useMemo(() => activeJobCount(jobs), [jobs]);
+  const planStatsNow = useMemo(() => planStats(plan), [plan]);
+  const visibleJobs = useMemo(() => filterJobs(sortJobs(jobs), jobFilter), [jobs, jobFilter]);
+  const selectedJob = useMemo(() => jobs.find((job) => job.id === jobSelected) || visibleJobs[0] || null, [jobs, jobSelected, visibleJobs]);
 
   const [history, setHistory] = useState<any[]>([]);
   const [historyBusy, setHistoryBusy] = useState(false);
@@ -583,20 +717,218 @@ function App() {
   }
   async function refreshApprovals(): Promise<void> {
     setApprovalsBusy(true); setApprovalsError("");
-    try { const result = await window.hymnix.tools.pending(); setApprovals(result.approvals || []); }
-    catch (reason) { setApprovalsError(reason instanceof Error ? reason.message : String(reason)); }
+    try {
+      const result = await window.hymnix.tools.pending();
+      const list = result.approvals || [];
+      setApprovals(list);
+      // A request that arrives while the window is in the background is the one
+      // case where an OS notification beats the badge.
+      if (list.length > approvalsCount.current && !document.hasFocus()) {
+        void window.hymnix.system.notify({ title: t("Approval needed"), body: tf("{count} tool calls are waiting for you", { count: String(list.length) }) });
+      }
+      approvalsCount.current = list.length;
+    } catch (reason) { setApprovalsError(reason instanceof Error ? reason.message : String(reason)); }
     finally { setApprovalsBusy(false); }
   }
-  async function decideApproval(id: string, decision: "approve" | "deny"): Promise<void> {
+  /** Keep a decided request so the "processed" list can explain what happened. */
+  function archiveApproval(record: ApprovalRecord, decided: "approved" | "denied"): void {
+    setApprovalsArchive((current) => {
+      const next = [{ ...record, decided, decidedAt: Date.now() }, ...current.filter((row) => row.id !== record.id)].slice(0, MAX_APPROVAL_ARCHIVE);
+      writeJsonArray(APPROVAL_ARCHIVE_KEY, next);
+      return next;
+    });
+  }
+  function toggleAlwaysAllow(tool: string): void {
+    setAlwaysAllow((current) => {
+      const next = current.includes(tool) ? current.filter((item) => item !== tool) : current.concat([tool]);
+      writeJsonArray(ALWAYS_ALLOW_KEY, next);
+      return next;
+    });
+  }
+  /**
+   * Approve or deny one request. Returns the tool result when the gateway ran
+   * the call as part of the approval, so a waiting tool loop continues with the
+   * real answer instead of calling the tool again.
+   */
+  async function decideApproval(id: string, decision: "approve" | "deny"): Promise<{ ok: boolean; result?: unknown; error?: string }> {
+    const record = approvals.find((item) => item.id === id);
+    const waiter = approvalWaiters.current.get(id);
     setApprovalsBusy(true); setApprovalsError("");
     try {
       const result = decision === "approve" ? await window.hymnix.tools.approve(id) : await window.hymnix.tools.deny(id);
       if (!result.ok) throw new Error(result.error?.message || t("Approval decision failed"));
       setApprovals((current) => current.filter((item) => item.id !== id));
+      setApprovalsSelected((current) => current.filter((row) => row !== id));
+      if (record) archiveApproval(record, decision === "approve" ? "approved" : "denied");
+      if (waiter) { approvalWaiters.current.delete(id); waiter({ decision, result: result.result }); }
       setToolCall({ status: decision === "approve" ? "success" : "error", message: decision === "approve" ? t("Approved") : t("Denied") });
-      await refreshApprovals();
-    } catch (reason) { setApprovalsError(reason instanceof Error ? reason.message : String(reason)); }
-    finally { setApprovalsBusy(false); }
+      return { ok: true, result: result.result };
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : String(reason);
+      setApprovalsError(message);
+      if (waiter) { approvalWaiters.current.delete(id); waiter({ decision: "deny" }); }
+      return { ok: false, error: message };
+    } finally { setApprovalsBusy(false); }
+  }
+  function toggleApprovalSelection(id: string): void {
+    setApprovalsSelected((current) => current.includes(id) ? current.filter((row) => row !== id) : current.concat([id]));
+  }
+  function toggleSessionAllow(tool: string): void {
+    const next = new Set(sessionAllowRef.current);
+    if (next.has(tool)) next.delete(tool); else next.add(tool);
+    sessionAllowRef.current = next;
+    setSessionAllow([...next]);
+  }
+  /** Batch decision: the selection, or every pending row when nothing is ticked. */
+  async function decideApprovals(decision: "approve" | "deny"): Promise<void> {
+    const ids = approvalsSelected.length ? approvalsSelected.slice() : pendingApprovals.map((item) => item.id);
+    if (!ids.length) return;
+    for (const id of ids) await decideApproval(id, decision);
+    setApprovalsSelected([]);
+  }
+  /** Wait for a human verdict on one request, or an auto-allow that skips it. */
+  async function waitForApproval(record: ApprovalRecord): Promise<{ decision: "approve" | "deny"; result?: unknown }> {
+    const auto = alwaysAllow.includes(record.tool) || sessionAllowRef.current.has(record.tool);
+    if (auto) {
+      const outcome = await decideApproval(record.id, "approve");
+      return { decision: outcome.ok ? "approve" : "deny", result: outcome.result };
+    }
+    setApprovalsOpen(true); setApprovalsTab("pending");
+    return new Promise((resolve) => {
+      // The gateway expires a request after 60 seconds. Waiting forever would
+      // leave the turn — and the composer — stuck behind a row that is gone.
+      const timer = window.setTimeout(() => {
+        if (!approvalWaiters.current.has(record.id)) return;
+        approvalWaiters.current.delete(record.id);
+        setApprovalsError(t("The request expired before you decided"));
+        setApprovals((current) => current.filter((row) => row.id !== record.id));
+        resolve({ decision: "deny" });
+      }, 90_000);
+      approvalWaiters.current.set(record.id, (outcome) => { window.clearTimeout(timer); resolve(outcome); });
+      void refreshApprovals();
+    });
+  }
+  function updatePlan(next: PlanState | null): void { planRef.current = next; setPlan(next); }
+  /** Record one piece of work and attach it to the step that was running. */
+  function recordEvidence(input: { kind: Evidence["kind"]; title: string; detail: string; status?: Evidence["status"]; durationMs?: number | null; stepId?: string | null }): Evidence {
+    const row: Evidence = { id: "ev-" + crypto.randomUUID().slice(0, 8), kind: input.kind, title: input.title, detail: input.detail, at: Date.now(), durationMs: input.durationMs ?? null, status: input.status || "ok" };
+    setEvidence((current) => current.concat([row]).slice(-MAX_EVIDENCE));
+    const base = planRef.current;
+    if (base) {
+      const target = input.stepId === undefined ? (activeStep(base)?.id ?? null) : input.stepId;
+      if (target) updatePlan(attachEvidence(base, target, row.id));
+    }
+    return row;
+  }
+  const toolSpecs = useMemo(() => {
+    const advertised = tools.filter((item) => ADVERTISED_TOOLS.has(item.name)).map((item) => ({ type: "function" as const, function: { name: item.name, description: item.description, parameters: item.schema } }));
+    return [TODO_TOOL_SPEC, ...advertised];
+  }, [tools]);
+  /** One model turn: streams text into the open bubble and collects tool calls. */
+  async function streamTurn(wire: WireMessage[], requestId: string, specs: unknown[] | undefined): Promise<{ text: string; calls: ToolCallPart[] }> {
+    const cloudMode = source === "cloud";
+    const chatBase = cloudMode ? cloudBase.trim() : (remoteActive() ? serverBase.trim() : gatewayBase);
+    const chatKey = cloudMode ? cloudKey.trim() : (remoteActive() ? apiKey.trim() : "");
+    const chatModel = cloudMode ? (cloudModel.trim() || model) : model;
+    const collector = createToolCallCollector();
+    let text = "";
+    await window.hymnix.gateway.streamChat({
+      requestId, baseUrl: chatBase, apiKey: chatKey, model: chatModel, reasoningEffort: effort,
+      kind: cloudMode ? providerKind : "openai", agentId: cloudMode ? agentId.trim() : "",
+      maxTokens: cloudMode ? providerMaxTokens : 0, messages: wire as never,
+      ...(specs && specs.length ? { tools: specs as never } : {}),
+      onDelta: (part: any) => {
+        if (requestRef.current !== requestId) return;
+        const choice = part?.choices?.[0] || {};
+        const delta = choice.delta || {};
+        // Fragments may be keyed by index or id, and the arguments may already be
+        // parsed; the collector normalises all of that.
+        collector.push(delta.tool_calls);
+        const content = delta.content || "";
+        const thinking = delta.reasoning_content || delta.reasoning || "";
+        if (!content && !thinking) return;
+        text += content;
+        if (thinking && transport.current.reasoningStartedAt == null) transport.current.reasoningStartedAt = performance.now();
+        transport.current.chars += content.length + thinking.length;
+        setMessages((current) => current.map((item, index) => index === current.length - 1 ? { ...item, content: item.content + content, reasoning: (item.reasoning || "") + thinking } : item));
+      },
+    });
+    return { text, calls: collector.calls(() => "call_" + crypto.randomUUID().slice(0, 8)) };
+  }
+  /** Execute one tool call: the plan channel locally, everything else through the gateway. */
+  async function runToolCall(call: ToolCallPart, round: number): Promise<string> {
+    const started = performance.now();
+    let args: ToolArgs = {};
+    if (call.arguments.trim()) {
+      try { args = JSON.parse(call.arguments) as ToolArgs; }
+      catch {
+        recordEvidence({ kind: "tool", title: call.name, detail: t("Arguments were not valid JSON"), status: "error", durationMs: 0 });
+        return JSON.stringify({ ok: false, error: "invalid_json_arguments" });
+      }
+    }
+    if (call.name === "todo_write") {
+      const next = applyTodos(planRef.current || createPlan(currentSessionId), args);
+      updatePlan(next);
+      recordEvidence({ kind: "plan", title: t("Plan updated"), detail: next.steps.map((step) => step.intent).slice(0, 6).join(" · ") || t("No steps"), durationMs: Math.round(performance.now() - started) });
+      return JSON.stringify({ ok: true, steps: next.steps.length });
+    }
+    let response;
+    try { response = await window.hymnix.tools.call({ requestId: crypto.randomUUID(), tool: call.name, args }); }
+    catch (reason) {
+      const message = reason instanceof Error ? reason.message : String(reason);
+      recordEvidence({ kind: "tool", title: call.name, detail: message, status: "error", durationMs: Math.round(performance.now() - started) });
+      return JSON.stringify({ ok: false, error: message.slice(0, 400) });
+    }
+    if (response.approval_required) {
+      const record = response.approval_required;
+      setApprovals((current) => current.some((row) => row.id === record.id) ? current : current.concat([record]));
+      setLoopState({ round, waitingFor: record.tool });
+      const outcome = await waitForApproval(record);
+      const millis = Math.round(performance.now() - started);
+      if (outcome.decision === "deny") {
+        recordEvidence({ kind: "approval", title: call.name, detail: t("You denied this call"), status: "denied", durationMs: millis });
+        return JSON.stringify({ ok: false, error: "denied_by_user" });
+      }
+      recordEvidence({ kind: "tool", title: call.name, detail: JSON.stringify(outcome.result ?? null).slice(0, 800), status: "ok", durationMs: millis });
+      return JSON.stringify({ ok: true, result: outcome.result ?? null });
+    }
+    const millis = Math.round(performance.now() - started);
+    if (response.ok) {
+      recordEvidence({ kind: "tool", title: call.name, detail: JSON.stringify(response.result ?? null).slice(0, 800), status: "ok", durationMs: millis });
+      return JSON.stringify({ ok: true, result: response.result ?? null });
+    }
+    const message = response.error?.message || t("Tool failed");
+    recordEvidence({ kind: "tool", title: call.name, detail: message, status: "error", durationMs: millis });
+    return JSON.stringify({ ok: false, error: message.slice(0, 400) });
+  }
+  /** Start a command from the Jobs page and jump to its output. */
+  async function startJob(): Promise<void> {
+    const command = jobCommand.trim();
+    if (!command) return;
+    setJobBusy(true);
+    try {
+      const result = await window.hymnix.jobs.start({ command });
+      if (result.job) { setJobs((current) => mergeJob(current, result.job as never)); setJobSelected(result.job.id); }
+      else if (result.error) throw new Error(result.error);
+      setJobCommand("");
+    } catch (reason) { setToast({ message: reason instanceof Error ? reason.message : String(reason) }); window.setTimeout(() => setToast(null), 3200); }
+    finally { setJobBusy(false); }
+  }
+  async function stopJob(id: string): Promise<void> {
+    try { await window.hymnix.jobs.stop(id); } catch (reason) { setToast({ message: reason instanceof Error ? reason.message : String(reason) }); window.setTimeout(() => setToast(null), 3200); }
+  }
+  async function clearJobs(): Promise<void> {
+    try { await window.hymnix.jobs.clear(); setJobs((current) => current.filter((job) => job.status === "running")); } catch { /* nothing to clear */ }
+  }
+  /** Manual plan edit from the Plan tab: the user outranks the model here. */
+  function updateStep(stepId: string, status: PlanStatus): void {
+    const next = markStep(planRef.current, stepId, status);
+    updatePlan(next);
+    recordEvidence({ kind: "plan", title: t("Step updated"), detail: t(status === "done" ? "Marked done" : status === "skipped" ? "Skipped" : "Marked running"), status: "ok", stepId });
+  }
+  function resetPlan(): void {
+    updatePlan(null);
+    setOpenStepId(null);
   }
   async function loadHealth(forceModels = false) {
     const id = ++healthRequest.current;
@@ -821,6 +1153,13 @@ function App() {
       navigate: (page: string) => setActive(page),
       applyTheme: (id: string) => changeTheme(id),
       setSettingsSection: (section: string) => { setActive("Settings"); setSettingsSection(section); },
+      // Visual baselines for the 1.4 surfaces: seed the data a live model or a
+      // pending gateway call would have produced, without pretending it is real.
+      seedPlan: (todos: unknown) => updatePlan(applyTodos(planRef.current || createPlan(currentSessionId), todos)),
+      seedApprovals: (rows: ApprovalRecord[]) => setApprovals(rows),
+      setChatTab: (tab: "chat" | "context" | "plan" | "trace") => { setActive("Chat"); setChatTab(tab); },
+      openApprovals: () => { setApprovalsOpen(true); setApprovalsTab("pending"); },
+      openShortcuts: () => setShortcutsOpen(true),
       setLanguage: (next: Lang) => changeLang(next),
       version: __APP_VERSION__,
       // Visual baselines must not include first-run or "what's new" overlays.
@@ -837,28 +1176,64 @@ function App() {
       },
     };
   });
+  // One slow clock drives the live durations on the Plan and Jobs tabs. It only
+  // runs while something is actually running, so an idle window stays idle.
+  useEffect(() => {
+    const live = (plan?.steps || []).some((step) => step.status === "running") || jobs.some((job) => job.status === "running");
+    if (!live) return undefined;
+    const timer = window.setInterval(() => setNowTick(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [plan, jobs]);
+  // Jobs live in the main process: subscribe once, then let events drive the list.
+  useEffect(() => {
+    let active = true;
+    void window.hymnix.jobs.list().then((result) => { if (active) setJobs(sortJobs(result.jobs || [])); }).catch(() => undefined);
+    const offUpdate = window.hymnix.jobs.onUpdate((job) => setJobs((current) => mergeJob(current, job)));
+    const offData = window.hymnix.jobs.onData((event) => setJobs((current) => current.map((job) => job.id === event.id ? { ...job, output: ((job.output || "") + event.text).slice(-65536) } : job)));
+    return () => { active = false; offUpdate(); offData(); };
+  }, []);
+  // The approval queue is owned by the gateway, so the app polls it; decisions
+  // and tool-loop pauses refresh it immediately on top of this.
+  useEffect(() => {
+    void refreshApprovals();
+    const timer = window.setInterval(() => { if (!document.hidden) void refreshApprovals(); }, 15000);
+    return () => window.clearInterval(timer);
+  }, []);
+  useEffect(() => { writeShortcuts(shortcutOverrides); }, [shortcutOverrides]);
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      const mod = event.ctrlKey || event.metaKey;
-      const key = event.key.toLowerCase();
       if (clearAllConfirm || modelDeleteTarget || pluginDeleteTarget) {
         if (event.key === "Escape") { event.preventDefault(); setClearAllConfirm(false); setModelDeleteTarget(null); setPluginDeleteTarget(null); }
         return;
       }
-      if (event.altKey && event.key === "ArrowLeft") { event.preventDefault(); goBack(); return; }
-      if (mod && key === "f" && active === "Terminal") { event.preventDefault(); terminalSearchRef.current?.focus(); terminalSearchRef.current?.select(); return; }
-      if (mod && key === "n") { event.preventDefault(); createSession(); return; }
-      if (mod && key === "b") { event.preventDefault(); setSidebarCollapsed((value) => !value); return; }
-      if (mod && key === ".") { event.preventDefault(); setModelPopover((value) => (value === "closed" ? "root" : "closed")); return; }
-      if (mod && key === ",") { event.preventDefault(); setActive("Settings"); return; }
-      if (mod && key === "l") { event.preventDefault(); setActive("Chat"); window.setTimeout(() => composerRef.current?.focus(), 0); return; }
-      if (mod && key === "/") { event.preventDefault(); setActive("Settings"); setSettingsSection("Shortcuts"); return; }
-      if (mod && event.shiftKey && key === "c") { event.preventDefault(); void copyLastReply(); return; }
-      if (mod && event.shiftKey && key === "e") { event.preventDefault(); exportChat(); return; }
-      if (mod && /^[1-5]$/.test(key)) { event.preventDefault(); setActive(["Chat", "Models", "Gateway", "Monitor", "Terminal"][Number(key) - 1]); return; }
+      // Recording consumes the next combination before any command can act on it.
+      if (recordingId) return;
+      if (pressed("palette.open", event)) { event.preventDefault(); setPaletteOpen((value) => !value); setPaletteQuery(""); return; }
+      // Alt+Left is the browser convention users expect regardless of the table.
+      if ((event.altKey && event.key === "ArrowLeft") || pressed("nav.back", event)) { event.preventDefault(); goBack(); return; }
+      if (active === "Terminal" && pressed("terminal.search", event)) { event.preventDefault(); terminalSearchRef.current?.focus(); terminalSearchRef.current?.select(); return; }
+      if (pressed("session.new", event)) { event.preventDefault(); createSession(); return; }
+      if (pressed("sidebar.toggle", event)) { event.preventDefault(); setSidebarCollapsed((value) => !value); return; }
+      if (pressed("inspector.toggle", event)) { event.preventDefault(); setModelPopover((value) => (value === "closed" ? "root" : "closed")); return; }
+      if (pressed("settings.open", event)) { event.preventDefault(); setActive("Settings"); return; }
+      if (pressed("composer.focus", event)) { event.preventDefault(); setActive("Chat"); window.setTimeout(() => composerRef.current?.focus(), 0); return; }
+      if (pressed("shortcuts.open", event)) { event.preventDefault(); setShortcutsOpen((value) => !value); return; }
+      if (pressed("approvals.open", event)) { event.preventDefault(); setApprovalsOpen((value) => !value); return; }
+      if (pressed("jobs.open", event)) { event.preventDefault(); setActive("Jobs"); return; }
+      if (pressed("plan.tab", event)) { event.preventDefault(); setChatTab("plan"); setActive("Chat"); return; }
+      if (pressed("chat.copy", event)) { event.preventDefault(); void copyLastReply(); return; }
+      if (pressed("chat.export", event)) { event.preventDefault(); exportChat(); return; }
+      const pageIds = ["page.1", "page.2", "page.3", "page.4", "page.5"];
+      const pageNames = ["Chat", "Models", "Gateway", "Monitor", "Terminal"];
+      const pageIndex = pageIds.findIndex((id) => pressed(id, event));
+      if (pageIndex >= 0) { event.preventDefault(); setActive(pageNames[pageIndex]); return; }
       if (event.key === "Escape") {
-        // One Escape is one layer. The shortcut sheet promises "close or stop",
-        // but only three dialogs ever listened.
+        // One Escape is one layer, topmost first: a panel opened on top of
+        // another closes alone, and only an empty stack reaches "stop the reply".
+        if (recordingId) { event.preventDefault(); setRecordingId(null); setShortcutError(""); return; }
+        if (shortcutsOpen) { event.preventDefault(); setShortcutsOpen(false); return; }
+        if (approvalsOpen) { event.preventDefault(); setApprovalsOpen(false); return; }
+        if (paletteOpen) { event.preventDefault(); setPaletteOpen(false); return; }
         if (qrOpen) { event.preventDefault(); setQrOpen(false); return; }
         if (conversationMenuOpen) { event.preventDefault(); setConversationMenuOpen(false); return; }
         if (renamingSession) { event.preventDefault(); setRenamingSession(false); return; }
@@ -870,7 +1245,25 @@ function App() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [active, clearAllConfirm, modelDeleteTarget, pluginDeleteTarget, qrOpen, conversationMenuOpen, renamingSession, previewOpen, stopShareConfirm, modelPopover]);
+  }, [active, clearAllConfirm, modelDeleteTarget, pluginDeleteTarget, qrOpen, conversationMenuOpen, renamingSession, previewOpen, stopShareConfirm, modelPopover, recordingId, shortcutsOpen, approvalsOpen, paletteOpen, shortcuts]);
+
+  // Recording a shortcut: the next combination wins, Escape cancels. Capture
+  // phase so a combination already bound elsewhere does not also run.
+  useEffect(() => {
+    if (!recordingId) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setRecordingId(null); setShortcutError(""); return; }
+      const captured = eventBinding(event);
+      if (!captured) return;
+      event.preventDefault(); event.stopPropagation();
+      const conflicts = findConflicts(shortcuts, recordingId, captured, PLATFORM);
+      if (conflicts.length) { setShortcutError(tf("Already used by {name}", { name: t(conflicts[0].label) })); return; }
+      setShortcutOverrides((current) => withOverride(current, recordingId, captured as never));
+      setRecordingId(null); setShortcutError("");
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [recordingId, shortcuts]);
   useEffect(() => {
     if (!messages.length && !draft.trim() && !savedSessions.some((item) => item.id === currentSessionId)) return;
     const timer = window.setTimeout(() => {
@@ -1060,33 +1453,56 @@ function App() {
     setFollowSignal((current) => current + 1);
     const requestId = crypto.randomUUID(); requestRef.current = requestId; setChatBusy(true);
     transport.current = { startedAt: performance.now(), chars: 0, reasoningStartedAt: null, reasoningMs: 0 };
+    const prompt = [systemPrompt.trim(), composerMode === "code" ? t(CODE_MODE_PROMPT) : ""].filter(Boolean).join("\n\n");
+    const wire: WireMessage[] = [
+      ...(prompt ? [{ role: "system" as const, content: prompt }] : []),
+      ...next.slice(0, -1).map((item) => ({ role: item.role as "user" | "assistant", content: item.content })),
+    ];
+    // Tools belong to Orbit: a plain chat turn stays a plain chat turn, and a
+    // model that does not speak tool calls still answers normally.
+    let specs = composerMode === "code" ? toolSpecs : undefined;
+    if (specs) setLoopState({ round: 1, waitingFor: "" });
     try {
-      const cloudMode = source === "cloud";
-      // The adapter in the main process owns URL joining, so cloud addresses go out
-      // as typed; only the local gateway path is normalised here.
-      const chatBase = cloudMode ? cloudBase.trim() : (remoteActive() ? serverBase.trim() : gatewayBase);
-      const chatKey = cloudMode ? cloudKey.trim() : (remoteActive() ? apiKey.trim() : "");
-      const chatModel = cloudMode ? (cloudModel.trim() || model) : model;
-      const outbound = [
-        ...(composerMode === "code" || systemPrompt.trim() ? [{ role: "system" as const, content: [systemPrompt.trim(), composerMode === "code" ? t("CODE_MODE_PROMPT") : ""].filter(Boolean).join("\n\n") }] : []),
-        ...next.slice(0, -1).map((item) => ({ role: item.role, content: item.content })),
-      ];
-      await window.hymnix.gateway.streamChat({ requestId, baseUrl: chatBase, apiKey: chatKey, model: chatModel, reasoningEffort: effort, kind: cloudMode ? providerKind : "openai", agentId: cloudMode ? agentId.trim() : "", maxTokens: cloudMode ? providerMaxTokens : 0, messages: outbound, onDelta: (part: any) => {
-        const payload = part?.choices?.[0]?.delta || {};
-        const content = payload.content || ""; const thinking = payload.reasoning_content || payload.reasoning || "";
-        if (requestRef.current !== requestId || (!content && !thinking)) return;
-        if (thinking && transport.current.reasoningStartedAt == null) transport.current.reasoningStartedAt = performance.now();
-        transport.current.chars += content.length + thinking.length;
-        setMessages((current) => current.map((item, index) => index === current.length - 1 ? { ...item, content: item.content + content, reasoning: (item.reasoning || "") + thinking } : item));
-      } });
-      settleTransport();
+      for (let round = 0; round <= TOOL_ROUND_LIMIT; round += 1) {
+        let turn;
+        try {
+          turn = await streamTurn(wire, requestId, specs);
+        } catch (reason) {
+          // A local model without tool support answers 400 the moment tools are
+          // advertised. Dropping them once is better than failing the turn.
+          const detail = reason instanceof Error ? reason.message : String(reason);
+          if (round > 0 || !specs || !/tool|function/i.test(detail)) throw reason;
+          specs = undefined;
+          setMessages((current) => current.map((item, index) => index === current.length - 1 && item.role === "assistant" ? { ...item, content: "", reasoning: "" } : item));
+          recordEvidence({ kind: "tool", title: t("Tools unavailable"), detail: t("This model does not accept tool calls; answering without the plan loop."), status: "error", durationMs: null });
+          setToast({ message: t("This model does not accept tool calls; answering without the plan loop.") });
+          window.setTimeout(() => setToast(null), 4200);
+          continue;
+        }
+        if (!turn.calls.length) { settleTransport(); break; }
+        if (round === TOOL_ROUND_LIMIT) {
+          recordEvidence({ kind: "tool", title: t("Tool loop stopped"), detail: tf("{count} rounds without a final answer", { count: String(round) }), status: "error", durationMs: null });
+          break;
+        }
+        wire.push({ role: "assistant", content: turn.text, tool_calls: turn.calls.map((call) => ({ id: call.id, type: "function" as const, function: { name: call.name, arguments: call.arguments } })) });
+        for (const call of turn.calls) {
+          if (requestRef.current !== requestId) return;
+          setLoopState({ round: round + 1, waitingFor: "" });
+          wire.push({ role: "tool", tool_call_id: call.id, content: await runToolCall(call, round + 1) });
+        }
+        if (requestRef.current !== requestId) return;
+        // A fresh bubble for the next round, so the transcript reads turn by turn.
+        setMessages((current) => [...current, { role: "assistant", content: "", at: stamp() }]);
+        setFollowSignal((value) => value + 1);
+        setLoopState({ round: round + 2, waitingFor: "" });
+      }
     } catch (reason) {
       if (requestRef.current !== requestId) return;
       setState("degraded");
       const detail = reason instanceof Error ? reason.message : String(reason);
       setMessages((current) => current.map((item, index) => index === current.length - 1 && item.role === "assistant"
         ? { ...item, error: detail || t("Connection lost") } : item));
-    } finally { if (requestRef.current === requestId) { requestRef.current = null; setChatBusy(false); } }
+    } finally { if (requestRef.current === requestId) { requestRef.current = null; setChatBusy(false); setLoopState(null); } }
   }
   function settleTransport() {
     const elapsed = performance.now() - transport.current.startedAt;
@@ -1847,6 +2263,71 @@ function App() {
       </div>
     </div>;
 
+    const planStatusText = (status: PlanStatus) => status === "done" ? "Done" : status === "running" ? "Running" : status === "failed" ? "Failed" : status === "skipped" ? "Skipped" : "Queued";
+    const planStepDuration = (step: PlanStep) => step.startedAt ? Math.max(0, (step.finishedAt || nowTick) - step.startedAt) : null;
+    const evidenceById = new Map(evidence.map((row) => [row.id, row]));
+    const planSummary = planStatsNow;
+    const planPanel = <div className="tab-panel plan-panel">
+      <div className="panel-card plan-card">
+        <div className="plan-head">
+          <div>
+            <h3>{t("Plan")}</h3>
+            <p className="panel-note">{t("Orbit publishes the steps with todo_write; you can close one yourself.")}</p>
+          </div>
+          <div className="plan-head-actions">
+            <span className="plan-count" title={t("Completed steps")}>{planSummary.done}/{planSummary.total}</span>
+            <button type="button" className="btn ghost" onClick={resetPlan} disabled={!planSummary.total}>{t("Clear plan")}</button>
+          </div>
+        </div>
+        {planSummary.total === 0
+          ? <div className="plan-empty">
+              <strong>{t("No plan yet.")}</strong>
+              <span>{t("Send a coding request in Orbit mode; the model lists its steps here before it starts.")}</span>
+            </div>
+          : <>
+              <div className="plan-progress" role="progressbar" aria-valuenow={planPercent(plan)} aria-valuemin={0} aria-valuemax={100} aria-label={t("Plan progress")}><i style={{ width: planPercent(plan) + "%" }} /></div>
+              <ol className="plan-steps">
+                {plan!.steps.map((step, index) => <li className={"plan-step " + step.status} key={step.id} data-status={step.status}>
+                  <span className="plan-index" aria-hidden="true">{index + 1}</span>
+                  <button type="button" className="plan-intent" onClick={() => setOpenStepId(openStepId === step.id ? null : step.id)} aria-expanded={openStepId === step.id}>
+                    <span className="plan-dot" data-status={step.status} aria-label={t(planStatusText(step.status))} />
+                    <span className="plan-text">{step.intent}</span>
+                    <span className="plan-meta">
+                      {step.status === "running" && <em>{t("Running")}</em>}
+                      {step.finishedAt != null && (planStepDuration(step) || 0) >= 10 ? <small className="mono">{formatPlanDuration(planStepDuration(step) || 0)}</small> : null}
+                      {step.evidenceIds.length > 0 && <small className="plan-evidence-count">{step.evidenceIds.length} {t("evidence")}</small>}
+                    </span>
+                  </button>
+                  <span className="plan-step-actions">
+                    {step.status !== "done" && <button type="button" className="btn ghost" onClick={() => updateStep(step.id, "done")}>{t("Done")}</button>}
+                    {step.status !== "skipped" && step.status !== "done" && <button type="button" className="btn ghost" onClick={() => updateStep(step.id, "skipped")}>{t("Skip")}</button>}
+                    {step.status !== "running" && step.status !== "queued" && <button type="button" className="btn ghost" onClick={() => updateStep(step.id, "running")}>{t("Reopen")}</button>}
+                  </span>
+                  {openStepId === step.id && <div className="plan-step-detail">
+                    {step.evidenceIds.length === 0
+                      ? <p className="panel-note">{t("Nothing recorded for this step yet.")}</p>
+                      : <ul className="plan-evidence">{step.evidenceIds.map((id) => evidenceById.get(id)).filter(Boolean).map((row) => <li key={row!.id} data-status={row!.status}>
+                          <span className={"evidence-dot " + row!.kind} aria-hidden="true" />
+                          <span className="evidence-title">{row!.title}</span>
+                          {row!.durationMs != null && row!.durationMs >= 10 && <small className="mono">{formatPlanDuration(row!.durationMs || 0)}</small>}
+                          <code className="evidence-detail">{row!.detail.slice(0, 200)}</code>
+                        </li>)}</ul>}
+                  </div>}
+                </li>)}
+              </ol>
+            </>}
+      </div>
+      {evidence.length > 0 && <div className="panel-card">
+        <h3>{t("Evidence")}</h3>
+        <ul className="evidence-list">{evidence.slice(-12).reverse().map((row) => <li key={row.id} data-status={row.status}>
+          <span className={"evidence-dot " + row.kind} aria-hidden="true" />
+          <span className="evidence-title">{row.title}</span>
+          {row.durationMs != null && <small className="mono">{formatPlanDuration(row.durationMs || 0)}</small>}
+          <span className="evidence-time">{new Date(row.at).toLocaleTimeString(lang === "zh" ? "zh-CN" : "en-US", { hour: "2-digit", minute: "2-digit" })}</span>
+        </li>)}</ul>
+      </div>}
+    </div>;
+
     const tracePanel = <div className="tab-panel">
       <div className="panel-card">
         <h3>{t("Tool activity")}</h3>
@@ -1854,7 +2335,6 @@ function App() {
           ? <p className="panel-note">{t("No tool calls in this conversation yet.")}</p>
           : <div className="trace-row"><span className={"trace-dot " + toolCall.status} aria-hidden="true" /><span>{t(toolCall.message || toolCall.status)}</span></div>}
         {approvals.length > 0 && <div className="trace-list">{approvals.map((approval) => <div className="trace-row" key={approval.id}><span className="trace-tool">{approval.tool}</span><span className="mono">{approval.risk}</span><code className="trace-args">{JSON.stringify(approval.argsRedacted || {})}</code><span className="trace-actions"><button type="button" className="btn" onClick={() => void decideApproval(approval.id, "approve")} disabled={approvalsBusy}>{t("Approve")}</button><button type="button" className="btn ghost" onClick={() => void decideApproval(approval.id, "deny")} disabled={approvalsBusy}>{t("Deny")}</button></span></div>)}</div>}
-        {approvalsError && <p className="error">{approvalsError}</p>}
       </div>
       <div className="panel-card">
         <h3>{t("Recent activity")}</h3>
@@ -1882,7 +2362,11 @@ function App() {
           ? <form className="rename-session" onSubmit={(event) => { event.preventDefault(); commitRenameSession(); }}><input autoFocus value={renameDraft} onChange={(event) => setRenameDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setRenamingSession(false); }} aria-label={t("Conversation name")} /><button className="btn primary" type="submit">{t("Save name")}</button></form>
           : <h1 className="chat-title" title={t("Double-click to rename")} onDoubleClick={beginRenameSession}>{sessionName}</h1>}
         <nav className="chat-tabs" role="tablist" aria-label={t("Conversation views")}>
-          {(["chat", "context", "trace"] as const).map((tab) => <button key={tab} type="button" role="tab" aria-selected={chatTab === tab} className={chatTab === tab ? "active" : ""} onClick={() => setChatTab(tab)}>{t(tab === "chat" ? "Chat" : tab === "context" ? "Context" : "Trace")}</button>)}
+          {(["chat", "context", "plan", "trace"] as const).map((tab) => <button key={tab} type="button" role="tab" aria-selected={chatTab === tab} className={chatTab === tab ? "active" : ""} onClick={() => setChatTab(tab)}>
+            {t(tab === "chat" ? "Chat" : tab === "context" ? "Context" : tab === "plan" ? "Plan" : "Trace")}
+            {tab === "plan" && planSummary.total > 0 && <span className="tab-badge">{planSummary.done}/{planSummary.total}</span>}
+            {tab === "plan" && loopState && <span className="tab-live" aria-hidden="true" />}
+          </button>)}
         </nav>
         <div className="chat-head-actions">
           <div className="conversation-menu-wrap" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setConversationMenuOpen(false); }}>
@@ -1899,9 +2383,17 @@ function App() {
       </div>
       {chatTab === "chat" && <>
         <ChatViewport messages={messages} footer={toolCard} followSignal={followSignal} empty={emptyChat} busy={chatBusy} onEditMessage={editMessage} onRegenerateMessage={regenerateMessage} onDeleteMessage={deleteMessageTurn} onBranchMessage={branchFrom} onRetryMessage={retryMessage} />
+        {loopState && <div className="loop-banner" role="status">
+          <span className="tab-live" aria-hidden="true" />
+          <span>{loopState.waitingFor
+            ? tf("Waiting for your decision on {tool}", { tool: loopState.waitingFor })
+            : tf("Working · round {round}", { round: String(loopState.round) })}</span>
+          <button type="button" className="btn ghost" onClick={() => setChatTab("plan")}>{t("View plan")}</button>
+        </div>}
         {messages.length > 0 && composer}
       </>}
       {chatTab === "context" && <div className="chat-tab-body">{contextPanel}</div>}
+      {chatTab === "plan" && <div className="chat-tab-body">{planPanel}</div>}
       {chatTab === "trace" && <div className="chat-tab-body">{tracePanel}</div>}
     </section>;
   }
@@ -2614,9 +3106,75 @@ function App() {
           <div className="setting-row path-row"><label>{t("Data folder")}<span className="hint">{t("Sessions, settings and logs.")}</span></label><div className="controls"><input readOnly value={paths?.appData || ""} title={paths?.appData || ""} /><button className="btn" onClick={() => { if (paths?.appData) void window.hymnix.system.reveal(paths.appData); }} disabled={!paths?.appData}>{t("Open folder")}</button></div></div>
         </div>}
         {settingsSection === "Sharing and security" && <div className="card settings-link-card">{head("Sharing and security", "Sharing and security")}<p className="subtitle">{t("Configure host sharing, connections and cloud provider credentials.")}</p><button className="btn primary" onClick={() => setActive("Gateway")}>{t("Open sharing settings")}</button></div>}
-                {settingsSection === "Shortcuts" && <div className="card">{head("Shortcuts", "Shortcuts")}<div className="setting-row"><label>{t("Send with Shift+Enter")}<span className="hint">{t("Swap the Enter and Shift+Enter behaviour.")}</span></label><div className="controls"><button type="button" className={"switch" + (enterSwaps ? " on" : "")} aria-pressed={enterSwaps} aria-label={t("Send with Shift+Enter")} onClick={() => setEnterSwaps((value) => !value)}><span /></button></div></div><div className="shortcut-list">{[["Ctrl+N", "New session"], ["Ctrl+L", "Focus message composer"], ["Ctrl+B", "Toggle sidebar"], ["Ctrl+.", "Toggle inspector"], ["Ctrl+,", "Open settings"], ["Ctrl+/", "Open the shortcut sheet"], ["Ctrl+1–5", "Navigate primary pages"], ["Ctrl+Shift+C", "Copy last reply"], ["Ctrl+Shift+E", "Export chat"], [enterSwaps ? "Shift+Enter" : "Enter", "Send message"], [enterSwaps ? "Enter" : "Shift+Enter", "New line"], ["↑", "Edit the last message"], ["Esc", "Close or stop"]].map(([shortcut, action]) => <div key={shortcut}><kbd>{shortcut}</kbd><span>{t(action)}</span></div>)}</div></div>}
+        {settingsSection === "Shortcuts" && <div className="card">{head("Shortcuts", "Shortcuts")}
+          <div className="setting-row"><label>{t("Send with Shift+Enter")}<span className="hint">{t("Swap the Enter and Shift+Enter behaviour.")}</span></label><div className="controls"><button type="button" className={"switch" + (enterSwaps ? " on" : "")} aria-pressed={enterSwaps} aria-label={t("Send with Shift+Enter")} onClick={() => setEnterSwaps((value) => !value)}><span /></button></div></div>
+          {shortcutError && <p className="error" role="alert">{shortcutError}</p>}
+          {shortcutGroups(shortcuts).map((group) => <div className="shortcut-edit-group" key={group.name}>
+            <h4 className="shortcut-edit-heading">{t(group.name)}</h4>
+            {group.items.map((command) => <div className="shortcut-edit-row" key={command.id}>
+              <span className="shortcut-edit-label">{t(command.label)}</span>
+              <span className="shortcut-keys">{command.fixed ? <kbd>{t("Fixed")}</kbd> : bindingKeycaps(command.binding, PLATFORM).map((cap) => <kbd key={cap}>{cap}</kbd>)}</span>
+              {command.fixed
+                ? <span className="chip">{t("Locked")}</span>
+                : <>
+                    <button type="button" className={"btn" + (recordingId === command.id ? " primary" : "")} onClick={() => { setShortcutError(""); setRecordingId(recordingId === command.id ? null : command.id); }}>{t(recordingId === command.id ? "Press keys…" : "Change")}</button>
+                    {command.overridden && <button type="button" className="btn ghost" onClick={() => { setShortcutError(""); setShortcutOverrides((current) => withoutOverride(current, command.id)); }}>{t("Reset")}</button>}
+                  </>}
+            </div>)}
+          </div>)}
+          <div className="shortcut-edit-foot">
+            <button type="button" className="btn ghost" onClick={() => { setShortcutOverrides({}); setShortcutError(""); setRecordingId(null); }}>{t("Reset all shortcuts")}</button>
+            <span className="panel-note">{t("A combination can only belong to one command; the editor refuses a duplicate.")}</span>
+          </div>
+        </div>}
         {settingsSection === "About" && <div className="card">{head("About", "About")}<div className="about-brand"><img src={brandIcon} alt="" /><span><strong>Hymnix Orbit</strong><small>{__APP_VERSION__} · Hymnix Studio</small></span></div><div className="setting-row"><label>{t("Updates")}<span className="hint">{updateState.detail || tf("Installed version {version}", { version: __APP_VERSION__ })}</span></label><div className="controls"><button className="btn" onClick={() => void checkUpdates()} disabled={updateState.status === "checking"}>{t(updateState.status === "checking" ? "Checking..." : "Check for updates")}</button>{updateState.status === "available" && updateState.url && <button className="btn primary" onClick={() => void window.hymnix.system.openExternal(updateState.url)}>{t("Open download page")}</button>}<button className="btn ghost" onClick={() => void window.hymnix.system.openExternal("https://github.com/CarrisFlynn/hymnix-ai-server/releases")}>{t("View releases")}</button></div></div><div className="setting-row"><label>{t("Help")}</label><div className="controls"><button className="btn" onClick={() => setActive("Support")}>{t("Sponsor")}</button><button className="btn ghost" onClick={() => setActive("Changelog")}>{t("Changelog")}</button></div></div></div>}
       </div></div>
+    </section>;
+  }
+  function renderJobs() {
+    const live = selectedJob;
+    const output = (live?.output || "").slice(-20000);
+    return <section className="view-page jobs-page">
+      <div className="page-head"><div><label>{t("DEVELOPER")}</label><h2>{t("Background jobs")}</h2><p>{t("Commands, model downloads and gateway restarts, with live output and one place to stop them.")}</p></div>
+        <div className="page-actions"><button type="button" className="btn ghost" onClick={() => void clearJobs()}>{t("Clear finished")}</button></div>
+      </div>
+      <form className="card job-launcher" onSubmit={(event) => { event.preventDefault(); void startJob(); }}>
+        <input value={jobCommand} onChange={(event) => setJobCommand(event.target.value)} placeholder={t("Run a command in the workspace…")} aria-label={t("Command")} spellCheck={false} />
+        <button type="submit" className="btn primary" disabled={jobBusy || !jobCommand.trim()}>{t("Run")}</button>
+        <span className="job-launcher-hint">{t("Runs through the workspace shell; cancel kills the whole process tree.")}</span>
+      </form>
+      <div className="segmented job-filter" role="group" aria-label={t("Show jobs")}>
+        {(["all", "running", "finished"] as const).map((value) => <button key={value} type="button" className={jobFilter === value ? "active" : ""} aria-pressed={jobFilter === value} onClick={() => setJobFilter(value)}>{t(value === "all" ? "All" : value === "running" ? "Running" : "Finished")}{value === "running" && runningJobs ? " · " + runningJobs : ""}</button>)}
+      </div>
+      <div className="jobs-layout">
+        <div className="card job-list">
+          <div className="job-list-head"><h3 className="card-title">{t("Jobs")}</h3><span className="chip">{visibleJobs.length}</span></div>
+          {visibleJobs.length === 0
+            ? <p className="panel-note">{t("No jobs yet. Run a command above, or pull a model, and it shows up here.")}</p>
+            : <ul className="job-rows">{visibleJobs.map((job) => <li key={job.id} className={"job-row" + (job.id === live?.id ? " selected" : "")} data-status={job.status}>
+                <button type="button" className="job-row-main" onClick={() => setJobSelected(job.id)} aria-pressed={job.id === live?.id}>
+                  <span className="job-dot" data-status={job.status} aria-hidden="true" />
+                  <span className="job-text"><strong>{job.title}</strong><small>{t(job.kind === "shell" ? "Shell" : job.kind === "model" ? "Model" : job.kind === "gateway" ? "Gateway" : "Plugin")} · {t(jobStatusLabel(job.status))}</small></span>
+                  <span className="job-time mono">{formatElapsed(jobElapsed(job, nowTick))}</span>
+                </button>
+                {job.status === "running" && <button type="button" className="btn ghost job-stop" onClick={() => void stopJob(job.id)}>{t("Stop")}</button>}
+                {job.status !== "running" && job.exitCode != null && <span className="job-exit mono">exit {job.exitCode}</span>}
+              </li>)}</ul>}
+        </div>
+        <div className="card job-detail">
+          {live ? <>
+            <div className="job-detail-head">
+              <div><h3 className="card-title">{live.title}</h3><small className="mono">{live.command || t("No command")}</small></div>
+              <div className="job-detail-meta">
+                <span className={"status-pill " + (live.status === "running" ? "warning" : live.status === "failed" ? "danger" : "success")}><span className="status-dot" />{t(jobStatusLabel(live.status))}</span>
+                <span className="mono">{formatElapsed(jobElapsed(live, nowTick))}</span>
+                {live.status === "running" && <button type="button" className="btn danger" onClick={() => void stopJob(live.id)}>{t("Cancel")}</button>}
+              </div>
+            </div>
+            <pre className="job-output" aria-live="off" data-no-translate>{output || t("Waiting for output…")}</pre>
+          </> : <div className="job-detail-empty"><strong>{t("Nothing selected.")}</strong><span>{t("Pick a job on the left to read its output.")}</span></div>}
+        </div>
+      </div>
     </section>;
   }
   function renderView() {
@@ -2624,6 +3182,7 @@ function App() {
     if (active === "Models") return renderModels();
     if (active === "Plugins") return renderPlugins();
     if (active === "Terminal") return renderTerminal();
+    if (active === "Jobs") return renderJobs();
     if (active === "History") return renderHistory();
     if (active === "Gateway") return renderGateway();
     if (active === "Monitor") return renderMonitor();
@@ -2656,12 +3215,89 @@ function App() {
       <div className="palette" role="dialog" aria-label={t("Command palette")} onClick={(event) => event.stopPropagation()}>
         <input autoFocus className="palette-input" value={paletteQuery} placeholder={t("Type a command or a page…")} onChange={(event) => setPaletteQuery(event.target.value)} />
         <div className="palette-list">
-          {["Chat", "Models", "Gateway", "Plugins", "Monitor", "Terminal", "Changelog", "Support", "Settings"]
+          {["Chat", "Models", "Gateway", "Plugins", "Monitor", "Terminal", "Jobs", "Changelog", "Support", "Settings"]
             .filter((page) => t(page).toLowerCase().includes(paletteQuery.toLowerCase()))
             .map((page) => <button type="button" key={page} className="palette-item" onClick={() => { setActive(page); setPaletteOpen(false); }}><span>{t(page)}</span><small>{t("Page")}</small></button>)}
           <button type="button" className="palette-item" onClick={() => { createSession(); setPaletteOpen(false); }}><span>{t("New chat")}</span><small>Ctrl+N</small></button>
+          <button type="button" className="palette-item" onClick={() => { setApprovalsOpen(true); setApprovalsTab("pending"); setPaletteOpen(false); void refreshApprovals(); }}><span>{t("Approval inbox")}</span><small>{approvals.length ? approvals.length : ""}</small></button>
+          <button type="button" className="palette-item" onClick={() => { setShortcutsOpen(true); setPaletteOpen(false); }}><span>{t("Keyboard shortcuts")}</span><small>Ctrl+/</small></button>
+          <button type="button" className="palette-item" onClick={() => { setActive("Chat"); setChatTab("plan"); setPaletteOpen(false); }}><span>{t("Plan")}</span><small>{planStatsNow.total ? planStatsNow.done + "/" + planStatsNow.total : ""}</small></button>
           <button type="button" className="palette-item danger" onClick={() => { deleteSession(currentSessionId); setPaletteOpen(false); }}><span>{t("Delete conversation")}</span><small>{t("Removes the conversation")}</small></button>
         </div>
+      </div>
+    </div>}
+    {approvalsOpen && <div className="drawer-backdrop" onClick={() => setApprovalsOpen(false)}>
+      <aside className="approvals-drawer" role="dialog" aria-modal="true" aria-label={t("Approvals")} onClick={(event) => event.stopPropagation()}>
+        <header className="drawer-head">
+          <div><h2>{t("Approvals")}</h2><p>{tf("{count} waiting", { count: String(approvals.length) })}</p></div>
+          <button type="button" className="btn ghost" onClick={() => setApprovalsOpen(false)} aria-label={t("Close")}>✕</button>
+        </header>
+        <div className="drawer-tabs" role="tablist" aria-label={t("Approval views")}>
+          <button type="button" role="tab" aria-selected={approvalsTab === "pending"} className={approvalsTab === "pending" ? "active" : ""} onClick={() => setApprovalsTab("pending")}>{t("Pending")}{approvals.length ? " · " + approvals.length : ""}</button>
+          <button type="button" role="tab" aria-selected={approvalsTab === "decided"} className={approvalsTab === "decided" ? "active" : ""} onClick={() => setApprovalsTab("decided")}>{t("Processed")}{approvalsArchive.length ? " · " + approvalsArchive.length : ""}</button>
+        </div>
+        {approvalsError && <p className="error" role="alert">{approvalsError}</p>}
+        {approvalsTab === "pending" ? <>
+          <div className="drawer-toolbar">
+            <label className="drawer-check"><input type="checkbox" checked={approvals.length > 0 && approvalsSelected.length === approvals.length} onChange={() => setApprovalsSelected(approvalsSelected.length === approvals.length ? [] : pendingApprovals.map((row) => row.id))} />{t("Select all")}</label>
+            <button type="button" className="btn ghost" onClick={() => setApprovalsRiskFirst((value) => !value)}>{t(approvalsRiskFirst ? "Risk first" : "Newest first")}</button>
+            <button type="button" className="btn primary" onClick={() => void decideApprovals("approve")} disabled={approvalsBusy || !approvals.length}>{t("Allow selected")}</button>
+            <button type="button" className="btn danger" onClick={() => void decideApprovals("deny")} disabled={approvalsBusy || !approvals.length}>{t("Deny selected")}</button>
+          </div>
+          {approvals.length === 0
+            ? <p className="drawer-note">{t("Nothing is waiting for you.")}</p>
+            : <ul className="approval-rows">
+                {pendingApprovals.map((row) => <li className="approval-row" key={row.id} data-risk={row.risk}>
+                  <div className="approval-row-head">
+                    <input type="checkbox" checked={approvalsSelected.includes(row.id)} onChange={() => toggleApprovalSelection(row.id)} aria-label={tf("Select {tool}", { tool: row.tool })} />
+                    <span className="risk-chip" data-risk={row.risk}>{t(row.risk === "danger" ? "Danger" : row.risk === "moderate" ? "Moderate" : row.risk === "safe" ? "Safe" : "Unknown")}</span>
+                    <strong>{row.tool}</strong>
+                    <small className="mono">{relativeTime(row.createdAt)}</small>
+                  </div>
+                  {row.reasons.length > 0 && <p className="approval-reasons">{row.reasons.join(" · ")}</p>}
+                  <button type="button" className="link-button" onClick={() => setApprovalsExpanded(approvalsExpanded === row.id ? null : row.id)} aria-expanded={approvalsExpanded === row.id}>{t("Arguments")}</button>
+                  {approvalsExpanded === row.id && <pre className="approval-args">{JSON.stringify(row.argsRedacted || {}, null, 2)}</pre>}
+                  <div className="approval-row-actions">
+                    <button type="button" className="btn primary" onClick={() => void decideApproval(row.id, "approve")} disabled={approvalsBusy}>{t("Allow once")}</button>
+                    <button type="button" className="btn danger" onClick={() => void decideApproval(row.id, "deny")} disabled={approvalsBusy}>{t("Deny")}</button>
+                    <button type="button" className={alwaysAllow.includes(row.tool) ? "btn primary" : "btn ghost"} onClick={() => toggleAlwaysAllow(row.tool)}>{t(alwaysAllow.includes(row.tool) ? "Always allowed" : "Always allow")}</button>
+                    <button type="button" className={sessionAllow.includes(row.tool) ? "btn primary" : "btn ghost"} onClick={() => toggleSessionAllow(row.tool)}>{t(sessionAllow.includes(row.tool) ? "Allowed this session" : "Allow this session")}</button>
+                  </div>
+                </li>)}
+              </ul>}
+        </> : (approvalsArchive.length === 0
+          ? <p className="drawer-note">{t("No decisions yet.")}</p>
+          : <ul className="approval-rows">
+              {approvalsArchive.map((row) => <li className="approval-row" key={row.id} data-risk={row.risk}>
+                <div className="approval-row-head">
+                  <span className="risk-chip" data-risk={row.risk}>{t(row.risk === "danger" ? "Danger" : row.risk === "moderate" ? "Moderate" : row.risk === "safe" ? "Safe" : "Unknown")}</span>
+                  <strong>{row.tool}</strong>
+                  <span className={"verdict " + row.decided}>{t(row.decided === "approved" ? "Approved" : "Denied")}</span>
+                  <small className="mono">{relativeTime(new Date(row.decidedAt).toISOString())}</small>
+                </div>
+                {row.reasons.length > 0 && <p className="approval-reasons">{row.reasons.join(" · ")}</p>}
+                <pre className="approval-args">{JSON.stringify(row.argsRedacted || {}, null, 2)}</pre>
+              </li>)}
+            </ul>)}
+        <footer className="drawer-foot">{t("A request expires after 60 seconds; stale rows disappear on the next refresh.")}</footer>
+      </aside>
+    </div>}
+    {shortcutsOpen && <div className="palette-backdrop" onClick={() => setShortcutsOpen(false)}>
+      <div className="shortcuts-sheet" role="dialog" aria-modal="true" aria-label={t("Keyboard shortcuts")} onClick={(event) => event.stopPropagation()}>
+        <header className="shortcuts-sheet-head"><div><h2>{t("Keyboard shortcuts")}</h2><p>{t("Every global command, and what it is bound to now.")}</p></div><button type="button" className="btn ghost" onClick={() => setShortcutsOpen(false)} aria-label={t("Close")}>✕</button></header>
+        <div className="shortcuts-sheet-body">
+          {shortcutGroups(shortcuts).map((group) => <div className="shortcut-group" key={group.name}>
+            <h3>{t(group.name)}</h3>
+            {group.items.map((command) => <div className="shortcut-row" key={command.id}>
+              <span className="shortcut-label">{t(command.label)}</span>
+              <span className="shortcut-keys">{command.fixed ? <kbd>{t("Fixed")}</kbd> : bindingKeycaps(command.binding, PLATFORM).map((cap) => <kbd key={cap}>{cap}</kbd>)}</span>
+            </div>)}
+          </div>)}
+        </div>
+        <footer className="shortcuts-sheet-foot">
+          <button type="button" className="btn primary" onClick={() => { setShortcutsOpen(false); setActive("Settings"); setSettingsSection("Shortcuts"); }}>{t("Change shortcuts")}</button>
+          <span className="panel-note">{t("Ctrl+/ opens this sheet from anywhere.")}</span>
+        </footer>
       </div>
     </div>}
     <div className="titlebar">
@@ -2670,6 +3306,14 @@ function App() {
           <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="3.5" width="15" height="13" rx="3" /><path d="M8 3.5v13" /></svg>
         </button>
       </div>
+      {(approvals.length > 0 || runningJobs > 0) && <div className="tb-badges">
+        {approvals.length > 0 && <button type="button" className="head-badge alert" onClick={() => { setApprovalsOpen(true); setApprovalsTab("pending"); void refreshApprovals(); }} aria-label={tf("{count} pending approvals", { count: String(approvals.length) })} title={t("Approvals")}>
+          <Icon name="Approvals" /><span>{approvals.length}</span>
+        </button>}
+        {runningJobs > 0 && <button type="button" className="head-badge live" onClick={() => setActive("Jobs")} aria-label={tf("{count} running jobs", { count: String(runningJobs) })} title={t("Background jobs")}>
+          <span className="badge-dot" aria-hidden="true" /><span>{runningJobs}</span>
+        </button>}
+      </div>}
       <div className="titlebar-drag" />
       <div className="tb-window">
         {previewOpen && <button type="button" className="preview-close" onClick={() => void closePreview()}>{t("Close preview")}</button>}

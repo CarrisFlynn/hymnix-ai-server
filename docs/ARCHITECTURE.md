@@ -2,7 +2,7 @@
 
 ## Overview
 
-Hymnix Orbit 1.3.3 is one application with three processes:
+Hymnix Orbit 1.4.0 is one application with three processes:
 
 ```
 Electron renderer (React, app://hymnix)  <--IPC-->  Electron main  <--HTTP loopback-->  headless gateway  -->  Ollama / cloud provider

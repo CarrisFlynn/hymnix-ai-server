@@ -8,6 +8,7 @@ import os from "node:os";
 import {readPullStream} from "./pull-stream";
 import {listProviderModels,normalizeKind,probeProvider,streamProvider} from "./providers";
 import {TerminalBridge} from "./terminal-bridge";
+import {JobCenter} from "./job-center";
 import type {AdminClientsResponse,AdminErrorRecord,AdminHistoryQuery,AdminHistoryResponse,AdminStatus,ChatDelta,GatewayHealth,GatewayMessage,GatewayModelsResponse,OllamaControlResult} from "../shared/protocol";
 
 // ---------- persistent app settings ----------
@@ -60,6 +61,17 @@ let mainWindow: BrowserWindow | null = null;
 let selectedFilesRoot: string | null = null;
 const fileLimits = {treeDepth:8,treeLimit:500,searchLimit:200,readLines:400,readBytes:256*1024} as const;
 const chatControllers = new Map<string, AbortController>();
+/**
+ * One registry for every long-running thing the app starts. It publishes to the
+ * focused window only: a job row is UI state, never a cross-window broadcast.
+ */
+const jobCenter = new JobCenter((channel, payload) => {
+  const target = mainWindow;
+  if (!target || target.isDestroyed() || target.webContents.isDestroyed()) return;
+  target.webContents.send(channel, payload);
+});
+/** Terminal request id → job id, so cancelling one closes the other. */
+const terminalJobs = new Map<string, string>();
 const channels = {health:"gateway:health",models:"gateway:models",adminHistory:"gateway:admin-history",adminStatus:"gateway:admin-status",adminErrors:"gateway:admin-errors",adminClients:"gateway:admin-clients",stream:"gateway:stream",cancel:"gateway:cancel",delta:"gateway:delta",complete:"gateway:complete"} as const;
 const productRoot = app.isPackaged ? process.resourcesPath : join(__dirname,"../../..");
 const backendPath = app.isPackaged ? join(process.resourcesPath,"backend-gateway-headless.exe") : join(productRoot,"server","headless_gateway.py");
@@ -253,6 +265,9 @@ function registerGatewayIpc(): void {
       // Anthropic and OpenClaw requests, plus every keyed provider, go straight
       // out through the adapter that understands their dialect.
       const direct = kind !== "openai" || !!suppliedKey;
+      // Tool definitions are forwarded, never interpreted here: the provider or
+      // the local gateway decides what the model may call.
+      const toolSpecs = Array.isArray(value.tools) ? value.tools : undefined;
       if (direct) {
         await streamProvider({
           kind,
@@ -262,6 +277,7 @@ function registerGatewayIpc(): void {
           agentId: typeof value.agentId === "string" ? value.agentId : "",
           maxTokens: typeof value.maxTokens === "number" ? value.maxTokens : 0,
           reasoningEffort: typeof value.reasoningEffort === "string" ? value.reasoningEffort : "",
+          tools: toolSpecs,
         }, messages as GatewayMessage[], controller.signal, (delta) => {
           if (!event.sender.isDestroyed()) event.sender.send(channels.delta,{requestId,delta});
         });
@@ -270,7 +286,7 @@ function registerGatewayIpc(): void {
       }
       const base = gatewayBase();
       const apiKey = suppliedKey || localApiKey();
-      const response = await fetch(gatewayUrl(base,"v1/chat/completions"), {method:"POST",signal:controller.signal,headers:{Accept:"text/event-stream","Content-Type":"application/json",Authorization:"Bearer "+apiKey},body:JSON.stringify({model,messages:messages as GatewayMessage[],stream:true,...(typeof value.reasoningEffort==="string"&&value.reasoningEffort?{reasoning_effort:value.reasoningEffort}:{})})});
+      const response = await fetch(gatewayUrl(base,"v1/chat/completions"), {method:"POST",signal:controller.signal,headers:{Accept:"text/event-stream","Content-Type":"application/json",Authorization:"Bearer "+apiKey},body:JSON.stringify({model,messages:messages as GatewayMessage[],stream:true,...(typeof value.reasoningEffort==="string"&&value.reasoningEffort?{reasoning_effort:value.reasoningEffort}:{}),...(toolSpecs?{tools:toolSpecs}:{})})});
       if (!response.ok) { const body=await response.json().catch(()=>null); throw new Error(JSON.stringify(errorPayload(response.status,body,"Gateway chat HTTP "+response.status))); }
       if (!response.body) throw new Error(JSON.stringify({status:response.status,message:"Gateway chat response has no body"}));
       reader=response.body.getReader();
@@ -299,6 +315,23 @@ function killProcessTree(child: ChildProcess): void {
 function stopAllTerminals(): void {
   for (const child of terminalProcesses.values()) killProcessTree(child);
   terminalProcesses.clear();
+  terminalJobs.clear();
+  jobCenter.stopAll();
+}
+/**
+ * Resolve the directory a command may run in. The renderer can only ever point
+ * inside the workspace it picked; anything else falls back to that root.
+ */
+function workspaceCwd(requested: string | undefined): string {
+  const asked = typeof requested === "string" && requested.trim() ? resolve(requested) : null;
+  let cwd = process.cwd();
+  if (!selectedFilesRoot) return asked ?? cwd;
+  const rootReal = realpathSyncSafe(selectedFilesRoot);
+  cwd = asked ?? rootReal;
+  const inside = relative(rootReal, realpathSyncSafe(cwd));
+  if (!inside || inside.startsWith(".." + sep) || inside === ".." || isAbsolute(inside)) cwd = rootReal;
+  try { if (!statSync(cwd).isDirectory()) cwd = rootReal; } catch { cwd = rootReal; }
+  return cwd;
 }
 function registerTerminalIpc(): void {
   ipcMain.handle("terminal:bridge", (event, action: unknown) => {
@@ -317,15 +350,7 @@ function registerTerminalIpc(): void {
     // The renderer only ever runs commands inside the workspace it picked. The
     // old code accepted any cwd from the renderer and never read the policy
     // field, so a compromised renderer could run inside any folder on the disk.
-    const requested = typeof value.cwd === "string" && value.cwd.trim() ? resolve(value.cwd) : null;
-    let cwd = process.cwd();
-    if (selectedFilesRoot) {
-      const rootReal = realpathSyncSafe(selectedFilesRoot);
-      cwd = requested ?? rootReal;
-      const inside = relative(rootReal, realpathSyncSafe(cwd));
-      if (!inside || inside.startsWith(".." + sep) || inside === ".." || isAbsolute(inside)) cwd = rootReal;
-      try { if (!statSync(cwd).isDirectory()) cwd = rootReal; } catch { cwd = rootReal; }
-    }
+    const cwd = workspaceCwd(typeof value.cwd === "string" ? value.cwd : undefined);
     // With no workspace chosen the renderer cannot pick a directory at all: the
     // command runs in the app process directory, as it always did.
 
@@ -335,14 +360,30 @@ function registerTerminalIpc(): void {
     const shellArgs = process.platform === "win32" ? ["/d", "/s", "/c", '"' + command + '"'] : ["-c", command];
     const child = spawn(shellExe, shellArgs, { cwd, windowsHide: true, windowsVerbatimArguments: process.platform === "win32", env: { ...process.env } });
     terminalProcesses.set(requestId, child);
-    const send = (stream: "stdout" | "stderr", chunk: string) => { if (!event.sender.isDestroyed()) event.sender.send(terminalChannels.output, { id: requestId, stream, text: chunk }); };
+    // The terminal panel and the Jobs page are two views of the same process.
+    const jobId = jobCenter.create({ kind: "shell", title: command, command }).id;
+    terminalJobs.set(requestId, jobId);
+    jobCenter.attachKill(jobId, () => killProcessTree(child));
+    const send = (stream: "stdout" | "stderr", chunk: string) => {
+      jobCenter.append(jobId, stream, chunk);
+      if (!event.sender.isDestroyed()) event.sender.send(terminalChannels.output, { id: requestId, stream, text: chunk });
+    };
     child.stdout?.on("data", (data: Buffer) => send("stdout", data.toString()));
     child.stderr?.on("data", (data: Buffer) => send("stderr", data.toString()));
-    child.once("error", (error: Error) => { terminalProcesses.delete(requestId); if (!event.sender.isDestroyed()) event.sender.send(terminalChannels.complete, { id: requestId, code: null, signal: null, error: { code: "spawn_failed", message: error.message } }); });
-    child.once("exit", (code: number | null) => { terminalProcesses.delete(requestId); if (!event.sender.isDestroyed()) event.sender.send(terminalChannels.complete, { id: requestId, code, signal: null }); });
+    child.once("error", (error: Error) => { terminalProcesses.delete(requestId); terminalJobs.delete(requestId); jobCenter.finish(jobId, "failed", null, error.message); if (!event.sender.isDestroyed()) event.sender.send(terminalChannels.complete, { id: requestId, code: null, signal: null, error: { code: "spawn_failed", message: error.message } }); });
+    child.once("exit", (code: number | null) => { terminalProcesses.delete(requestId); terminalJobs.delete(requestId); jobCenter.finish(jobId, code === 0 ? "done" : "failed", code); if (!event.sender.isDestroyed()) event.sender.send(terminalChannels.complete, { id: requestId, code, signal: null }); });
     return { id: requestId };
   });
-  ipcMain.on(terminalChannels.cancel, (event, requestId: unknown) => { assertSender(event); if (typeof requestId !== "string") return; const child = terminalProcesses.get(requestId); if (!child) return; killProcessTree(child); terminalProcesses.delete(requestId); });
+  ipcMain.on(terminalChannels.cancel, (event, requestId: unknown) => {
+    assertSender(event);
+    if (typeof requestId !== "string") return;
+    const child = terminalProcesses.get(requestId);
+    if (!child) return;
+    killProcessTree(child);
+    terminalProcesses.delete(requestId);
+    const jobId = terminalJobs.get(requestId);
+    if (jobId) { jobCenter.finish(jobId, "cancelled"); terminalJobs.delete(requestId); }
+  });
 }
 
 // ---------- model management ----------
@@ -398,8 +439,21 @@ function parseApprovalListResponse(payload: unknown): unknown {
   });
   return { ok: value.ok, approvals, count: approvals.length };
 }
-function parseApprovalDecisionResponse(payload: unknown): unknown {
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new Error(JSON.stringify({code:"approval_schema_error",message:"Approval decision response must be an object"})); const value=payload as Record<string,unknown>; if(typeof value.ok!=="boolean"||typeof value.id!=="string"||!value.id||value.decision!=="approved"&&value.decision!=="denied") throw new Error(JSON.stringify({code:"approval_schema_error",message:"Invalid approval decision response"})); if(value.error!==undefined&&(!value.error||typeof value.error!=="object"||Array.isArray(value.error)||typeof (value.error as Record<string,unknown>).message!=="string")) throw new Error(JSON.stringify({code:"approval_schema_error",message:"Invalid approval decision error"})); return value;
+/** Normalise the gateway's allow/deny answer into the renderer's verdict. */
+function parseApprovalDecisionResponse(payload: unknown, id: string, decision: "approved" | "denied"): unknown {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new Error(JSON.stringify({code:"approval_schema_error",message:"Approval decision response must be an object"}));
+  const value=payload as Record<string,unknown>;
+  if(typeof value.ok!=="boolean") throw new Error(JSON.stringify({code:"approval_schema_error",message:"Invalid approval decision response"}));
+  if(!value.ok && value.error === undefined) throw new Error(JSON.stringify({code:"approval_schema_error",message:"Invalid approval decision response"}));
+  if(value.error!==undefined&&(!value.error||typeof value.error!=="object"||Array.isArray(value.error)||typeof (value.error as Record<string,unknown>).message!=="string")) throw new Error(JSON.stringify({code:"approval_schema_error",message:"Invalid approval decision error"}));
+  return {
+    ok: value.ok,
+    id: typeof value.approval_id === "string" && value.approval_id ? value.approval_id : id,
+    decision,
+    executed: decision === "approved" && value.result !== undefined,
+    result: value.result,
+    ...(value.error === undefined ? {} : { error: value.error }),
+  };
 }
 async function toolsJson(path: string, init: RequestInit, keyHeader: "X-API-Key" | "X-Admin-Key", fallback: string): Promise<unknown> {
   const response=await fetch(gatewayUrl(gatewayBase(),path),{...init,signal:AbortSignal.timeout(5000),headers:{Accept:"application/json",...(init.headers as Record<string,string>||{}),[keyHeader]:keyHeader==="X-API-Key"?localApiKey():resolveAdminKey(undefined)}}); const body=await response.json().catch(()=>null); if(!response.ok) throw new Error(JSON.stringify(errorPayload(response.status,body,fallback+" HTTP "+response.status))); return body;
@@ -408,8 +462,54 @@ function registerToolsIpc(): void {
   ipcMain.handle("tools:list", async (event): Promise<ReturnType<typeof parseToolsResponse>> => { assertSender(event); const url=gatewayUrl(gatewayBase(),"api/tools"); const response=await fetch(url,{method:"GET",signal:AbortSignal.timeout(5000),headers:{Accept:"application/json","X-API-Key":localApiKey()}}); if (!response.ok) { const body=await response.json().catch(() => null); throw new Error(JSON.stringify(errorPayload(response.status,body,"Gateway tools HTTP "+response.status))); } let payload: unknown; try { payload=await response.json(); } catch { throw new Error(JSON.stringify({code:"tools_schema_error",message:"Tools response must be valid JSON"})); } return parseToolsResponse(payload); });
   ipcMain.handle("tools:call", async (event, raw: unknown) => { assertSender(event); if(!raw||typeof raw!=="object"||Array.isArray(raw)) throw new Error(JSON.stringify({code:"invalid_request",message:"Tool call request must be an object"})); const value=raw as Record<string,unknown>; if(typeof value.requestId!=="string"||!value.requestId.trim()||typeof value.tool!=="string"||!value.tool.trim()||!value.args||typeof value.args!=="object"||Array.isArray(value.args)) throw new Error(JSON.stringify({code:"invalid_request",message:"Invalid tool call request"})); const payload=await toolsJson("api/tools/call",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({request_id:value.requestId,tool:value.tool,args:value.args})},"X-API-Key","Tool call"); return parseToolCallResponse(payload); });
   ipcMain.handle("tools:pending", async (event) => { assertSender(event); return parseApprovalListResponse(await toolsJson("admin/approvals",{method:"GET"},"X-Admin-Key","Approval list")); });
-  for(const decision of ["approve","deny"] as const) ipcMain.handle("tools:"+decision, async (event, rawId: unknown) => { assertSender(event); if(typeof rawId!=="string"||!rawId.trim()||rawId.length>256||/[\/\0]/.test(rawId)) throw new Error(JSON.stringify({code:"invalid_request",message:"Invalid approval id"})); const payload=await toolsJson("admin/approvals/"+encodeURIComponent(rawId),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({decision})},"X-Admin-Key","Approval decision"); return parseApprovalDecisionResponse(payload); });
+  // The gateway decides with allow/deny and, on allow, executes the tool and
+  // returns its result. The renderer keeps saying approve/deny, so the mapping
+  // lives here instead of leaking one vocabulary into both layers.
+  for(const decision of ["approve","deny"] as const) ipcMain.handle("tools:"+decision, async (event, rawId: unknown) => {
+    assertSender(event);
+    if(typeof rawId!=="string"||!rawId.trim()||rawId.length>256||/[\/\0]/.test(rawId)) throw new Error(JSON.stringify({code:"invalid_request",message:"Invalid approval id"}));
+    const payload=await toolsJson("admin/approvals/"+encodeURIComponent(rawId),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({decision:decision==="approve"?"allow":"deny"})},"X-Admin-Key","Approval decision");
+    return parseApprovalDecisionResponse(payload, rawId, decision === "approve" ? "approved" : "denied");
+  });
 }
+// ---------- background jobs ----------
+/**
+ * Start a command that only the Jobs page watches. The terminal panel has its
+ * own start path because it needs an output stream keyed by its own id; this
+ * one exists so a job can outlive whatever page opened it.
+ */
+function registerJobsIpc(): void {
+  ipcMain.handle("jobs:list", (event) => { assertSender(event); return { ok: true, jobs: jobCenter.list() }; });
+  ipcMain.handle("jobs:start", (event, raw: unknown) => {
+    assertSender(event);
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error(JSON.stringify({ code: "invalid_request", message: "Invalid job request" }));
+    const value = raw as Record<string, unknown>;
+    const command = required(value.command, "command");
+    if (command.length > 4000 || /[\r\n]/.test(command)) throw new Error(JSON.stringify({ code: "invalid_request", message: "Invalid job command" }));
+    const cwd = workspaceCwd(typeof value.cwd === "string" ? value.cwd : undefined);
+    const title = typeof value.title === "string" && value.title.trim() ? value.title.trim().slice(0, 120) : command.slice(0, 120);
+    const shellExe = process.platform === "win32" ? (process.env.ComSpec || "cmd.exe") : "/bin/sh";
+    const shellArgs = process.platform === "win32" ? ["/d", "/s", "/c", '"' + command + '"'] : ["-c", command];
+    const job = jobCenter.create({ kind: "shell", title, command });
+    const child = spawn(shellExe, shellArgs, { cwd, windowsHide: true, windowsVerbatimArguments: process.platform === "win32", env: { ...process.env } });
+    terminalProcesses.set(job.id, child);
+    jobCenter.attachKill(job.id, () => killProcessTree(child));
+    child.stdout?.on("data", (data: Buffer) => jobCenter.append(job.id, "stdout", data.toString()));
+    child.stderr?.on("data", (data: Buffer) => jobCenter.append(job.id, "stderr", data.toString()));
+    child.once("error", (error: Error) => { terminalProcesses.delete(job.id); jobCenter.finish(job.id, "failed", null, error.message); });
+    child.once("exit", (code: number | null) => { terminalProcesses.delete(job.id); jobCenter.finish(job.id, code === 0 ? "done" : "failed", code); });
+    return { ok: true, job };
+  });
+  ipcMain.handle("jobs:stop", (event, rawId: unknown) => {
+    assertSender(event);
+    if (typeof rawId !== "string" || !rawId.trim() || rawId.length > 128) throw new Error(JSON.stringify({ code: "invalid_request", message: "Invalid job id" }));
+    const child = terminalProcesses.get(rawId);
+    if (child) { killProcessTree(child); terminalProcesses.delete(rawId); }
+    return { ok: jobCenter.stop(rawId), id: rawId };
+  });
+  ipcMain.handle("jobs:clear", (event) => { assertSender(event); jobCenter.clear(); return { ok: true }; });
+}
+
 const pluginPermissions = new Set(["fs.read", "fs.write", "net.http", "ui.toast", "tools.register", "log.write"]);
 const pluginActions = new Set(["grant", "revoke", "enable", "disable", "load", "unload", "reload", "uninstall"]);
 function registerPluginsIpc(): void {
@@ -457,6 +557,8 @@ function registerModelIpc(): void {
     const controller = new AbortController();
     const abort = () => controller.abort();
     activePulls.set(senderId, {id, controller});
+    const job = jobCenter.create({ kind: "model", title: "Pull " + name, command: "ollama pull " + name });
+    jobCenter.attachKill(job.id, abort);
     sender.once("destroyed", abort);
     app.once("before-quit", abort);
     try {
@@ -473,11 +575,15 @@ function registerModelIpc(): void {
         body: JSON.stringify({model: name, stream: true}),
       });
       await readPullStream(response, (progress) => {
+        const done = progress.completed && progress.total ? Math.round((progress.completed / progress.total) * 100) + "%" : "";
+        jobCenter.append(job.id, "log", [progress.status, done, progress.digest ? String(progress.digest).slice(0, 12) : ""].filter(Boolean).join(" ") + "\n");
         if (!sender.isDestroyed()) sender.send("models:pull-progress", id, progress);
       });
+      jobCenter.finish(job.id, "done");
       return { cancelled: false };
     } catch (reason) {
-      if (controller.signal.aborted) return { cancelled: true };
+      if (controller.signal.aborted) { jobCenter.finish(job.id, "cancelled"); return { cancelled: true }; }
+      jobCenter.finish(job.id, "failed", null, reason instanceof Error ? reason.message : String(reason));
       if (reason instanceof TypeError && reason.message === "fetch failed") throw new Error("Cannot connect to Ollama. Check that the model service is running.");
       throw reason;
     } finally {
@@ -742,7 +848,20 @@ function registerSettingsIpc(): void {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
   });
-  ipcMain.handle("gateway:restart", (event) => { assertSender(event); return gateway.restart(); });
+  ipcMain.handle("gateway:restart", async (event) => {
+    assertSender(event);
+    const job = jobCenter.create({ kind: "gateway", title: "Restart gateway" });
+    jobCenter.append(job.id, "log", "restarting…\n");
+    try {
+      const result = await gateway.restart();
+      jobCenter.append(job.id, "log", result.ready ? "ready\n" : "not ready: " + (result.error || "unknown") + "\n");
+      jobCenter.finish(job.id, result.ready ? "done" : "failed");
+      return result;
+    } catch (reason) {
+      jobCenter.finish(job.id, "failed", null, reason instanceof Error ? reason.message : String(reason));
+      throw reason;
+    }
+  });
 ipcMain.handle("app:log", async (event, message: unknown) => { assertSender(event); bootLog("renderer: " + String(message).slice(0, 400)); return true; });
   ipcMain.handle("app:bootstrap", (event) => { assertSender(event); return gateway.bootstrap(); });
 ipcMain.handle("settings:get", async (event) => { assertSender(event); return readSettings(); });
@@ -908,6 +1027,7 @@ registerCredentialsIpc();
 registerTerminalIpc();
 registerModelIpc();
 registerToolsIpc();
+registerJobsIpc();
 registerPluginsIpc();
 
 registerGatewayIpc();

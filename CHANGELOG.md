@@ -2,6 +2,24 @@
 
 Only user-visible changes are listed. Internal refactors, test scaffolding and machine-specific paths are intentionally omitted.
 
+## 1.4.0 — 2026-11-26
+
+The four capabilities the desktop shell was missing, built on the contracts already in the app rather than beside them.
+
+### Added
+
+- **Plan tab.** A fourth conversation view. Orbit publishes steps through a `todo_write` tool call and the tab renders them with live status, per-step duration and the evidence behind each step (tool calls, approvals, plan rewrites). Any step can also be marked done or skipped by hand, and the tab badge tracks `done/total`.
+- **Tool loop.** A coding turn now runs model → tool → model up to six rounds: the gateway's read-only tools (files, repository search, web fetch, calculator, clock, system info) are advertised to the model, their results are fed back, and a turn stops honestly when the model produces a final answer or the round budget runs out.
+- **Approval inbox.** A title-bar badge (and Ctrl+Shift+A) opens a drawer listing every pending request, danger first: risk level, reasons, collapsible redacted arguments, age and the gateway's 60-second expiry, batch allow/deny, plus "always allow" (persisted per tool) and "allow this session". Decisions are archived and can be reviewed later; a request that arrives while the window is in the background also raises an OS notification.
+- **Background jobs.** Long shell commands, model downloads and gateway restarts share one list (page: Jobs, Ctrl+Shift+J) with streamed output, elapsed time, an exit code and a cancel that kills the whole process tree. Terminal commands appear in both the terminal and the job list because they are the same process.
+- **Editable shortcuts.** Ctrl+/ opens a reference sheet of every global command. Settings → Shortcuts records a new combination inline, names the command that already owns a combination instead of silently stealing it, keeps Escape and Enter locked, and stores only the overrides.
+
+### Fixed
+
+- **Approving a tool call never worked.** The shell posted `approve`/`deny` while the gateway decides with `allow`/`deny`, and it parsed the reply as an `id`/`decision` pair the gateway never sends. An approval now runs the tool and returns its result, so an approved call no longer has to be repeated.
+- **English sessions sent `CODE_MODE_PROMPT` as their system prompt** — the literal i18n key, because the English dictionary is the key itself. The coding brief is now a real sentence with a Chinese translation.
+- Plan and job durations no longer render as a meaningless `0ms` when a step is measured in single-digit milliseconds.
+
 ### Design pass — neutral surfaces at 14px (2026-11-25)
 
 - All nine presets now share one neutral surface system (near-white / near-black, hairline borders, no tinted pages); the preset only changes the accent colour. Accent is reserved for primary actions, focus, the active tab and the active level badge.

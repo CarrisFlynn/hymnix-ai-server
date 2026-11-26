@@ -41,3 +41,6 @@ desktop/test-results/
 desktop/playwright-report/
 .workbuddy/
 logs/
+
+# vendored DeepSeek Harness checkout used as a reference while building 1.4.0
+DSH/

@@ -213,6 +213,8 @@ export type ProviderConfig = {
   /** Anthropic: max_tokens for the turn. */
   maxTokens?: number;
   reasoningEffort?: string;
+  /** OpenAI-compatible dialects: advertised function definitions. */
+  tools?: unknown[];
 };
 
 export type ProviderProbeResult = {
@@ -239,7 +241,19 @@ export type StreamChatInput = {
   agentId?: string;
   maxTokens?: number;
   messages: GatewayMessage[];
+  /** OpenAI-style tool definitions; the adapters forward them verbatim. */
+  tools?: ChatToolSpec[];
   onDelta: (delta: ChatDelta) => void;
+};
+
+/** One advertised function: what the model may call when a turn needs it. */
+export type ChatToolSpec = {
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+  };
 };
 
 export type GatewayApi = {
@@ -426,6 +440,9 @@ export type ApprovalDecisionResponse = {
   ok: boolean;
   id: string;
   decision: "approved" | "denied";
+  /** Set when the gateway ran the tool as part of the approval. */
+  executed?: boolean;
+  result?: unknown;
   error?: { code?: string; message: string };
 };
 
@@ -592,7 +609,38 @@ export type NetworkApi = {
   disconnect: (ip: string) => Promise<{ ok: boolean; ip?: string; error?: string }>;
 };
 
+export type JobKind = "shell" | "model" | "gateway" | "plugin" | "chat";
+export type JobStatus = "running" | "done" | "failed" | "cancelled";
+
+/** One background job as the main process tracks it. */
+export type JobView = {
+  id: string;
+  kind: JobKind;
+  title: string;
+  command?: string;
+  status: JobStatus;
+  startedAt: number;
+  finishedAt: number | null;
+  exitCode: number | null;
+  error: string;
+  output: string;
+};
+
+export type JobStartRequest = { command: string; cwd?: string; title?: string };
+
+export type JobsApi = {
+  list: () => Promise<{ ok: boolean; jobs: JobView[] }>;
+  start: (request: JobStartRequest) => Promise<{ ok: boolean; job?: JobView; error?: string }>;
+  stop: (id: string) => Promise<{ ok: boolean; id: string }>;
+  clear: () => Promise<{ ok: boolean }>;
+  /** One job changed status. */
+  onUpdate: (listener: (job: JobView) => void) => () => void;
+  /** Streamed output for one job. */
+  onData: (listener: (event: { id: string; stream: string; text: string }) => void) => () => void;
+};
+
 export type DesktopApi = {
+  jobs: JobsApi;
   gateway: GatewayApi;
   workspace: WorkspaceApi;
   files: FilesApi;
