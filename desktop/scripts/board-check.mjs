@@ -1,0 +1,21 @@
+import { _electron as electron } from "@playwright/test";
+import { resolve } from "node:path";
+const cwd = resolve(process.cwd());
+const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE;
+const app = await electron.launch({ args: ["."], cwd, env });
+const win = await app.firstWindow();
+await win.waitForFunction(() => Boolean(window.__hymnixDev), null, { timeout: 60000 });
+await win.evaluate(() => { localStorage.setItem("hymnix.welcome","1"); localStorage.setItem("hymnix.whatsNew","1.3.3"); });
+await win.reload();
+await win.waitForFunction(() => Boolean(window.__hymnixDev), null, { timeout: 60000 });
+await win.setViewportSize({ width: 1440, height: 900 });
+await win.evaluate(() => window.__hymnixDev.dismissOverlays());
+await win.waitForTimeout(1200);
+const info = await win.evaluate(() => {
+  const b = document.querySelector(".orbit-board");
+  const r = b?.getBoundingClientRect();
+  return JSON.stringify({ present: Boolean(b), w: r ? Math.round(r.width) : 0, h: r ? Math.round(r.height) : 0, tasks: document.querySelectorAll(".orbit-task").length, actions: document.querySelectorAll(".orbit-action").length });
+});
+console.log("BOARD:", info);
+await win.screenshot({ path: "C:/Users/xiaoy/Desktop/Hymnix AI 1.4.0/.board.png" });
+await app.close();

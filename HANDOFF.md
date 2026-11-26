@@ -38,11 +38,26 @@ pnpm exec electron-builder --win --x64
 | 审批链路修复 | `main.ts` `tools:approve/deny` | 发 `allow`/`deny`、回传执行结果（旧代码发的判定词网关不认，从未成功过） |
 | 英文系统提示词修复 | `main.tsx` `CODE_MODE_PROMPT` | 英文会话不再发送字面键 |
 
+布局修正（用户验收时提出的「显示不完整 / 错位」）：
+
+| 问题 | 修法 |
+|---|---|
+| 快捷键面板贴住窗口底边、看不出还能滚 | 独立的 `.sheet-backdrop`（grid 居中 + 24px 上下留白），`max-height: min(86vh, 820px)` |
+| 卡片内长列表把最后一行切一半 | 这些容器显示细滚动条（`scrollbar-width: thin` + `::-webkit-scrollbar`） |
+| 计划行右侧耗时/运行中边缘逐行漂移 | 行改成 4 列固定宽 grid（22 / 1fr / 88 / 104），meta 从按钮里移出成独立列 |
+| 任务行 0:03 与 exit 0 挤在一起 | 时间 44px、退出码 58px、停止 52px 固定宽右对齐 |
+| 快捷键行「改键」「重置」不齐 | 列宽固定 1fr / 132 / 108 / 60，按钮宽度 100% |
+| 标题栏审批徽标浮在拖拽区、点不动 | 移到窗口按钮左侧，并加 `-webkit-app-region: no-drag` |
+
 复测脚本（Playwright 启动真实 Electron）：
 
 ```powershell
 cd desktop
 node scripts/verify-1.4.mjs      # 四项 UI 端到端，输出 PLAN/JOB/SHORTCUT 等断言行
+node scripts/probe-align.mjs     # 行内列对齐测量（每类行的右边缘必须只有 1 个值）
+node scripts/probe-clip.mjs      # 900/700/640 三档高度下，弹层是否越界
+node scripts/probe-badges.mjs    # 标题栏徽标位置与可点击性
+node scripts/smoke-packaged.mjs  # 打包后的 exe 冒烟（版本/任务页/计划页）
 ```
 
 截图产物：`.verify-plan.png`、`.verify-plan-zoom.png`、`.verify-approvals.png`、`.verify-jobs.png`、`.verify-shortcuts.png`、`.verify-shortcut-editor.png`（仓库根目录，属临时验证物，可删）。
@@ -59,9 +74,9 @@ node scripts/verify-1.4.mjs      # 四项 UI 端到端，输出 PLAN/JOB/SHORTCU
 - `build/hymnix-orbit2-backend/hymnix-server-1.4.0-x64.exe`（PyInstaller，`pnpm build:backend`，读根目录 `VERSION` 命名）
 - `engine-java/build/hymnix-engine.jar`、`cloudflared.exe`、`server/assets/hymnix-red-white-star.ico`
 - 产物落在 `..\release\`（本轮已出，未签名）：
-  - `Hymnix-Orbit-1.4.0-Setup.exe` — 168,162,430 B · `07e7f707…34d7319`
-  - `Hymnix-Orbit-1.4.0-Portable.exe` — 155,282,294 B · `c6b11890…e5e7ac45`
-  - `Hymnix-Orbit-1.4.0-Setup.exe.blockmap` — 177,054 B
+  - `Hymnix-Orbit-1.4.0-Setup.exe` — 168,162,471 B · `83ae88c7…5214ae0`
+  - `Hymnix-Orbit-1.4.0-Portable.exe` — 155,276,141 B · `d0eec152…178a7f1`
+  - `Hymnix-Orbit-1.4.0-Setup.exe.blockmap` — 177,100 B
   - 校验：`release/SHA256SUMS.txt`
 - 打包后的 exe 已冒烟验证（`desktop/scripts/smoke-packaged.mjs`）：版本 1.4.0、导航有「任务」、对话有「计划」页。
 
@@ -69,10 +84,11 @@ node scripts/verify-1.4.mjs      # 四项 UI 端到端，输出 PLAN/JOB/SHORTCU
 
 1. **不要"只调样式"**：550C 皮肤插件的原则是 *只覆盖令牌、不重画盒子*。布局崩过多次都是因为叠加式覆盖 CSS。新样式加在文件末尾并写明作用域（1.4.0 的四个卡片就是这么加的）。
 2. **主题不换**：Orbit 与 Hymnix 的差异靠功能（任务、运行、证据、工作台），不靠配色。
-3. **所有 `t()` 字符串必须有中文**，否则 `tests/components.test.mjs` 直接失败。扫描器已升级：三元分支里的文案也算（`t(a ? "Always allow" : "Always allowed")`），比较用的字面量（`"danger"`）不算。
-4. **窗口尺寸断言**：`tests/protocol.test.mjs` 要求 `Math.min(1294` / `Math.min(830` 与 `minWidth: 800, minHeight: 560`。
-5. **不要恢复 `renderApprovals()` 页面**：`protocol.test.mjs` 明确要求 Approvals 页保持移除，审批走抽屉。
-6. 空状态不要放"占位符"文案，用户明确反感。
+3. **多列表行必须用固定列宽的 grid**：每一行各自成 grid 时，列宽由该行内容决定，右边缘就会一行一个样（1.4.0 被打回两次就是这个问题）。测量方式见 `probe-align.mjs`：每类行的右边缘应该只有一个值。
+4. **所有 `t()` 字符串必须有中文**，否则 `tests/components.test.mjs` 直接失败。扫描器已升级：三元分支里的文案也算（`t(a ? "Always allow" : "Always allowed")`），比较用的字面量（`"danger"`）不算。
+5. **窗口尺寸断言**：`tests/protocol.test.mjs` 要求 `Math.min(1294` / `Math.min(830` 与 `minWidth: 800, minHeight: 560`。
+6. **不要恢复 `renderApprovals()` 页面**：`protocol.test.mjs` 明确要求 Approvals 页保持移除，审批走抽屉。
+7. 空状态不要放"占位符"文案，用户明确反感。
 
 ## 7. 版本与发布
 

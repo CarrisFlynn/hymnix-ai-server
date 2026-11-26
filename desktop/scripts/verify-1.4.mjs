@@ -7,7 +7,9 @@ delete env.ELECTRON_RUN_AS_NODE;
 const out = [];
 const say = (...parts) => { const line = parts.join(" "); out.push(line); console.log(line); };
 
-const app = await electron.launch({ args: ["."], cwd, env });
+// Isolated profile: a user-launched installed copy holds the single-instance
+// lock, and verification must never steal their window.
+const app = await electron.launch({ args: ["--user-data-dir=C:\\Users\\xiaoy\\AppData\\Local\\Temp\\hymnix-verify-profile", "."], cwd, env });
 const win = await app.firstWindow();
 await win.waitForFunction(() => Boolean(window.__hymnixDev), null, { timeout: 60000 });
 await win.evaluate(() => {

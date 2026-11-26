@@ -2292,12 +2292,12 @@ function App() {
                   <button type="button" className="plan-intent" onClick={() => setOpenStepId(openStepId === step.id ? null : step.id)} aria-expanded={openStepId === step.id}>
                     <span className="plan-dot" data-status={step.status} aria-label={t(planStatusText(step.status))} />
                     <span className="plan-text">{step.intent}</span>
-                    <span className="plan-meta">
-                      {step.status === "running" && <em>{t("Running")}</em>}
-                      {step.finishedAt != null && (planStepDuration(step) || 0) >= 10 ? <small className="mono">{formatPlanDuration(planStepDuration(step) || 0)}</small> : null}
-                      {step.evidenceIds.length > 0 && <small className="plan-evidence-count">{step.evidenceIds.length} {t("evidence")}</small>}
-                    </span>
                   </button>
+                  <span className="plan-meta">
+                    {step.status === "running" && <em>{t("Running")}</em>}
+                    {step.finishedAt != null && (planStepDuration(step) || 0) >= 10 ? <small className="mono">{formatPlanDuration(planStepDuration(step) || 0)}</small> : null}
+                    {step.evidenceIds.length > 0 && <small className="plan-evidence-count">{step.evidenceIds.length} {t("evidence")}</small>}
+                  </span>
                   <span className="plan-step-actions">
                     {step.status !== "done" && <button type="button" className="btn ghost" onClick={() => updateStep(step.id, "done")}>{t("Done")}</button>}
                     {step.status !== "skipped" && step.status !== "done" && <button type="button" className="btn ghost" onClick={() => updateStep(step.id, "skipped")}>{t("Skip")}</button>}
@@ -3282,7 +3282,7 @@ function App() {
         <footer className="drawer-foot">{t("A request expires after 60 seconds; stale rows disappear on the next refresh.")}</footer>
       </aside>
     </div>}
-    {shortcutsOpen && <div className="palette-backdrop" onClick={() => setShortcutsOpen(false)}>
+    {shortcutsOpen && <div className="sheet-backdrop" onClick={() => setShortcutsOpen(false)}>
       <div className="shortcuts-sheet" role="dialog" aria-modal="true" aria-label={t("Keyboard shortcuts")} onClick={(event) => event.stopPropagation()}>
         <header className="shortcuts-sheet-head"><div><h2>{t("Keyboard shortcuts")}</h2><p>{t("Every global command, and what it is bound to now.")}</p></div><button type="button" className="btn ghost" onClick={() => setShortcutsOpen(false)} aria-label={t("Close")}>✕</button></header>
         <div className="shortcuts-sheet-body">
@@ -3306,6 +3306,7 @@ function App() {
           <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="3.5" width="15" height="13" rx="3" /><path d="M8 3.5v13" /></svg>
         </button>
       </div>
+      <div className="titlebar-drag" />
       {(approvals.length > 0 || runningJobs > 0) && <div className="tb-badges">
         {approvals.length > 0 && <button type="button" className="head-badge alert" onClick={() => { setApprovalsOpen(true); setApprovalsTab("pending"); void refreshApprovals(); }} aria-label={tf("{count} pending approvals", { count: String(approvals.length) })} title={t("Approvals")}>
           <Icon name="Approvals" /><span>{approvals.length}</span>
@@ -3314,7 +3315,6 @@ function App() {
           <span className="badge-dot" aria-hidden="true" /><span>{runningJobs}</span>
         </button>}
       </div>}
-      <div className="titlebar-drag" />
       <div className="tb-window">
         {previewOpen && <button type="button" className="preview-close" onClick={() => void closePreview()}>{t("Close preview")}</button>}
         <button type="button" onClick={() => void window.hymnix.window.control("minimize")} aria-label={t("Minimize")}>–</button>

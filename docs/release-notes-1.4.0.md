@@ -16,6 +16,10 @@
 **可改快捷键**
 Ctrl+/ 打开全部全局命令的参考表。设置 → 快捷键 可以就地录制新组合；重复的组合会告诉你已经被哪条命令占用；Escape 与 Enter 保持锁定；只保存改动。
 
+**布局修正**
+- 计划、任务、快捷键的行改成固定列宽，耗时与按钮的右边缘逐行对齐。
+- 快捷键面板居中显示并留出等距边距；可滚动列表显示细滚动条，不再切掉半行。
+
 **修复**
 - 桌面端审批此前从未真正生效：发出的判定词和网关期望的不一致，返回体也按另一种形状解析。现在「允许」会直接执行工具并带回结果。
 - 英文界面会把 `CODE_MODE_PROMPT` 这个字面键当成系统提示词发出去，现在是真正的英文提示词，并配了中文翻译。
@@ -35,6 +39,10 @@ Long commands, model downloads and gateway restarts share one Jobs page: streame
 
 **Editable shortcuts**
 Ctrl+/ opens a reference sheet of every global command. Settings → Shortcuts records a new combination inline; a duplicate names the command that already owns it; Escape and Enter stay locked; only the changes are stored.
+
+**Layout**
+- Plan, job and shortcut rows share fixed column widths, so durations and buttons line up down the list.
+- The shortcut sheet is centred with equal margins, and scrollable lists show a thin scrollbar instead of slicing the last row.
 
 **Fixes**
 - Approving a tool call from the desktop never worked: the shell sent a different verdict word than the gateway accepts and parsed its reply as another shape. "Allow" now runs the tool and returns its result.

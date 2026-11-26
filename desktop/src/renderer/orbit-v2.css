@@ -1881,8 +1881,9 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 .head-badge.live .badge-dot { background: var(--success); animation: orbit-pulse 1.4s var(--ease-standard) infinite; }
 @keyframes orbit-alert { 50% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent); } }
 
-.tb-badges { display: flex; align-items: center; gap: 6px; padding: 0 8px; }
+.tb-badges { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; padding: 0 10px 0 4px; -webkit-app-region: no-drag; }
 .tb-badges .head-badge { height: 22px; padding: 0 7px; }
+.tb-badges + .tb-window { margin-left: 2px; }
 
 /* ---- tool loop banner ---------------------------------------------------- */
 .loop-banner { display: flex; align-items: center; gap: 8px; margin: 0 auto 8px; width: min(760px, 100%); padding: 7px 10px; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--sunken); color: var(--muted); font-size: calc(12px * var(--text-scale, 1)); }
@@ -1900,7 +1901,7 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 .plan-progress { height: 4px; border-radius: 999px; background: var(--highlight); overflow: hidden; }
 .plan-progress i { display: block; height: 100%; border-radius: inherit; background: var(--accent-fill); transition: width var(--dur-panel) var(--ease-standard); }
 .plan-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
-.plan-step { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 6px 6px; border-radius: 8px; }
+.plan-step { display: grid; grid-template-columns: 22px minmax(0, 1fr) 88px 104px; align-items: center; gap: 8px; padding: 6px 6px; border-radius: 8px; }
 .plan-step:hover { background: var(--highlight); }
 .plan-step[data-status="running"] { background: var(--accent-soft); }
 .plan-index { color: var(--faint); font-family: var(--font-mono); font-size: calc(11px * var(--text-scale, 1)); text-align: right; }
@@ -1913,10 +1914,10 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 .plan-dot[data-status="done"] { border-color: var(--success); background: var(--success); }
 .plan-dot[data-status="failed"] { border-color: var(--danger); background: var(--danger); }
 .plan-dot[data-status="skipped"] { border-color: var(--faint); background: var(--highlight); }
-.plan-meta { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; color: var(--faint); font-size: calc(11px * var(--text-scale, 1)); }
+.plan-meta { display: flex; align-items: center; justify-content: flex-end; gap: 8px; min-width: 0; color: var(--faint); font-size: calc(11px * var(--text-scale, 1)); white-space: nowrap; }
 .plan-meta em { color: var(--accent-text); font-style: normal; font-weight: var(--fw-medium); }
 .plan-evidence-count { color: var(--muted); }
-.plan-step-actions { display: inline-flex; gap: 2px; opacity: 0; transition: opacity var(--dur-hover) var(--ease-standard); }
+.plan-step-actions { display: flex; align-items: center; justify-content: flex-end; gap: 2px; opacity: 0; transition: opacity var(--dur-hover) var(--ease-standard); }
 .plan-step:hover .plan-step-actions, .plan-step:focus-within .plan-step-actions { opacity: 1; }
 .plan-step-actions .btn { height: 24px; padding: 0 8px; font-size: calc(11px * var(--text-scale, 1)); }
 .plan-step-detail { grid-column: 2 / -1; padding: 6px 0 4px; }
@@ -1931,6 +1932,13 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 .evidence-time { margin-left: auto; color: var(--faint); font-family: var(--font-mono); font-size: calc(10.5px * var(--text-scale, 1)); }
 .plan-evidence li[data-status="error"], .evidence-list li[data-status="error"] { color: var(--danger); }
 .plan-evidence li[data-status="denied"], .evidence-list li[data-status="denied"] { color: var(--warning); }
+
+/* Long lists inside cards: an always-visible thin scrollbar. Without it the
+   last row is simply sliced by the card edge and reads as a layout bug. */
+.job-rows, .approval-rows, .shortcuts-sheet-body, .job-output { scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; scrollbar-gutter: stable; }
+.job-rows::-webkit-scrollbar, .approval-rows::-webkit-scrollbar, .shortcuts-sheet-body::-webkit-scrollbar, .job-output::-webkit-scrollbar { width: 9px; }
+.job-rows::-webkit-scrollbar-track, .approval-rows::-webkit-scrollbar-track, .shortcuts-sheet-body::-webkit-scrollbar-track, .job-output::-webkit-scrollbar-track { background: transparent; }
+.job-rows::-webkit-scrollbar-thumb, .approval-rows::-webkit-scrollbar-thumb, .shortcuts-sheet-body::-webkit-scrollbar-thumb, .job-output::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: 6px; background: var(--border-strong); background-clip: content-box; }
 
 /* ---- approvals drawer ---------------------------------------------------- */
 .drawer-backdrop { position: fixed; inset: 0; z-index: var(--z-dialog); display: flex; justify-content: flex-end; background: color-mix(in srgb, var(--bg) 42%, transparent); backdrop-filter: blur(2px); animation: orbit-fade var(--dur-panel) var(--ease-standard); }
@@ -1970,6 +1978,7 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 .verdict.denied { background: var(--danger-soft); color: var(--danger); }
 
 /* ---- shortcut reference sheet ------------------------------------------- */
+.sheet-backdrop { position: fixed; inset: 0; z-index: var(--z-dialog); display: grid; place-items: center; padding: 24px; background: color-mix(in srgb, var(--text) 22%, transparent); backdrop-filter: blur(2px); }
 .shortcuts-sheet { display: flex; flex-direction: column; width: min(620px, 92vw); max-height: 82vh; margin: auto; overflow: hidden; border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--surface); box-shadow: 0 24px 70px color-mix(in srgb, var(--bg) 65%, transparent); }
 .shortcuts-sheet-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s-3); padding: var(--s-4); border-bottom: 1px solid var(--border); }
 .shortcuts-sheet-head h2 { margin: 0; font-size: var(--fs-emphasis); }
@@ -1985,9 +1994,11 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 /* ---- shortcut editor in settings ---------------------------------------- */
 .shortcut-edit-group { margin: 10px 0 2px; }
 .shortcut-edit-heading { margin: 0 0 4px; color: var(--faint); font-size: calc(10.5px * var(--text-scale, 1)); font-weight: var(--fw-medium); letter-spacing: .1em; text-transform: uppercase; }
-.shortcut-edit-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; align-items: center; gap: var(--s-2); padding: 6px 0; border-bottom: 1px solid var(--border); }
+.shortcut-edit-row { display: grid; grid-template-columns: minmax(0, 1fr) 132px 108px 60px; align-items: center; gap: var(--s-2); padding: 6px 0; border-bottom: 1px solid var(--border); }
 .shortcut-edit-label { font-size: calc(12.5px * var(--text-scale, 1)); }
-.shortcut-edit-row .btn { height: 26px; padding: 0 10px; font-size: calc(11px * var(--text-scale, 1)); }
+.shortcut-edit-row .shortcut-keys { justify-content: flex-end; }
+.shortcut-edit-row .chip { justify-self: end; }
+.shortcut-edit-row .btn { width: 100%; height: 26px; padding: 0 6px; font-size: calc(11px * var(--text-scale, 1)); }
 .shortcut-edit-foot { display: flex; align-items: center; gap: var(--s-3); margin-top: var(--s-3); }
 
 /* ---- jobs ---------------------------------------------------------------- */
@@ -2011,9 +2022,9 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 .job-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .job-text strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: calc(12.5px * var(--text-scale, 1)); font-weight: var(--fw-medium); }
 .job-text small { color: var(--faint); font-size: calc(10.5px * var(--text-scale, 1)); }
-.job-time { margin-left: auto; color: var(--muted); font-size: calc(11px * var(--text-scale, 1)); font-variant-numeric: tabular-nums; }
-.job-stop { height: 24px; padding: 0 8px; font-size: calc(11px * var(--text-scale, 1)); }
-.job-exit { padding-right: 8px; color: var(--faint); font-size: calc(10.5px * var(--text-scale, 1)); }
+.job-time { margin-left: auto; width: 44px; color: var(--muted); font-size: calc(11px * var(--text-scale, 1)); font-variant-numeric: tabular-nums; text-align: right; }
+.job-stop { width: 52px; height: 24px; padding: 0; font-size: calc(11px * var(--text-scale, 1)); }
+.job-exit { width: 58px; padding-right: 8px; color: var(--faint); font-size: calc(10.5px * var(--text-scale, 1)); text-align: right; }
 .job-detail-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s-3); padding: 10px 12px; border-bottom: 1px solid var(--border); }
 .job-detail-head > div:first-child { flex: 1 1 auto; min-width: 0; }
 .job-detail-head .card-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

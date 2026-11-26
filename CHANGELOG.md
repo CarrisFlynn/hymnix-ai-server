@@ -18,6 +18,8 @@ The four capabilities the desktop shell was missing, built on the contracts alre
 
 - **Approving a tool call never worked.** The shell posted `approve`/`deny` while the gateway decides with `allow`/`deny`, and it parsed the reply as an `id`/`decision` pair the gateway never sends. An approval now runs the tool and returns its result, so an approved call no longer has to be repeated.
 - **English sessions sent `CODE_MODE_PROMPT` as their system prompt** — the literal i18n key, because the English dictionary is the key itself. The coding brief is now a real sentence with a Chinese translation.
+- Plan, job and shortcut rows now share fixed column widths, so the duration, exit code and button edges line up down the list instead of drifting with each row's content.
+- The shortcut sheet sits in its own scrim with equal margins, and scrollable lists inside cards show a thin scrollbar instead of slicing the last row.
 - Plan and job durations no longer render as a meaningless `0ms` when a step is measured in single-digit milliseconds.
 
 ### Design pass — neutral surfaces at 14px (2026-11-25)
