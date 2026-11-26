@@ -524,7 +524,14 @@ function parseToolCallResponse(payload: unknown): unknown {
     return raw;
   };
   const error = normalizeError(value.error);
-  return error === undefined ? { ...value, error: undefined } : { ...value, error };
+  // The gateway calls the pending record `approval`; the renderer asks for
+  // `approval_required`. Without this mapping every tool call looked like a
+  // failure and the model retried until the round budget ran out.
+  const pending = value.approval_required ?? value.approval;
+  const normalized = pending && typeof pending === "object" && !Array.isArray(pending)
+    ? { ...value, approval_required: pending, error: error ?? { code: "approval_required", message: "approval_required" } }
+    : { ...value, error };
+  return normalized;
 }
 function parseApprovalListResponse(payload: unknown): unknown {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new Error(JSON.stringify({code:"approval_schema_error",message:"Approval response must be an object"}));

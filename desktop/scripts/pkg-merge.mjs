@@ -1,0 +1,20 @@
+import { _electron as electron } from "@playwright/test";
+import { resolve } from "node:path";
+const cwd = resolve(process.cwd());
+const env = { ...process.env };
+delete env.ELECTRON_RUN_AS_NODE;
+const app = await electron.launch({ executablePath: resolve(cwd, "../release/win-unpacked/Hymnix Orbit.exe"), args: ["--user-data-dir=C:\\Users\\xiaoy\\AppData\\Local\\Temp\\hymnix-pkg-merge"], cwd, env });
+const win = await app.firstWindow();
+await win.waitForFunction(() => Boolean(window.__hymnixDev), null, { timeout: 90000 });
+await win.evaluate(() => { localStorage.setItem("hymnix.welcome","1"); localStorage.setItem("hymnix.whatsNew","1.4.0"); localStorage.setItem("hymnix.lang","zh"); });
+await win.reload();
+await win.waitForFunction(() => Boolean(window.__hymnixDev), null, { timeout: 90000 });
+await win.setViewportSize({ width: 1440, height: 900 });
+await win.evaluate(() => window.__hymnixDev.dismissOverlays());
+for (let i = 0; i < 60; i += 1) { const boot = await win.evaluate(() => window.hymnix.bootstrap()); if (boot.ready) break; await win.waitForTimeout(500); }
+const nav = await win.evaluate(() => [...document.querySelectorAll(".nav-item, .side-nav button")].map((el) => el.textContent?.trim()).filter(Boolean));
+await win.evaluate(() => window.__hymnixDev.navigate("Gateway"));
+await win.waitForTimeout(1200);
+const share = await win.evaluate(() => ({ headings: [...document.querySelectorAll(".view-page h2")].map((el) => el.textContent?.trim()), cards: [...document.querySelectorAll(".view-page .card-title, .view-page h3")].map((el) => el.textContent?.trim()).filter(Boolean) }));
+console.log("PKG_MERGE " + JSON.stringify({ version: await win.evaluate(() => window.__hymnixDev.version), nav, share }));
+await app.close();
