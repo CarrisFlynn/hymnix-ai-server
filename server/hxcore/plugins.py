@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
-import ast, builtins, hashlib, json, os, re, shutil, sys, time, traceback, threading
+import ast
+import inspect, builtins, hashlib, json, os, re, shutil, sys, time, traceback, threading
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 if __name__ == "__main__":
     import sys
@@ -22,6 +23,16 @@ _TIMEOUT=float(os.environ.get("HX_PLUGIN_TIMEOUT", "3"))
 # Module handles reachable through an allowlisted module would hand back the real
 # os/sys objects: random._os is os, so one attribute access escaped the sandbox.
 _MODULE_ATTRS={"_os","_sys","os","sys","_io","io","_builtins","builtins","_warnings","_imp","_thread","_signal","_ctypes","ctypes","_collections_abc","_frozen_importlib","_frozen_importlib_external","importlib","posixpath","ntpath","subprocess","_random","_socket"}
+def _call_handler(handler, args):
+    """Call a plugin handler with args when it accepts one, without args otherwise."""
+    try:
+        if len(inspect.signature(handler).parameters) >= 1:
+            return handler(args)
+    except (TypeError, ValueError):
+        pass
+    return handler()
+
+
 _FORBIDDEN_ATTRS={"__class__","__base__","__bases__","__subclasses__","__mro__","__globals__","__builtins__","__code__","__closure__","__dict__","__getattribute__","__import__","__loader__","__spec__","__reduce__","__reduce_ex__",
  # Exception and frame introspection: an exception raised by the host used to
  # hand a plugin the host's __builtins__ through tb_frame.f_globals.
@@ -72,7 +83,7 @@ def _examples(root):
     data={"hello-world":({"schema_version":1,"id":"hello-world","name":"Hello World","version":"1.0.0","author":"Hymnix","apiVersion":"1","entry":"main.py","capabilities":["hook"],"permissions": ["ui.toast"],"description":"A minimal greeting plugin."},"""def on_load(api):
     api["toast"]("Hello from Hymnix")
 """),"clock-tools":({"schema_version":1,"id":"clock-tools","name":"Clock Tools","version":"1.0.0","author":"Hymnix","apiVersion":"1","entry":"main.py","capabilities":["tool"],"permissions": ["tools.register"],"description":"Registers a world clock tool."},"""def on_load(api):
-    api["register_tool"]("world_clock", lambda: {"utc": "available through host adapter"})
+    api["register_tool"]("world_clock", lambda args: {"utc": "available through host adapter"})
 """ )}
     state_path=os.path.join(root,"state.json")
     state=read_json(state_path,{})
@@ -291,7 +302,7 @@ def load(pid):
             if not isinstance(name,str) or not re.fullmatch(r"[a-zA-Z0-9_-]+",name) or not callable(handler):raise ValueError("invalid plugin tool")
             from hxcore import tools
             full_name=pid+"."+name
-            if not tools.register(full_name,"Plugin tool "+full_name,{"type":"object","properties":{}},lambda args:handler(args)):raise RuntimeError("tool registration failed")
+            if not tools.register(full_name,"Plugin tool "+full_name,{"type":"object","properties":{}},lambda args:_call_handler(handler, args)):raise RuntimeError("tool registration failed")
             registrations.append(full_name)
             return full_name
         def register_command(name,handler):

@@ -1,5 +1,9 @@
 {
   "poc-traceback": [
     "fs.write"
+  ],
+  "clock-tools": [
+    "fs.read",
+    "tools.register"
   ]
 }

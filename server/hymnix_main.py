@@ -2403,6 +2403,15 @@ class Theme:
         window.after(max(10, int(duration / steps)), step)
 
 
+def _sha256_file(path):
+    """SHA-256 of a whole file, streamed so a large binary stays out of memory."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
 class HuimengAIClient:
     def __init__(self, root):
         try:
@@ -7231,6 +7240,7 @@ class HuimengAIClient:
             HOST["tunnel_state"] = "off"
             self.queue_message("system", T("🌐 公网隧道未分配（需要时点上方「启动隧道」按钮，避免频繁申请被限流）", "🌐 Public tunnel not allocated (click Start tunnel when needed)."))
 
+
     def _download_cloudflared(self):
         """Download cloudflared only when its SHA-256 is pinned."""
         expected = str(self.config.get("cloudflared_sha256") or os.environ.get("HYMNIX_CLOUDFLARED_SHA256") or "").strip().lower()
@@ -7248,7 +7258,12 @@ class HuimengAIClient:
             name = _hxarch.cloudflared_binary_name()
             dest = os.path.join(dest_dir, name)
             if os.path.isfile(dest) and os.path.getsize(dest) >= _CF_MIN_BYTES:
-                return dest
+                if _sha256_file(dest) == expected:
+                    return dest
+                try:
+                    os.remove(dest)
+                except OSError:
+                    return None
             asset = _hxarch.cloudflared_asset()
             if not asset.get("ok"):
                 self.queue_message("system", "⚠️ 当前平台不支持自动下载 cloudflared：%s" % asset.get("error", "未知平台"))
@@ -7272,7 +7287,8 @@ class HuimengAIClient:
                 raise ValueError("下载文件过小，可能不是 cloudflared")
             with open(part, "rb") as fh:
                 head = fh.read(4096)
-            digest = hashlib.sha256(head).hexdigest()
+            # The configured value is the hash of the whole file, so hash the file.
+            digest = _sha256_file(part)
             if digest.lower() != expected:
                 self.queue_message("system", "cloudflared 校验失败：SHA-256 与配置不符，已放弃")
                 return None

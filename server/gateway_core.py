@@ -1236,18 +1236,25 @@ class Capture:
 def normalized_path(path):
     """Decode and normalise a request path before any prefix decision.
 
-    Raw-path matching was bypassable: /api/%70ull reaches the same upstream
-    endpoint as /api/pull once Ollama decodes it, and /api//pull normalises to
-    it as well.
+    Decoding repeats: one unquote turns /api/%2570ull into /api/%70ull, which the
+    upstream would decode again. Leading slashes collapse because normpath keeps
+    "//" intact, and the result is what gets forwarded, so the check and the
+    upstream request can never disagree.
     """
-    try:
-        decoded = urllib.parse.unquote(str(path or ""))
-    except Exception:
-        decoded = str(path or "")
-    decoded = posixpath.normpath(decoded)
-    if not decoded.startswith("/"):
-        decoded = "/" + decoded
-    return decoded
+    text = str(path or "")
+    for _ in range(4):
+        try:
+            decoded = urllib.parse.unquote(text)
+        except Exception:
+            break
+        if decoded == text:
+            break
+        text = decoded
+    text = "/" + text.lstrip("/")
+    text = posixpath.normpath(text)
+    if not text.startswith("/"):
+        text = "/" + text
+    return text
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -1821,6 +1828,19 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(200, tunnel_status())
 
     def do_OPTIONS(self):
+        # Preflights never carry a body. Anything with one is either broken or an
+        # attempt to smuggle a second request onto the same keep-alive connection.
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        if length > 0 or self.headers.get("Transfer-Encoding") is not None:
+            self.close_connection = True
+            try:
+                self._json(400, {"ok": False, "error": "body_not_allowed_on_options"})
+            except Exception:
+                pass
+            return
         self.send_response(204)
         origin = self._cors_origin()
         if origin:
@@ -2974,6 +2994,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _proxy(self, method, path, query):
         safe_path = normalized_path(path)
+        path = safe_path
         if any(safe_path == prefix or safe_path.startswith(prefix + "/") for prefix in self.PROXY_BLOCKED_PREFIXES):
             return self._json(403, {"ok": False, "error": {"code": "admin_only", "message": "model management requires the admin key"}})
         ban = banned(self._ip())

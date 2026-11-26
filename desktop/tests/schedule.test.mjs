@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { nextOccurrence, normalizeRule, describeRule, isValidRule, msUntilNext } from "../src/shared/schedule.ts";
+import { advanceOccurrence, nextOccurrence, normalizeRule, describeRule, isValidRule, msUntilNext } from "../src/shared/schedule.ts";
 
 const local = (y, m, d, hh, mm) => new Date(y, m - 1, d, hh, mm, 0, 0).getTime();
 
@@ -34,4 +34,20 @@ test("describeRule and countdowns agree with the schedule", () => {
   assert.deepEqual(describeRule({ kind: "daily", time: "09:00" }), { kind: "daily", parts: ["09:00"] });
   const base = local(2026, 11, 26, 9, 0);
   assert.equal(msUntilNext({ kind: "daily", time: "10:00" }, base), 3600000);
+});
+
+test("advance keeps the cadence instead of drifting with the tick", () => {
+  // A 60 s task scheduled at 0 fires 20 s late; the next slot stays on the grid.
+  assert.equal(advanceOccurrence({ kind: "every", seconds: 60 }, 0, 20000), 60000);
+  // Daily at 09:00 that fired at 09:00:20 must still be tomorrow at 09:00, not a day later.
+  const fired = local(2026, 11, 26, 9, 0, 20);
+  const next = advanceOccurrence({ kind: "daily", time: "09:00" }, local(2026, 11, 26, 9, 0), fired);
+  assert.equal(new Date(next).toDateString(), new Date(local(2026, 11, 27, 9, 0)).toDateString());
+  assert.equal(new Date(next).getHours(), 9);
+});
+
+test("advance skips a long outage to the next slot after now", () => {
+  const now = local(2026, 11, 26, 12, 0);
+  const next = advanceOccurrence({ kind: "daily", time: "09:00" }, local(2026, 11, 10, 9, 0), now);
+  assert.equal(new Date(next).toDateString(), new Date(local(2026, 11, 27, 9, 0)).toDateString());
 });

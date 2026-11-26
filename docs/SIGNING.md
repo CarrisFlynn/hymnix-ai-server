@@ -4,7 +4,7 @@
 
 已经打通签名流水线（electron-builder + 自带 signtool）：
 
-- 主程序 `Hymnix Orbit.exe` 与安装包都已签名
+- 主程序 `Hymnix Orbit.exe` 与安装包都未签名
 - 证书是**自签名**：`CN=Hymnix Orbit (Self-Signed)`
 - `Get-AuthenticodeSignature` 结果：`UnknownError`（"证书链终止于不受信任的根"）——这是自签名的正常结果，不是失败
 
@@ -56,6 +56,6 @@ Import-Certificate -FilePath "certs\hymnix-orbit-selfsigned.cer" -CertStoreLocat
 
 ## 结论
 
-- 现在：签名流程已就绪，产物已签名（自签名），可内测
+- 现在：签名流程已就绪，产物尚未签名，可内测
 - 公开分发前：优先 SignPath（免费），其次 Azure Trusted Signing（便宜），最后商业证书
 - 任何一条路线落地后，只需替换 `CSC_LINK`/`CSC_KEY_PASSWORD`（或 Azure 参数），构建命令不变

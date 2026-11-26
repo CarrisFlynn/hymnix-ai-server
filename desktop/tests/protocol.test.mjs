@@ -109,7 +109,7 @@ const pluginsSource = read("../../server/hxcore/plugins.py");
 for (const attr of ["__traceback__", "tb_frame", "f_globals", "f_locals", "f_code", "gi_frame"]) {
   assert.ok(pluginsSource.includes('"' + attr + '"'), "plugin sandbox must reject " + attr);
 }
-assert.ok(pluginsSource.includes("lambda args:handler(args)"), "plugin tools must receive their arguments");
+assert.ok(pluginsSource.includes("_call_handler(handler, args)"), "plugin tools must receive their arguments (tolerating zero-arg handlers)");
 const gatewayCode = read("../../server/gateway_core.py");
 assert.ok(gatewayCode.includes("def normalized_path("), "proxied paths must be decoded before matching");
 assert.ok(/safe_path = normalized_path\(path\)/.test(gatewayCode), "the blocked-prefix check must use the normalised path");
@@ -152,4 +152,8 @@ assert.ok(main.includes("automation.stop()"), "the scheduler must stop on quit")
 assert.ok(preload.includes("automation: {"), "the preload bridge must expose automation");
 assert.ok(read("../src/shared/schedule.ts").includes("frequency_too_high"), "rules are validated before scheduling");
 
+assert.ok(read("../../server/gateway_core.py").includes("body_not_allowed_on_options"), "OPTIONS with a body must be rejected");
+assert.ok(!renderer.includes("translateDom("), "no DOM rewriting may remain in the renderer");
+assert.ok(renderer.includes("sendRef.current(task.prompt)"), "scheduled tasks must reach the live send");
+assert.ok(renderer.includes("writeAlwaysAllow(row.tool); void decideApproval(row.id"), "always-allow must also decide the pending request");
 console.log("PASS: secure shell protocol/static contract");

@@ -11,11 +11,13 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { AutomationTask, ScheduleRule } from "../shared/protocol";
-import { nextOccurrence, normalizeRule } from "../shared/schedule";
+import { advanceOccurrence, nextOccurrence, normalizeRule } from "../shared/schedule";
 
 const MAX_TASKS = 50;
 const TICK_MS = 20_000;
 const MAX_TITLE = 120;
+/** A one-off more than five years out is almost certainly a mistake in the input. */
+const MAX_AHEAD_MS = 5 * 365 * 24 * 60 * 60 * 1000;
 const MAX_PROMPT = 4000;
 
 type Deliver = (task: AutomationTask) => boolean;
@@ -72,6 +74,7 @@ export class AutomationCenter {
     const now = this.clock();
     const next = nextOccurrence(rule, now);
     if (next == null) return { ok: false, error: "not_future" };
+    if (rule.kind === "at" && rule.at - now > MAX_AHEAD_MS) return { ok: false, error: "too_far" };
     if (this.tasks.length >= MAX_TASKS) return { ok: false, error: "too_many_tasks" };
     const task: AutomationTask = { id: randomUUID().slice(0, 8), title, prompt, rule, enabled: true, createdAt: now, nextAt: next, lastAt: null };
     this.tasks.push(task);
@@ -99,6 +102,7 @@ export class AutomationCenter {
       task.rule = normalized.rule;
       const next = nextOccurrence(task.rule, this.clock());
       if (next == null) return { ok: false, error: "not_future" };
+      if (task.rule.kind === "at" && task.rule.at - this.clock() > MAX_AHEAD_MS) return { ok: false, error: "too_far" };
       task.nextAt = next;
     }
     if (patch.enabled !== undefined) {
@@ -148,8 +152,15 @@ export class AutomationCenter {
     for (const task of this.tasks) {
       if (!task.enabled || task.nextAt == null || task.nextAt > now) continue;
       if (!this.deliver({ ...task })) continue;   // no window yet: stay due
+      const scheduled = task.nextAt;
       task.lastAt = now;
-      task.nextAt = nextOccurrence(task.rule, now);
+      if (task.rule.kind === "at") {
+        // A one-off is finished once delivered; leaving it enabled would lie.
+        task.enabled = false;
+        task.nextAt = null;
+      } else {
+        task.nextAt = advanceOccurrence(task.rule, scheduled, now);
+      }
       dirty = true;
       this.publish(task);
     }

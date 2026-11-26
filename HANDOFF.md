@@ -43,6 +43,14 @@ pnpm exec electron-builder --win --x64
 | 监控并入共享 | `main.tsx` `renderGateway` | 导航只剩 8 项；共享页内含「共享 / 监控」两段；`/v1` 视觉基线同步移除 Monitor |
 | 自动化任务 | `main/automation.ts` + `shared/schedule.ts` + `renderAutomation` | 一次/间隔/每天/每周；到点新开会话并发送提示词；错过的只补一次（实测：4 秒后自动创建 probe-task 会话） |
 | 风险确认对话框 | `main.tsx` `policyConfirm`/`alwaysAllowConfirm` | 切「完全权限」或点「总是允许」都会先弹确认（勾选后才能确认）；文案自写，未照抄参考实现 |
+| 复审 R1 | 自动化 stale closure | `sendRef` + 60 秒等模型 | 实测 15 秒内 user/assistant 消息都出现 |
+| 复审 R8 | OPTIONS 走私 | 带 body 的 OPTIONS 一律 400 + 关连接 | 原始 socket 实测 1 个响应 |
+| 复审 R2 | 示例插件崩 | 包装器按形参调用 | 实测返回 `{"utc": …}` |
+| 复审 R9 | cloudflared 只算前 4KB | 整文件流式哈希 | 12 KB 文件实测正确 |
+| 复审 #2 | 二次编码/双斜杠 | 循环解码 + 折叠斜杠 + 同一路径转发 | 三种写法归一为 /api/pull |
+| 复审 #9 | 总是允许不决策当前请求 | 写入白名单同时 `decideApproval` | 代码路径 + 断言 |
+| 复审 #11 | DOM 改写假修 | 删除调用与导入 | 断言 renderer 不再含 translateDom |
+| 复审 R3/R4/R5 | 漂移/一次性/上限 | `advanceOccurrence` + 完成态 + 五年上限 | 单测 4 项 |
 | #7 重启不清理 | `main.ts` `shutdownAll()` | 退出与重启共用一条清理链；重启先关网关/终端/流再 relaunch |
 | #15 cloudflared 无校验 | `hymnix_main.py` | 必须配置 `cloudflared_sha256`，下载后先比 SHA-256，不匹配即放弃 |
 | #17 转发头可信 | `gateway_core.py` `_ip()` | 默认不信任 CF/XFF，需显式 `trust_proxy_headers=true`（隧道用户要自己打开） |
@@ -98,7 +106,7 @@ node scripts/smoke-packaged.mjs  # 打包后的 exe 冒烟（版本/任务页/�
 | P1-14 | 遗留 Tk 控制台绑 0.0.0.0 | 改回 127.0.0.1 | 语法检查 |
 | P1-16 | README 虚假签名声明 | 改为"未签名，SmartScreen 会提示" | 文案审查 |
 
-产物名/哈希见第 5 节。剩余 P1/P2 与 UI 语义问题（审批批量、总是允许、90 秒、停止标记、快捷键固定键、DOM 改写、重启清理、Ollama spawn 崩溃、签名声明）尚未修，见审计报告第 5-16 条。
+产物名/哈希见第 5 节。剩余 P1/P2 与 UI 语义问题（审批批量、总是允许、90 秒、停止标记、快捷键固定键、DOM 改写、重启清理、Ollama spawn 崩溃、签名声明）首轮审计 16 条与复审 R1–R12 的修复状态见本文件第 3.5 节与 CHANGELOG；当前版本仍缺 cloudflared 的密钥分发流程与 #20 的访客可见提示。
 
 ## 4. 剩余任务（1.5 候选）
 

@@ -6,7 +6,7 @@ import "./styles.css";
 import "./orbit-v2.css";
 import brandIcon from "./assets/hymnix-red-white-star.png";
 import { THEMES, readStoredTheme, readStoredMode, applyTheme, persistTheme, persistAppearanceMode, activeMode, selectedTheme, systemMode, type AppearanceMode } from "../theme/themeManager";
-import { t, tf, getLang, setLang, translateDom, installAutoTranslate, type Lang } from "./i18n";
+import { t, tf, getLang, setLang, type Lang } from "./i18n";
 import type { ChatMessage } from "./chat";
 import { ChatViewport } from "./chat-navigation";
 import { pullErrorMessage, trackDownloadProgress } from "./model-download";
@@ -380,6 +380,7 @@ function automationErrorText(code?: string): string {
   if (code === "frequency_too_high") return "The shortest interval is one minute";
   if (code === "too_many_tasks") return "Too many tasks; remove one first";
   if (code === "invalid_rule") return "That schedule is not valid";
+  if (code === "too_far") return "That date is more than five years away";
   return "Could not save the task";
 }
 
@@ -1261,13 +1262,24 @@ function App() {
       return index < 0 ? current.concat([task]) : current.map((item) => (item.id === task.id ? task : item));
     }));
     const offFire = window.hymnix.automation.onFire((task) => {
+      // This effect runs once, so it must not capture that render's send(). The
+      // ref always points at the current one, and the loop waits for a model:
+      // a scheduled prompt that silently finds "no model" is a lost task.
       startFreshSession();
       setSessionName(task.title);
       setDraft(task.prompt);
       setActive("Chat");
-      setToast({ message: tf("Automation ran: {title}", { title: task.title }) });
-      window.setTimeout(() => setToast(null), 2600);
-      window.setTimeout(() => { void send(task.prompt); }, 350);
+      const startedAt = Date.now();
+      const attempt = (): void => {
+        if (modelRef.current) { void sendRef.current(task.prompt); return; }
+        if (Date.now() - startedAt > 60_000) {
+          setToast({ message: tf("Automation could not run without a model: {title}", { title: task.title }) });
+          window.setTimeout(() => setToast(null), 4000);
+          return;
+        }
+        window.setTimeout(attempt, 800);
+      };
+      window.setTimeout(attempt, 400);
     });
     return () => { active = false; offUpdate(); offFire(); };
   }, []);
@@ -1378,7 +1390,6 @@ function App() {
   // No DOM rewriting: every string goes through t()/tf(), which keeps React and
   // the language switch in agreement (the old MutationObserver could not undo).
 
-  useEffect(() => { translateDom(); }, [active, messages, models, state, error, termEntries, fileText, history]);
   useEffect(() => {
     const offOut = window.hymnix.terminal.onOutput((event: any) => {
       if (event.id !== termId.current) return;
@@ -1524,6 +1535,10 @@ function App() {
     window.setTimeout(() => setToast((current) => current?.message === t("Conversation deleted") ? null : current), 10000);
   }
 
+  // A scheduled task fires long after the render that registered the listener.
+  const sendRef = useRef<(text?: string) => Promise<void>>(async () => undefined);
+  const modelRef = useRef(model);
+  modelRef.current = model;
   async function send(textOverride?: string, historyOverride?: Message[]) {
     const typed = (textOverride ?? draft).trim();
     if ((!typed && !attachments.length) || requestRef.current) return;
@@ -3392,6 +3407,8 @@ function App() {
     </section>;
   }
 
+  sendRef.current = send;
+
   function renderView() {
     if (active === "Chat") return renderChat();
     if (active === "Models") return renderModels();
@@ -3476,7 +3493,7 @@ function App() {
                   <div className="approval-row-actions">
                     <button type="button" className="btn primary" onClick={() => void decideApproval(row.id, "approve")} disabled={approvalsBusy}>{t("Allow once")}</button>
                     <button type="button" className="btn danger" onClick={() => void decideApproval(row.id, "deny")} disabled={approvalsBusy}>{t("Deny")}</button>
-                    <button type="button" className={alwaysAllow.includes(row.tool) ? "btn primary" : "btn ghost"} onClick={() => toggleAlwaysAllow(row.tool)}>{t(alwaysAllow.includes(row.tool) ? "Always allowed" : "Always allow")}</button>
+                    <button type="button" className={alwaysAllow.includes(row.tool) ? "btn primary" : "btn ghost"} onClick={() => { if (!alwaysAllow.includes(row.tool)) writeAlwaysAllow(row.tool); void decideApproval(row.id, "approve"); }}>{t(alwaysAllow.includes(row.tool) ? "Always allowed" : "Always allow")}</button>
                     <button type="button" className={sessionAllow.includes(row.tool) ? "btn primary" : "btn ghost"} onClick={() => toggleSessionAllow(row.tool)}>{t(sessionAllow.includes(row.tool) ? "Allowed this session" : "Allow this session")}</button>
                   </div>
                 </li>)}

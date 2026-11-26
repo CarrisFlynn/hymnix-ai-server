@@ -79,6 +79,23 @@ export function nextOccurrence(rule: unknown, after: number = Date.now()): numbe
   return null;
 }
 
+/**
+ * The next instant after a run that was due at `scheduled`.
+ *
+ * Rescheduling from "now" drifts: a 20 s tick turns a 60 s interval into 60-80 s,
+ * and a daily 09:00 task that fired at 09:00:20 would move to tomorrow. Walking
+ * forward from the planned instant keeps the cadence; when the app was closed for
+ * longer than the walk allows, it jumps to the next slot after now.
+ */
+export function advanceOccurrence(rule: unknown, scheduled: number, now: number = Date.now()): number | null {
+  let next = nextOccurrence(rule, scheduled);
+  for (let step = 0; step < 2000 && next != null && next <= now; step += 1) {
+    next = nextOccurrence(rule, next);
+  }
+  if (next == null || next <= now) next = nextOccurrence(rule, now);
+  return next;
+}
+
 /** Human parts for the UI; the caller localizes them. */
 export function describeRule(rule: unknown): { kind: string; parts: string[] } {
   const normalized = normalizeRule(rule);
