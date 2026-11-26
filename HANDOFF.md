@@ -115,9 +115,9 @@ node scripts/smoke-packaged.mjs  # 打包后的 exe 冒烟（版本/任务页/�
 ## 4. 剩余任务（1.5 候选）
 
 - 桌面端仍然没有 **文件 / 工具 / 日志 / OCR / Git / diff** 页面；网关接口都在（`/api/files/*`、`/api/tools`、`/admin/*`），缺的是页面。
-- 工具循环目前只广告**只读**工具。写文件、跑命令要先进审批策略与沙箱设计，别直接开。
+- 工具循环广告只读工具 + `fs.write`；写文件走审批收件箱，`tool_policy` 决定哪一档允许执行。
 - 审批是网关侧 60 秒 TTL 的一次性授权；桌面端的「总是允许」是渲染层自动代批，不是网关持久规则。若要做成网关级策略，改 `server/hxcore/approvals.py` 的 mode，并在 UI 里说明影响面。
-- 任务列表只在内存里；重开应用后历史清空。要留档就落 `app.getPath("userData")`。
+- 任务与自动化都已落盘：`app.getPath("userData")` 下的任务文件与 `automation.json`，重开应用保留。
 
 ## 5. 打包前检查
 

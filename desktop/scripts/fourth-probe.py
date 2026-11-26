@@ -50,12 +50,7 @@ print("GET_BODY", getbody.count(b"HTTP/1.1"), getbody[:140].decode("latin-1").re
 proc.kill()
 
 # _save_cfg actually writes
-import gateway_core
-gateway_core.CFG["agent_note_injection"] = False
-gateway_core.CFG["trust_proxy_headers"] = True
-gateway_core._save_cfg()
-saved = json.load(open(os.path.join(data, "gateway_config.json"), encoding="utf-8"))
-print("SAVE_CFG", saved.get("trust_proxy_headers") is True)
+# _save_cfg is covered by save-cfg-probe.py (its own data dir)
 
 # a failed tunnel start leaves the flag off
 gateway_core.CFG["host_password"] = ""

@@ -291,8 +291,13 @@ def _write_text_atomic(path, text):
 
 
 def _save_cfg():
-    """Persist the live configuration through the atomic writer."""
-    _write_text_atomic(CONFIG_PATH, json.dumps(CFG, ensure_ascii=False, indent=2))
+    """Persist the live configuration through the atomic writer.
+
+    The forwarded-header trust flag is runtime-only: persisting it meant a crash
+    during a tunnel left every future launch trusting CF-Connecting-IP.
+    """
+    payload = {key: value for key, value in CFG.items() if key != "trust_proxy_headers"}
+    _write_text_atomic(CONFIG_PATH, json.dumps(payload, ensure_ascii=False, indent=2))
 
 def _today_str():
     return time.strftime("%Y-%m-%d")
@@ -551,6 +556,7 @@ def load_config():
 
 
 CFG = load_config()
+CFG["trust_proxy_headers"] = False  # proxy trust only exists while a tunnel runs
 if not str(CFG.get("host_name") or "").strip():
     CFG["host_name"] = "Hymnix Orbit"
 if not str(CFG.get("host_password") or "").strip():
@@ -1367,7 +1373,9 @@ class Handler(BaseHTTPRequestHandler):
         try:
             n = int(self.headers.get("Content-Length") or 0)
         except ValueError:
-            n = 0
+            # Refuse rather than read zero: the unread bytes would be parsed as
+            # the next request on this keep-alive connection.
+            raise ValueError("invalid content length")
         if n <= 0:
             return b""
         if n > MAX_BODY:
@@ -1901,6 +1909,14 @@ class Handler(BaseHTTPRequestHandler):
         except AttributeError:
             lengths = [self.headers.get("Content-Length")] if self.headers.get("Content-Length") else []
         declared_values = {str(value).strip() for value in lengths}
+        # A non-numeric length cannot be trusted and must not be read as zero.
+        if any(value and not value.isdigit() for value in declared_values):
+            self.close_connection = True
+            try:
+                self._json(400, {"ok": False, "error": "invalid_content_length"})
+            except Exception:
+                pass
+            return
         if len(declared_values) > 1:
             self.close_connection = True
             try:
@@ -2061,6 +2077,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(413, {"ok": False, "error": "arguments_too_large"})
             import time as _time
             from hxcore import approvals, tools as tool_registry
+            # Same normalisation the execution path applies, so the digest the
+            # user approves is the digest that later runs.
+            args = tool_registry.normalize_args(name, args)
             tool_registry.builtin_tools()
             now = _time.time()
             with _TOOL_APPROVAL_LOCK:

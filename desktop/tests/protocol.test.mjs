@@ -162,4 +162,10 @@ assert.ok(toolsSourceAgain.includes('for alias in ("data", "text")'), "fs.write 
 assert.ok(toolsSourceAgain.includes('"required":["path","content"]'), "fs.write declares one complete contract");
 assert.ok(read("../../server/gateway_core.py").includes("approve=_approved"), "approved tools must run through the registry's approval gate");
 assert.ok(renderer.includes("setAlwaysAllowConfirm({ tool: row.tool, id: row.id })"), "always-allow must carry the request id");
+// --- fourth-review follow-ups ------------------------------------------------
+const toolsFinal = read("../../server/hxcore/tools.py");
+assert.ok(toolsFinal.includes("args = normalize_args(name, args)"), "aliases must be normalised before the approval digest");
+assert.ok(read("../../server/gateway_core.py").includes("tool_registry.normalize_args(name, args)"), "the gateway must hash the same normalised args it approves");
+assert.ok(read("../../server/gateway_core.py").includes('key != "trust_proxy_headers"'), "proxy trust must never be persisted");
+assert.ok(read("../../server/gateway_core.py").includes("not value.isdigit()"), "a malformed Content-Length must be rejected");
 console.log("PASS: secure shell protocol/static contract");

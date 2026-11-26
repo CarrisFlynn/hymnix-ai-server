@@ -1323,18 +1323,5 @@ export function tf(template: string, values: any): string {
   return Object.keys(values).reduce((acc: string, key: string) => acc.split("{" + key + "}").join(values[key]), localized);
 }
 
-function translateText(raw: string): string {
-  const trimmed = raw.trim();
-  if (!trimmed) return raw;
-  const direct = zh[trimmed];
-  if (direct) return raw.replace(trimmed, direct);
-  for (const pair of prefixes) {
-    if (trimmed.indexOf(pair[0]) === 0) return pair[1] + trimmed.slice(pair[0].length);
-  }
-  return raw;
-}
-
-const ATTRS = ["placeholder", "title", "aria-label"];
 
 
-let observer: any = null;

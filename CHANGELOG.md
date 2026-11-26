@@ -2,6 +2,24 @@
 
 Only user-visible changes are listed. Internal refactors, test scaffolding and machine-specific paths are intentionally omitted.
 
+## 1.4.2 — 2026-11-27
+
+The regression 1.4.1 introduced, plus two boundary issues the fifth review found.
+
+### Fixed
+
+- **An approved `fs.write` sent with `data`/`text` still failed.** 1.4.1 normalised the alias after the approval digest was taken, so the callback compared a digest the gateway never stored. Normalisation now happens before the digest at both layers; a real approval of `{"path","data"}` executes and returns its result.
+- **The proxy-trust flag was persisted.** A crash while a tunnel ran left it `True` on disk, so a later launch trusted `CF-Connecting-IP` without a tunnel. It is runtime-only now: `_save_cfg` strips it and startup forces it off.
+
+### Security
+
+- **A malformed single `Content-Length`** (non-numeric) used to be read as zero and left the connection open. It is rejected with `400 invalid_content_length` and the connection closes; `_read_body` no longer silently falls back to zero.
+
+### Housekeeping
+
+- Removed the dead `translateText` / `ATTRS` / `observer` leftovers from `i18n.ts`.
+- HANDOFF no longer claims the tool loop is read-only or that jobs are memory-only.
+
 ## 1.4.1 — 2026-11-27
 
 Fixes from the fourth review: four defects in the code that shipped in 1.4.0, plus two request-boundary holes.

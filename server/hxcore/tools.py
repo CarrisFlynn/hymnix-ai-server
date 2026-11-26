@@ -319,9 +319,26 @@ def _audit_value(value: Any) -> Any:
             "truncated": len(encoded) > MAX_AUDIT_BYTES}
 
 
+def normalize_args(name, args):
+    """Map alias arguments onto the canonical name.
+
+    Both the approval digest and the executed call must see the same shape, or a
+    model that sends `data` instead of `content` gets approved and then refused.
+    """
+    if name == "fs.write" and isinstance(args, dict) and "content" not in args:
+        for alias in ("data", "text"):
+            value = args.get(alias)
+            if isinstance(value, str):
+                clean = {k: v for k, v in args.items() if k not in ("content", "data", "text")}
+                clean["content"] = value
+                return clean
+    return args
+
+
 def call(name: str, args: dict, *, approve=None) -> dict:
     start = time.perf_counter()
     safe_name = str(name)[:128]
+    args = normalize_args(name, args)
     toolcall = None
     cid = ""
     payload = None
@@ -343,15 +360,6 @@ def call(name: str, args: dict, *, approve=None) -> dict:
             item = _REGISTRY.get(name)
             if not item:
                 raise ToolError("unknown_tool")
-            if isinstance(args, dict) and "content" not in args:
-                # Accept the aliases the model actually emits, but validate and
-                # document one canonical argument.
-                for alias in ("data", "text"):
-                    candidate = args.get(alias)
-                    if isinstance(candidate, str):
-                        args = {k: v for k, v in args.items() if k not in ("content", "data", "text")}
-                        args["content"] = candidate
-                        break
             invalid = _validate(item["schema"], args)
             if invalid:
                 raise ToolError(invalid)

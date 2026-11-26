@@ -1,6 +1,6 @@
 {
   "name": "hymnix-desktop",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "private": true,
   "description": "Hymnix Orbit - Hymnix scheduler with local gateway connectivity: orchestrate local models, serve a private OpenAI-compatible endpoint, keep every session on your machine.",
   "author": {
@@ -59,7 +59,7 @@
         "to": "engine-java/build/hymnix-engine.jar"
       },
       {
-        "from": "../build/hymnix-orbit2-backend/hymnix-server-1.4.1-x64.exe",
+        "from": "../build/hymnix-orbit2-backend/hymnix-server-1.4.2-x64.exe",
         "to": "backend-gateway-headless.exe"
       }
     ],
