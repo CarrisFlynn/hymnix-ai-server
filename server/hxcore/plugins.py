@@ -13,7 +13,7 @@ _CAPABILITIES = {"tool", "command", "page", "hook"}
 _ALLOWED = {"fs.read","fs.write","net.http","ui.toast","tools.register","log.write"}
 _ID_PATTERN = re.compile(r"[a-z0-9][a-z0-9._-]{2,63}\Z")
 _MANIFEST_LIMIT = 64 * 1024
-_SAFE = {k:getattr(builtins,k) for k in ("abs","all","any","bool","bytes","dict","enumerate","Exception","float","int","isinstance","len","list","map","max","min","object","range","repr","round","set","sorted","str","sum","tuple","type","zip","ValueError","RuntimeError","KeyError")}
+_SAFE = {k:getattr(builtins,k) for k in ("abs","all","any","bool","bytes","dict","enumerate","Exception","float","int","isinstance","len","list","map","max","min","range","repr","round","set","sorted","str","sum","tuple","zip","ValueError","RuntimeError","KeyError")}
 _IMPORTS = {"math","time","datetime","json","re","statistics","collections","itertools","functools","decimal","random"}
 _LOCK=threading.RLock(); _PERMISSIONS_LOCK=threading.RLock(); _LOADED={}; _ERRORS=[]
 _EXECUTOR=ThreadPoolExecutor(max_workers=4, thread_name_prefix="hymnix-plugin")
@@ -36,7 +36,7 @@ def _call_handler(handler, args):
 _FORBIDDEN_ATTRS={"__class__","__base__","__bases__","__subclasses__","__mro__","__globals__","__builtins__","__code__","__closure__","__dict__","__getattribute__","__import__","__loader__","__spec__","__reduce__","__reduce_ex__",
  # Exception and frame introspection: an exception raised by the host used to
  # hand a plugin the host's __builtins__ through tb_frame.f_globals.
- "__traceback__","tb_frame","tb_next","tb_lasti","tb_lineno","tb_lasti",
+ "mro","__mro_entries__","__subclasshook__","__traceback__","tb_frame","tb_next","tb_lasti","tb_lineno","tb_lasti",
  "f_back","f_globals","f_locals","f_builtins","f_code",
  "gi_frame","gi_code","cr_frame","cr_code","ag_frame","ag_code"}
 class _PluginTimeout(BaseException):
@@ -279,7 +279,7 @@ def load(pid):
             if isinstance(node, ast.Attribute) and (node.attr in _FORBIDDEN_ATTRS or node.attr in _MODULE_ATTRS):
                 _err(pid,"load","plugin_sandbox_escape:"+node.attr)
                 return {"ok":False,"error":"plugin_sandbox_escape","detail":node.attr}
-            if isinstance(node, ast.Name) and node.id in {"__builtins__","eval","exec","compile","globals","locals","vars","breakpoint"}:
+            if isinstance(node, ast.Name) and node.id in {"__builtins__","eval","exec","compile","globals","locals","vars","breakpoint","type","object","getattr","setattr","delattr"}:
                 _err(pid,"load","plugin_sandbox_escape:"+node.id)
                 return {"ok":False,"error":"plugin_sandbox_escape","detail":node.id}
             if isinstance(node, ast.Attribute) and node.attr in _FORBIDDEN_ATTRS:

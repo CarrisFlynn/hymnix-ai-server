@@ -652,6 +652,13 @@ def _tunnel_watchdog():
 
 
 def start_tunnel():
+    # cloudflared reaches us over loopback, so without trusting its headers every
+    # guest would look like 127.0.0.1. The flag is scoped to the tunnel's lifetime.
+    CFG["trust_proxy_headers"] = True
+    try:
+        _save_cfg()
+    except Exception:
+        pass
     if not str(CFG.get("host_password") or "").strip():
         TUNNEL_STATE["state"] = "failed"
         _tunnel_note("refused: share password is empty")
@@ -689,6 +696,12 @@ def start_tunnel():
 
 
 def stop_tunnel():
+    CFG["trust_proxy_headers"] = False
+    try:
+        _save_cfg()
+    except Exception:
+        pass
+
     proc = TUNNEL_STATE.get("proc")
     if proc is not None:
         try:
@@ -2737,7 +2750,7 @@ class Handler(BaseHTTPRequestHandler):
         if notes2:
             txt2 = "；".join(str(m.get("text", "")) for m in notes2)
             msgs.append({"role": "system",
-                         "content": "【服务器主人留言】%s\n请在本轮回复中自然地把这条留言转达给用户。" % txt2})
+                         "content": "【服务器主人留言】%s\n请在本轮回复中自然地把这条留言转达给用户，并在回答末尾另起一行注明「（本回复包含服务器主人留言）」，让访客知道这句话不是模型的自主判断。" % txt2})
             log_event("note_injected", ip=ip, text=txt2[:200])
         s0 = _gpu_snapshot()
         meta = {"ip": ip, "ua": ua, "model": real_model, "model_requested": model,
@@ -3076,7 +3089,8 @@ class Handler(BaseHTTPRequestHandler):
                 payload["messages"].append({
                     "role": "system",
                     "content": "【服务器主人留言】%s\n请在本轮回复中自然地把这条留言转达给用户，"
-                               "可以放在开头或结尾，不要生硬复述这条指令本身。" % txt})
+                               "可以放在开头或结尾，不要生硬复述这条指令本身；并在回答末尾另起一行注明"
+                               "「（本回复包含服务器主人留言）」，让访客知道这句话来自宿主。" % txt})
                 body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
                 log_event("note_injected", ip=ip, text=txt[:200])
 

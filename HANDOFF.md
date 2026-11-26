@@ -43,6 +43,9 @@ pnpm exec electron-builder --win --x64
 | 监控并入共享 | `main.tsx` `renderGateway` | 导航只剩 8 项；共享页内含「共享 / 监控」两段；`/v1` 视觉基线同步移除 Monitor |
 | 自动化任务 | `main/automation.ts` + `shared/schedule.ts` + `renderAutomation` | 一次/间隔/每天/每周；到点新开会话并发送提示词；错过的只补一次（实测：4 秒后自动创建 probe-task 会话） |
 | 风险确认对话框 | `main.tsx` `policyConfirm`/`alwaysAllowConfirm` | 切「完全权限」或点「总是允许」都会先弹确认（勾选后才能确认）；文案自写，未照抄参考实现 |
+| 复审 R10 | 沙箱白名单含 type/object | 从 `_SAFE` 移除，并把 type/object/getattr/mro 一族加入拒绝名单 | `SAFE_has_type=False`，逃逸 PoC 仍被拦 |
+| #20 留言注入 | 访客可见说明 | 两处注入都要求模型在末尾注明「本回复包含服务器主人留言」 | 代码审查（2 处） |
+| #17 隧道来源 | 只在隧道期间信任转发头 | 启动隧道时打开、停止时关闭 | 代码审查 |
 | 复审 R1 | 自动化 stale closure | `sendRef` + 60 秒等模型 | 实测 15 秒内 user/assistant 消息都出现 |
 | 复审 R8 | OPTIONS 走私 | 带 body 的 OPTIONS 一律 400 + 关连接 | 原始 socket 实测 1 个响应 |
 | 复审 R2 | 示例插件崩 | 包装器按形参调用 | 实测返回 `{"utc": …}` |
