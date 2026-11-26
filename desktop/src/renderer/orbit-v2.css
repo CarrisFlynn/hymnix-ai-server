@@ -1883,6 +1883,28 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 .risk-ack { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; color: var(--text); font-size: calc(12.5px * var(--text-scale, 1)); }
 .risk-ack input { width: 15px; height: 15px; accent-color: var(--accent-fill); }
 
+.automation-page { display: flex; flex-direction: column; gap: var(--s-3); }
+.automation-empty { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 22px; color: var(--faint); font-size: calc(12.5px * var(--text-scale, 1)); }
+.automation-empty strong { color: var(--text); font-size: calc(14px * var(--text-scale, 1)); }
+.automation-empty .btn { margin-top: 8px; }
+.automation-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.automation-row { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s-4); padding: 14px 16px; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface); }
+.automation-row.paused { opacity: .62; }
+.automation-main { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
+.automation-main strong { color: var(--text); font-size: calc(13.5px * var(--text-scale, 1)); }
+.automation-main small { color: var(--muted); font-size: calc(11.5px * var(--text-scale, 1)); }
+.automation-prompt { margin: 2px 0 0; overflow: hidden; max-width: 62ch; color: var(--faint); font-size: calc(11.5px * var(--text-scale, 1)); text-overflow: ellipsis; white-space: nowrap; }
+.automation-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; }
+.automation-actions .btn { height: 28px; padding: 0 10px; font-size: calc(11.5px * var(--text-scale, 1)); }
+.automation-dialog { max-width: 520px; }
+.automation-field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; font-size: calc(12px * var(--text-scale, 1)); }
+.automation-field > span { color: var(--muted); }
+.automation-field input, .automation-field textarea { padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--sunken); color: var(--text); font-size: calc(12.5px * var(--text-scale, 1)); font-family: inherit; }
+.automation-field input:focus, .automation-field textarea:focus { outline: none; border-color: var(--accent); }
+.automation-days { display: flex; gap: 4px; }
+.automation-days button { width: 30px; height: 28px; border: 1px solid var(--border); border-radius: var(--r-sm); background: transparent; color: var(--muted); font-size: calc(11.5px * var(--text-scale, 1)); }
+.automation-days button.active { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-text); }
+
 /* ---- tab badges ---------------------------------------------------------- */
 .chat-tabs button { position: relative; }
 .tab-badge { margin-left: 6px; padding: 0 5px; border-radius: 999px; background: var(--highlight); color: var(--muted); font-family: var(--font-mono); font-size: calc(10px * var(--text-scale, 1)); line-height: 16px; }

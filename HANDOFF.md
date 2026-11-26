@@ -41,6 +41,7 @@ pnpm exec electron-builder --win --x64
 | 两个产品真的不同 | `main.tsx` 空状态 + `surface-chip` | AI：AI 标记 / 「想让我帮你做什么？」/ 通用提示；Orbit：ORBIT 标记 / 「你在做什么？」/ 编码提示 |
 | 四套接口方言 | `providers.ts` + `protocol.ts` | `ollama`/`openai`/`anthropic`/`openclaw` 全部支持工具；27 项供应商测试（含桩服务器）全绿；本地聊天走原生 `/api/chat` |
 | 监控并入共享 | `main.tsx` `renderGateway` | 导航只剩 8 项；共享页内含「共享 / 监控」两段；`/v1` 视觉基线同步移除 Monitor |
+| 自动化任务 | `main/automation.ts` + `shared/schedule.ts` + `renderAutomation` | 一次/间隔/每天/每周；到点新开会话并发送提示词；错过的只补一次（实测：4 秒后自动创建 probe-task 会话） |
 | 风险确认对话框 | `main.tsx` `policyConfirm`/`alwaysAllowConfirm` | 切「完全权限」或点「总是允许」都会先弹确认（勾选后才能确认）；文案自写，未照抄参考实现 |
 | #7 重启不清理 | `main.ts` `shutdownAll()` | 退出与重启共用一条清理链；重启先关网关/终端/流再 relaunch |
 | #15 cloudflared 无校验 | `hymnix_main.py` | 必须配置 `cloudflared_sha256`，下载后先比 SHA-256，不匹配即放弃 |

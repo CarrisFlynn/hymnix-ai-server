@@ -164,7 +164,7 @@ function Icon({ name }: { name: string }) { return <svg viewBox="0 0 24 24" aria
 
 const navGroups = [
   { title: "WORKSPACE", items: ["Chat", "Models", "Gateway", "Plugins", "Changelog", "Support"] },
-  { title: "DEVELOPER", items: ["Terminal", "Jobs"] }
+  { title: "DEVELOPER", items: ["Terminal", "Jobs", "Automation"] }
 ];
 
 /** The two product surfaces, mirroring ChatGPT / Codex: same history, different agent. */
@@ -370,6 +370,19 @@ function writeChatSessions(sessions: LocalChatSession[]): void {
   } catch { /* Keep in-memory sessions available if storage is full. */ }
 }
 
+const WEEKDAY_KEYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/** One stable sentence per automation error code. */
+function automationErrorText(code?: string): string {
+  if (code === "title_required") return "Give the task a name";
+  if (code === "prompt_required") return "Write the prompt this task should send";
+  if (code === "not_future") return "Pick a time in the future";
+  if (code === "frequency_too_high") return "The shortest interval is one minute";
+  if (code === "too_many_tasks") return "Too many tasks; remove one first";
+  if (code === "invalid_rule") return "That schedule is not valid";
+  return "Could not save the task";
+}
+
 function App() {
   const initialSessionsRef = useRef<LocalChatSession[] | null>(null);
   if (initialSessionsRef.current === null) initialSessionsRef.current = readChatSessions();
@@ -462,6 +475,14 @@ function App() {
   const [jobSelected, setJobSelected] = useState("");
   const [jobCommand, setJobCommand] = useState("");
   const [jobBusy, setJobBusy] = useState(false);
+  // ---- automation (scheduled prompts) --------------------------------------
+  const [automationTasks, setAutomationTasks] = useState<import("../shared/protocol").AutomationTask[]>([]);
+  const [automationForm, setAutomationForm] = useState<null | {
+    id: string; title: string; prompt: string;
+    kind: "daily" | "weekly" | "every" | "at";
+    time: string; weekdays: number[]; minutes: number; atLocal: string;
+  }>(null);
+  const [automationError, setAutomationError] = useState("");
   // ---- shortcuts -----------------------------------------------------------
   const [shortcutOverrides, setShortcutOverrides] = useState<ShortcutOverrides>(readShortcuts);
   const [recordingId, setRecordingId] = useState<string | null>(null);
@@ -1229,6 +1250,27 @@ function App() {
     const timer = window.setInterval(() => setNowTick(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, [plan, jobs]);
+  // Scheduled tasks live in the main process. A fire opens a new conversation
+  // with the prompt and runs it when a model is ready; otherwise the prompt is
+  // left in the composer so nothing is executed silently.
+  useEffect(() => {
+    let active = true;
+    void window.hymnix.automation.list().then((result) => { if (active) setAutomationTasks(result.tasks || []); }).catch(() => undefined);
+    const offUpdate = window.hymnix.automation.onUpdate((task) => setAutomationTasks((current) => {
+      const index = current.findIndex((item) => item.id === task.id);
+      return index < 0 ? current.concat([task]) : current.map((item) => (item.id === task.id ? task : item));
+    }));
+    const offFire = window.hymnix.automation.onFire((task) => {
+      startFreshSession();
+      setSessionName(task.title);
+      setDraft(task.prompt);
+      setActive("Chat");
+      setToast({ message: tf("Automation ran: {title}", { title: task.title }) });
+      window.setTimeout(() => setToast(null), 2600);
+      window.setTimeout(() => { void send(task.prompt); }, 350);
+    });
+    return () => { active = false; offUpdate(); offFire(); };
+  }, []);
   // Jobs live in the main process: subscribe once, then let events drive the list.
   useEffect(() => {
     let active = true;
@@ -3194,6 +3236,73 @@ function App() {
       </div></div>
     </section>;
   }
+  // ---- automation ----------------------------------------------------------
+  const automationStamp = (ms: number): string => new Date(ms).toLocaleString(lang === "zh" ? "zh-CN" : "en-US", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+  const automationText = (task: import("../shared/protocol").AutomationTask): string => {
+    const rule = task.rule;
+    if (rule.kind === "daily") return tf("Every day at {time}", { time: rule.time });
+    if (rule.kind === "weekly") return tf("Every {days} at {time}", { days: rule.weekdays.map((day) => t(WEEKDAY_KEYS[day])).join("、"), time: rule.time });
+    if (rule.kind === "every") return tf("Every {minutes} minutes", { minutes: String(Math.max(1, Math.round(rule.seconds / 60))) });
+    return tf("Once at {time}", { time: automationStamp(rule.at) });
+  };
+  const automationNext = (task: import("../shared/protocol").AutomationTask): string => {
+    if (!task.enabled || task.nextAt == null) return t("Paused");
+    return automationStamp(task.nextAt);
+  };
+  function openAutomationForm(task?: import("../shared/protocol").AutomationTask): void {
+    setAutomationError("");
+    if (!task) {
+      setAutomationForm({ id: "", title: "", prompt: "", kind: "daily", time: "09:00", weekdays: [1], minutes: 60, atLocal: "" });
+      return;
+    }
+    const rule = task.rule;
+    setAutomationForm({
+      id: task.id, title: task.title, prompt: task.prompt,
+      kind: rule.kind,
+      time: rule.kind === "daily" || rule.kind === "weekly" ? rule.time : "09:00",
+      weekdays: rule.kind === "weekly" ? rule.weekdays : [1],
+      minutes: rule.kind === "every" ? Math.max(1, Math.round(rule.seconds / 60)) : 60,
+      atLocal: rule.kind === "at" ? new Date(rule.at - new Date(rule.at).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : "",
+    });
+  }
+  async function saveAutomation(): Promise<void> {
+    if (!automationForm) return;
+    const form = automationForm;
+    let rule: import("../shared/protocol").ScheduleRule;
+    if (form.kind === "daily") rule = { kind: "daily", time: form.time || "09:00" };
+    else if (form.kind === "weekly") rule = { kind: "weekly", time: form.time || "09:00", weekdays: form.weekdays.length ? form.weekdays : [1] };
+    else if (form.kind === "every") rule = { kind: "every", seconds: Math.max(60, Math.round(form.minutes * 60)) };
+    else {
+      const at = form.atLocal ? new Date(form.atLocal).getTime() : NaN;
+      if (!Number.isFinite(at)) { setAutomationError(t("Pick a date and a time")); return; }
+      rule = { kind: "at", at };
+    }
+    setAutomationError("");
+    try {
+      const result = form.id
+        ? await window.hymnix.automation.update(form.id, { title: form.title, prompt: form.prompt, rule })
+        : await window.hymnix.automation.create({ title: form.title, prompt: form.prompt, rule });
+      if (!result.ok) { setAutomationError(t(automationErrorText(result.error))); return; }
+      const list = await window.hymnix.automation.list();
+      setAutomationTasks(list.tasks || []);
+      setAutomationForm(null);
+    } catch (reason) { setAutomationError(reason instanceof Error ? reason.message : String(reason)); }
+  }
+  async function toggleAutomation(task: import("../shared/protocol").AutomationTask): Promise<void> {
+    await window.hymnix.automation.update(task.id, { enabled: !task.enabled }).catch(() => undefined);
+    const list = await window.hymnix.automation.list().catch(() => null);
+    if (list) setAutomationTasks(list.tasks || []);
+  }
+  async function runAutomationNow(task: import("../shared/protocol").AutomationTask): Promise<void> {
+    const result = await window.hymnix.automation.runNow(task.id).catch(() => ({ ok: false }));
+    if (!result.ok) setToast({ message: t("No window is listening right now.") });
+  }
+  async function removeAutomation(task: import("../shared/protocol").AutomationTask): Promise<void> {
+    await window.hymnix.automation.remove(task.id).catch(() => undefined);
+    const list = await window.hymnix.automation.list().catch(() => null);
+    if (list) setAutomationTasks(list.tasks || []);
+  }
+
   function renderJobs() {
     const live = selectedJob;
     const output = (live?.output || "").slice(-20000);
@@ -3240,12 +3349,56 @@ function App() {
       </div>
     </section>;
   }
+  function renderAutomation() {
+    const form = automationForm;
+    return <section className="view-page automation-page">
+      <div className="page-head"><div><label>{t("DEVELOPER")}</label><h2>{t("Automation")}</h2><p>{t("Scheduled prompts: a task opens a new conversation and sends its prompt on the schedule you pick.")}</p></div>
+        <div className="page-actions"><button type="button" className="btn primary" onClick={() => openAutomationForm()}>{t("New task")}</button></div>
+      </div>
+      {automationTasks.length === 0
+        ? <div className="card automation-empty"><strong>{t("No scheduled tasks yet.")}</strong><span>{t("A task is a prompt plus a rule: once, every N minutes, daily or weekly.")}</span><button type="button" className="btn" onClick={() => openAutomationForm()}>{t("Create the first task")}</button></div>
+        : <ul className="automation-list">{automationTasks.map((task) => <li key={task.id} className={"automation-row" + (task.enabled ? "" : " paused")}>
+            <div className="automation-main">
+              <strong>{task.title}</strong>
+              <small>{automationText(task)} · {t("Next")} {automationNext(task)}{task.lastAt ? " · " + t("Last ran") + " " + automationStamp(task.lastAt) : ""}</small>
+              <p className="automation-prompt">{task.prompt}</p>
+            </div>
+            <div className="automation-actions">
+              <button type="button" className={"switch" + (task.enabled ? " on" : "")} aria-pressed={task.enabled} aria-label={t(task.enabled ? "Pause" : "Resume")} onClick={() => void toggleAutomation(task)}><span /></button>
+              <button type="button" className="btn ghost" onClick={() => void runAutomationNow(task)}>{t("Run now")}</button>
+              <button type="button" className="btn ghost" onClick={() => openAutomationForm(task)}>{t("Edit")}</button>
+              <button type="button" className="btn danger" onClick={() => void removeAutomation(task)}>{t("Delete")}</button>
+            </div>
+          </li>)}</ul>}
+      {form && <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setAutomationForm(null); }}>
+        <section className="confirm-dialog automation-dialog" role="dialog" aria-modal="true" aria-labelledby="automation-form-title">
+          <h3 id="automation-form-title">{t(form.id ? "Edit task" : "New task")}</h3>
+          <label className="automation-field"><span>{t("Name")}</span><input value={form.title} onChange={(event) => setAutomationForm({ ...form, title: event.target.value })} placeholder={t("Morning repository check")} /></label>
+          <label className="automation-field"><span>{t("Prompt")}</span><textarea value={form.prompt} onChange={(event) => setAutomationForm({ ...form, prompt: event.target.value })} rows={4} placeholder={t("Review the uncommitted changes and report risks.")} /></label>
+          <div className="automation-field"><span>{t("Repeat")}</span>
+            <div className="segmented">{(['daily', 'weekly', 'every', 'at'] as const).map((kind) => <button key={kind} type="button" className={form.kind === kind ? "active" : ""} aria-pressed={form.kind === kind} onClick={() => setAutomationForm({ ...form, kind })}>{t(kind === "daily" ? "Daily" : kind === "weekly" ? "Weekly" : kind === "every" ? "Interval" : "Once")}</button>)}</div>
+          </div>
+          {(form.kind === "daily" || form.kind === "weekly") && <label className="automation-field"><span>{t("Time")}</span><input type="time" value={form.time} onChange={(event) => setAutomationForm({ ...form, time: event.target.value })} /></label>}
+          {form.kind === "weekly" && <div className="automation-field"><span>{t("Days")}</span><div className="automation-days">{WEEKDAY_KEYS.map((key, index) => <button key={key} type="button" className={form.weekdays.includes(index) ? "active" : ""} aria-pressed={form.weekdays.includes(index)} onClick={() => setAutomationForm({ ...form, weekdays: form.weekdays.includes(index) ? form.weekdays.filter((day) => day !== index) : form.weekdays.concat([index]) })}>{t(key)}</button>)}</div></div>}
+          {form.kind === "every" && <label className="automation-field"><span>{t("Every (minutes)")}</span><input type="number" min={1} value={form.minutes} onChange={(event) => setAutomationForm({ ...form, minutes: Math.max(1, Number(event.target.value) || 1) })} /></label>}
+          {form.kind === "at" && <label className="automation-field"><span>{t("When")}</span><input type="datetime-local" value={form.atLocal} onChange={(event) => setAutomationForm({ ...form, atLocal: event.target.value })} /></label>}
+          {automationError && <p className="error" role="alert">{automationError}</p>}
+          <div className="dialog-actions">
+            <button type="button" className="btn" onClick={() => setAutomationForm(null)}>{t("Cancel")}</button>
+            <button type="button" className="btn primary" disabled={!form.title.trim() || !form.prompt.trim()} onClick={() => void saveAutomation()}>{t("Save task")}</button>
+          </div>
+        </section>
+      </div>}
+    </section>;
+  }
+
   function renderView() {
     if (active === "Chat") return renderChat();
     if (active === "Models") return renderModels();
     if (active === "Plugins") return renderPlugins();
     if (active === "Terminal") return renderTerminal();
     if (active === "Jobs") return renderJobs();
+    if (active === "Automation") return renderAutomation();
     if (active === "History") return renderHistory();
     if (active === "Gateway") return renderGateway();
     if (active === "Monitor") return renderMonitor();
@@ -3278,7 +3431,7 @@ function App() {
       <div className="palette" role="dialog" aria-label={t("Command palette")} onClick={(event) => event.stopPropagation()}>
         <input autoFocus className="palette-input" value={paletteQuery} placeholder={t("Type a command or a page…")} onChange={(event) => setPaletteQuery(event.target.value)} />
         <div className="palette-list">
-          {["Chat", "Models", "Gateway", "Plugins", "Terminal", "Jobs", "Changelog", "Support", "Settings"]
+          {["Chat", "Models", "Gateway", "Plugins", "Terminal", "Jobs", "Automation", "Changelog", "Support", "Settings"]
             .filter((page) => t(page).toLowerCase().includes(paletteQuery.toLowerCase()))
             .map((page) => <button type="button" key={page} className="palette-item" onClick={() => { setActive(page); setPaletteOpen(false); }}><span>{t(page)}</span><small>{t("Page")}</small></button>)}
           <button type="button" className="palette-item" onClick={() => { createSession(); setPaletteOpen(false); }}><span>{t("New chat")}</span><small>Ctrl+N</small></button>

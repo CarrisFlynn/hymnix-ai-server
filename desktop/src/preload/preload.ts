@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { NetworkApi, AdminClientsResponse, AdminErrorRecord, AdminHistoryQuery, AdminHistoryResponse, AdminStatus, ChatDelta, DesktopApi, FileReadRequest, FileReadResponse, FileSearchRequest, FileSearchResponse, FileTreeRequest, FileTreeResponse, JobView, LocalModel, ProvidersResponse, StreamChatInput, TerminalCommandRequest, TerminalCommandResult, TerminalCompletion, TerminalOutputEvent, ToolCallRequest, ToolCallResponse, ToolsResponse, ApprovalListResponse, ApprovalDecisionResponse, WorkspaceRoot } from "../shared/protocol";
+import type { AutomationTask, NetworkApi, AdminClientsResponse, AdminErrorRecord, AdminHistoryQuery, AdminHistoryResponse, AdminStatus, ChatDelta, DesktopApi, FileReadRequest, FileReadResponse, FileSearchRequest, FileSearchResponse, FileTreeRequest, FileTreeResponse, JobView, LocalModel, ProvidersResponse, StreamChatInput, TerminalCommandRequest, TerminalCommandResult, TerminalCompletion, TerminalOutputEvent, ToolCallRequest, ToolCallResponse, ToolsResponse, ApprovalListResponse, ApprovalDecisionResponse, WorkspaceRoot } from "../shared/protocol";
 
 // Main owns AbortController, api/tags, v1/chat/completions, and Authorization handling; preload only forwards typed IPC events.
 const channels = { toolsList: "tools:list", toolsCall: "tools:call", toolsPending: "tools:pending", toolsApprove: "tools:approve", toolsDeny: "tools:deny", health: "gateway:health", models: "gateway:models", stream: "gateway:stream", cancel: "gateway:cancel", delta: "gateway:delta", complete: "gateway:complete", adminHistory: "gateway:admin-history", adminStatus: "gateway:admin-status", adminErrors: "gateway:admin-errors", adminClients: "gateway:admin-clients" } as const;
@@ -119,6 +119,23 @@ const api: DesktopApi & { adminHistory: (adminKey: string, query?: AdminHistoryQ
     tree: (request: FileTreeRequest): Promise<FileTreeResponse> => ipcRenderer.invoke("files:tree", request),
     search: (request: FileSearchRequest): Promise<FileSearchResponse> => ipcRenderer.invoke("files:search", request),
     read: (request: FileReadRequest): Promise<FileReadResponse> => ipcRenderer.invoke("files:read", request),
+  },
+  automation: {
+    list: () => ipcRenderer.invoke("automation:list"),
+    create: (input) => ipcRenderer.invoke("automation:create", input),
+    update: (id, patch) => ipcRenderer.invoke("automation:update", id, patch),
+    remove: (id) => ipcRenderer.invoke("automation:remove", id),
+    runNow: (id) => ipcRenderer.invoke("automation:run-now", id),
+    onFire: (listener: (task: AutomationTask) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, task: AutomationTask) => listener(task);
+      ipcRenderer.on("automation:fire", handler);
+      return () => { ipcRenderer.removeListener("automation:fire", handler); };
+    },
+    onUpdate: (listener: (task: AutomationTask) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, task: AutomationTask) => listener(task);
+      ipcRenderer.on("automation:update", handler);
+      return () => { ipcRenderer.removeListener("automation:update", handler); };
+    },
   },
   jobs: {
     list: (): Promise<{ ok: boolean; jobs: JobView[] }> => ipcRenderer.invoke("jobs:list"),

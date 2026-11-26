@@ -8,6 +8,8 @@ The four capabilities the desktop shell was missing, built on the contracts alre
 
 ### Added
 
+- **Automation.** The new Automation page schedules prompts: once, every N minutes, daily or weekly. When a task is due the app opens a fresh conversation and sends its prompt. Missed runs collapse into a single catch-up delivery instead of replaying a backlog (the same model DSH uses: a rule plus a next-occurrence instant).
+
 - **Plan tab.** A fourth conversation view. Orbit publishes steps through a `todo_write` tool call and the tab renders them with live status, per-step duration and the evidence behind each step (tool calls, approvals, plan rewrites). Any step can also be marked done or skipped by hand, and the tab badge tracks `done/total`.
 - **Tool loop.** A coding turn now runs model → tool → model up to six rounds: the gateway's read-only tools (files, repository search, web fetch, calculator, clock, system info) are advertised to the model, their results are fed back, and a turn stops honestly when the model produces a final answer or the round budget runs out.
 - **Approval inbox.** A title-bar badge (and Ctrl+Shift+A) opens a drawer listing every pending request, danger first: risk level, reasons, collapsible redacted arguments, age and the gateway's 60-second expiry, batch allow/deny, plus "always allow" (persisted per tool) and "allow this session". Decisions are archived and can be reviewed later; a request that arrives while the window is in the background also raises an OS notification.

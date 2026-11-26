@@ -142,4 +142,14 @@ assert.ok(read("../../server/hymnix_main.py").includes("cloudflared_sha256"), "c
 assert.ok(main.includes("async function shutdownAll"), "quit and restart must share one shutdown path");
 assert.ok(main.includes("void shutdownAll().finally(() => { allowQuit = true; app.relaunch(); app.quit(); })"), "restart must clean up before relaunching");
 
+// --- automation (scheduled tasks) -------------------------------------------
+assert.ok(renderer.includes('["Terminal", "Jobs", "Automation"]'), "automation is a page in the rail");
+assert.ok(renderer.includes('if (active === "Automation") return renderAutomation();'), "the automation page must be reachable");
+assert.ok(renderer.includes("window.hymnix.automation.onFire"), "the renderer must react to fired tasks");
+assert.ok(main.includes('ipcMain.handle("automation:create"'), "automation IPC must exist");
+assert.ok(main.includes("automation.start()"), "the scheduler must start with the app");
+assert.ok(main.includes("automation.stop()"), "the scheduler must stop on quit");
+assert.ok(preload.includes("automation: {"), "the preload bridge must expose automation");
+assert.ok(read("../src/shared/schedule.ts").includes("frequency_too_high"), "rules are validated before scheduling");
+
 console.log("PASS: secure shell protocol/static contract");

@@ -652,7 +652,37 @@ export type JobsApi = {
   onData: (listener: (event: { id: string; stream: string; text: string }) => void) => () => void;
 };
 
+/** Automation rules mirror the DSH schedule model. */
+export type ScheduleRule =
+  | { kind: "at"; at: number }
+  | { kind: "every"; seconds: number }
+  | { kind: "daily"; time: string }
+  | { kind: "weekly"; time: string; weekdays: number[] };
+
+export type AutomationTask = {
+  id: string;
+  title: string;
+  prompt: string;
+  rule: ScheduleRule;
+  enabled: boolean;
+  createdAt: number;
+  nextAt: number | null;
+  lastAt: number | null;
+};
+
+export type AutomationApi = {
+  list: () => Promise<{ ok: boolean; tasks: AutomationTask[] }>;
+  create: (input: { title: string; prompt: string; rule: ScheduleRule }) => Promise<{ ok: boolean; task?: AutomationTask; error?: string }>;
+  update: (id: string, patch: Partial<Pick<AutomationTask, "title" | "prompt" | "enabled">> & { rule?: ScheduleRule }) => Promise<{ ok: boolean; task?: AutomationTask; error?: string }>;
+  remove: (id: string) => Promise<{ ok: boolean }>;
+  runNow: (id: string) => Promise<{ ok: boolean }>;
+  /** A task fired: the renderer opens a conversation and runs the prompt. */
+  onFire: (listener: (task: AutomationTask) => void) => () => void;
+  onUpdate: (listener: (task: AutomationTask) => void) => () => void;
+};
+
 export type DesktopApi = {
+  automation: AutomationApi;
   jobs: JobsApi;
   gateway: GatewayApi;
   workspace: WorkspaceApi;

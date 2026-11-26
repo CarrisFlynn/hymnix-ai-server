@@ -9,6 +9,7 @@ import {readPullStream} from "./pull-stream";
 import {listProviderModels,normalizeKind,probeProvider,streamProvider} from "./providers";
 import {TerminalBridge} from "./terminal-bridge";
 import {JobCenter} from "./job-center";
+import {AutomationCenter} from "./automation";
 import type {AdminClientsResponse,AdminErrorRecord,AdminHistoryQuery,AdminHistoryResponse,AdminStatus,ChatDelta,GatewayHealth,GatewayMessage,GatewayModelsResponse,OllamaControlResult} from "../shared/protocol";
 
 // ---------- persistent app settings ----------
@@ -70,6 +71,24 @@ const jobCenter = new JobCenter((channel, payload) => {
   if (!target || target.isDestroyed() || target.webContents.isDestroyed()) return;
   target.webContents.send(channel, payload);
 });
+/**
+ * Scheduled tasks. Delivery only counts when a window actually took it; with no
+ * window the task stays due and the next launch delivers it once.
+ */
+const automation = new AutomationCenter(
+  join(app.getPath("userData"), "automation.json"),
+  (task) => {
+    const target = mainWindow;
+    if (!target || target.isDestroyed() || target.webContents.isDestroyed()) return false;
+    target.webContents.send("automation:fire", task);
+    return true;
+  },
+  (task) => {
+    const target = mainWindow;
+    if (!target || target.isDestroyed() || target.webContents.isDestroyed()) return;
+    target.webContents.send("automation:update", task);
+  },
+);
 /** Terminal request id → job id, so cancelling one closes the other. */
 const terminalJobs = new Map<string, string>();
 /** An Ollama process this app started, so stopping it never touches someone else's. */
@@ -634,6 +653,32 @@ function registerJobsIpc(): void {
     return { ok: jobCenter.stop(rawId), id: rawId };
   });
   ipcMain.handle("jobs:clear", (event) => { assertSender(event); jobCenter.clear(); return { ok: true }; });
+}
+
+/** Scheduled-task IPC: the store lives in the main process. */
+function registerAutomationIpc(): void {
+  ipcMain.handle("automation:list", (event) => { assertSender(event); return { ok: true, tasks: automation.list() }; });
+  ipcMain.handle("automation:create", (event, raw: unknown) => {
+    assertSender(event);
+    if (!raw || typeof raw !== "object") throw new Error(JSON.stringify({ code: "invalid_request", message: "Invalid automation request" }));
+    return automation.create(raw as { title?: unknown; prompt?: unknown; rule?: unknown });
+  });
+  ipcMain.handle("automation:update", (event, rawId: unknown, rawPatch: unknown) => {
+    assertSender(event);
+    if (typeof rawId !== "string" || !rawId.trim()) throw new Error(JSON.stringify({ code: "invalid_request", message: "Invalid task id" }));
+    if (!rawPatch || typeof rawPatch !== "object") throw new Error(JSON.stringify({ code: "invalid_request", message: "Invalid patch" }));
+    return automation.update(rawId, rawPatch as { title?: unknown; prompt?: unknown; rule?: unknown; enabled?: unknown });
+  });
+  ipcMain.handle("automation:remove", (event, rawId: unknown) => {
+    assertSender(event);
+    if (typeof rawId !== "string" || !rawId.trim()) throw new Error(JSON.stringify({ code: "invalid_request", message: "Invalid task id" }));
+    return automation.remove(rawId);
+  });
+  ipcMain.handle("automation:run-now", (event, rawId: unknown) => {
+    assertSender(event);
+    if (typeof rawId !== "string" || !rawId.trim()) throw new Error(JSON.stringify({ code: "invalid_request", message: "Invalid task id" }));
+    return automation.runNow(rawId);
+  });
 }
 
 const pluginPermissions = new Set(["fs.read", "fs.write", "net.http", "ui.toast", "tools.register", "log.write"]);
@@ -1221,6 +1266,7 @@ registerTerminalIpc();
 registerModelIpc();
 registerToolsIpc();
 registerJobsIpc();
+registerAutomationIpc();
 registerPluginsIpc();
 
 registerGatewayIpc();
@@ -1264,6 +1310,7 @@ async function shutdownAll(): Promise<void> {
     try { stopAllTerminals(); } catch (error) { bootLog("terminal shutdown failed: " + String(error)); }
     for (const controller of chatControllers.values()) { try { controller.abort(); } catch { /* already gone */ } }
     chatControllers.clear();
+    try { automation.stop(); } catch (error) { bootLog("automation shutdown failed: " + String(error)); }
     try { await gateway.stop(); } catch (error) { bootLog("gateway shutdown failed: " + String(error)); }
   })();
   return quitCleanup;
@@ -1274,3 +1321,4 @@ app.on("before-quit", (event) => {
   void shutdownAll().finally(() => { allowQuit = true; app.quit(); });
 });
 app.on("window-all-closed",()=>{if(process.platform!=="darwin")app.quit();});
+app.whenReady().then(() => { automation.start(); });
