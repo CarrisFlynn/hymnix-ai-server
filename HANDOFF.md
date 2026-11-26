@@ -68,6 +68,21 @@ node scripts/smoke-packaged.mjs  # 打包后的 exe 冒烟（版本/任务页/�
 
 截图产物：`.verify-plan.png`、`.verify-plan-zoom.png`、`.verify-approvals.png`、`.verify-jobs.png`、`.verify-shortcuts.png`、`.verify-shortcut-editor.png`（仓库根目录，属临时验证物，可删）。
 
+## 3.5 安全审计修复（2026-11-26 审计报告）
+
+已修并实测（复现脚本在 `desktop/scripts/sec-probe2.mjs`、`plugin-poc.py`）：
+
+| # | 问题 | 修法 | 验证 |
+|---|---|---|---|
+| P0-1 | 插件经 `__traceback__→tb_frame→f_globals` 逃逸 | `_FORBIDDEN_ATTRS` 补 traceback/frame/generator 帧属性 | PoC 返回 `plugin_sandbox_escape: __traceback__`，未写出文件 |
+| P0-2 | `/api/%70ull`、`/api//pull` 绕过管理拦截 | 新增 `normalized_path()`（unquote+normpath），拦截用归一化路径 | 三种写法均 403 admin_only |
+| P0-3 | 分块请求走私 | `_dispatch` 直接拒绝任何 `Transfer-Encoding` 并关连接 | 原始 socket 走私只得到 1 个 400 |
+| P0-3b | 错误响应不读 body → 残留污染下一条 keep-alive 请求（本轮新发现） | `_json` 在 `code >= 400` 时强制 `Connection: close` | 编码路径不再出现 501 错位 |
+| P0-4 | 插件工具收不到参数 | `lambda args:handler(args)` | 静态断言 + 代码审查 |
+| P1-5 | 一次异常发两份 500 | 删除重复块 | 断言 `gateway internal error` 只出现 1 次 |
+
+产物名/哈希见第 5 节。剩余 P1/P2 与 UI 语义问题（审批批量、总是允许、90 秒、停止标记、快捷键固定键、DOM 改写、重启清理、Ollama spawn 崩溃、签名声明）尚未修，见审计报告第 5-16 条。
+
 ## 4. 剩余任务（1.5 候选）
 
 - 桌面端仍然没有 **文件 / 工具 / 日志 / OCR / Git / diff** 页面；网关接口都在（`/api/files/*`、`/api/tools`、`/admin/*`），缺的是页面。

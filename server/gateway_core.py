@@ -14,6 +14,7 @@ import ipaddress
 import json
 import secrets
 import os
+import posixpath
 import socket
 import shutil
 import subprocess
@@ -1231,6 +1232,23 @@ class Capture:
         return rec
 
 
+def normalized_path(path):
+    """Decode and normalise a request path before any prefix decision.
+
+    Raw-path matching was bypassable: /api/%70ull reaches the same upstream
+    endpoint as /api/pull once Ollama decodes it, and /api//pull normalises to
+    it as well.
+    """
+    try:
+        decoded = urllib.parse.unquote(str(path or ""))
+    except Exception:
+        decoded = str(path or "")
+    decoded = posixpath.normpath(decoded)
+    if not decoded.startswith("/"):
+        decoded = "/" + decoded
+    return decoded
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "HymnixGateway/" + VERSION
@@ -1286,6 +1304,13 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Headers", "Authorization, X-API-Key, X-Admin-Key, Content-Type")
         self.send_header("Cache-Control", "no-store")
+        # An error answered before the request body was read used to leave those
+        # bytes in the socket, where the keep-alive parser took them for the next
+        # request line (the same smuggling class as the chunked case). Closing on
+        # every error keeps the connection boundary honest.
+        if code >= 400:
+            self.close_connection = True
+            self.send_header("Connection", "close")
         for k, v in (extra_headers or {}).items():
             self.send_header(k, v)
         self.end_headers()
@@ -1814,6 +1839,16 @@ class Handler(BaseHTTPRequestHandler):
         self._dispatch("DELETE")
 
     def _dispatch(self, method):
+        # This server never accepts chunked bodies. Reading only Content-Length
+        # while an attacker sends Transfer-Encoding let the leftover bytes be
+        # parsed as a second request on the same keep-alive connection.
+        if self.headers.get("Transfer-Encoding") is not None:
+            self.close_connection = True
+            try:
+                self._json(400, {"ok": False, "error": "transfer_encoding_unsupported"})
+            except Exception:
+                pass
+            return
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
         try:
@@ -1906,11 +1941,6 @@ class Handler(BaseHTTPRequestHandler):
         except BrokenPipeError:
             pass
         except Exception:
-            traceback.print_exc()
-            try:
-                self._json(500, {"error": "gateway internal error"})
-            except Exception:
-                pass
             traceback.print_exc()
             try:
                 self._json(500, {"error": "gateway internal error"})
@@ -2935,8 +2965,10 @@ class Handler(BaseHTTPRequestHandler):
     # to pull or delete models with it.
     PROXY_BLOCKED_PREFIXES = ("/api/pull", "/api/push", "/api/delete", "/api/create", "/api/copy", "/api/blobs")
 
+
     def _proxy(self, method, path, query):
-        if any(path == prefix or path.startswith(prefix + "/") for prefix in self.PROXY_BLOCKED_PREFIXES):
+        safe_path = normalized_path(path)
+        if any(safe_path == prefix or safe_path.startswith(prefix + "/") for prefix in self.PROXY_BLOCKED_PREFIXES):
             return self._json(403, {"ok": False, "error": {"code": "admin_only", "message": "model management requires the admin key"}})
         ban = banned(self._ip())
         if ban:

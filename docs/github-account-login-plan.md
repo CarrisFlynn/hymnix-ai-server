@@ -38,7 +38,9 @@
 - 渲染层只拿得到「用户名 + 头像 + 登录态」，拿不到 token。
 - 支持「粘贴 PAT」作为兜底（离线安装、企业网络受限、没有 OAuth App 时）。
 
-**前置条件**：需要一个 GitHub OAuth App 的 `client_id`（勾选 Enable Device Flow）。这个只能你在 GitHub 上注册一次。
+**前置条件**：需要一个 GitHub OAuth App 的 `client_id`（勾选 Enable Device Flow）。这个只能你在 GitHub 上注册一次——免费、无需审核、无资质要求。
+
+**注意一个默认开关**：GitHub 现在给新 OAuth App 默认勾选「Expire user access tokens」——access token **8 小时过期**，同时下发 6 个月有效的 refresh token。我们的实现必须要么支持 refresh 流程，要么在 OAuth App 设置里先取消勾选，否则用户第二天就得重新登录。第一版建议**支持 refresh**（更安全），并在设置页显示「登录已过期，正在续期」。
 
 ---
 

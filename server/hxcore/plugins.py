@@ -22,7 +22,12 @@ _TIMEOUT=float(os.environ.get("HX_PLUGIN_TIMEOUT", "3"))
 # Module handles reachable through an allowlisted module would hand back the real
 # os/sys objects: random._os is os, so one attribute access escaped the sandbox.
 _MODULE_ATTRS={"_os","_sys","os","sys","_io","io","_builtins","builtins","_warnings","_imp","_thread","_signal","_ctypes","ctypes","_collections_abc","_frozen_importlib","_frozen_importlib_external","importlib","posixpath","ntpath","subprocess","_random","_socket"}
-_FORBIDDEN_ATTRS={"__class__","__base__","__bases__","__subclasses__","__mro__","__globals__","__builtins__","__code__","__closure__","__dict__","__getattribute__","__import__","__loader__","__spec__","__reduce__","__reduce_ex__"}
+_FORBIDDEN_ATTRS={"__class__","__base__","__bases__","__subclasses__","__mro__","__globals__","__builtins__","__code__","__closure__","__dict__","__getattribute__","__import__","__loader__","__spec__","__reduce__","__reduce_ex__",
+ # Exception and frame introspection: an exception raised by the host used to
+ # hand a plugin the host's __builtins__ through tb_frame.f_globals.
+ "__traceback__","tb_frame","tb_next","tb_lasti","tb_lineno","tb_lasti",
+ "f_back","f_globals","f_locals","f_builtins","f_code",
+ "gi_frame","gi_code","cr_frame","cr_code","ag_frame","ag_code"}
 class _PluginTimeout(BaseException):
     """Raised inside plugin frames so a plugin cannot swallow its own deadline."""
 _UI_HOOKS={"toast":None}
@@ -286,7 +291,7 @@ def load(pid):
             if not isinstance(name,str) or not re.fullmatch(r"[a-zA-Z0-9_-]+",name) or not callable(handler):raise ValueError("invalid plugin tool")
             from hxcore import tools
             full_name=pid+"."+name
-            if not tools.register(full_name,"Plugin tool "+full_name,{"type":"object","properties":{}},lambda args:handler()):raise RuntimeError("tool registration failed")
+            if not tools.register(full_name,"Plugin tool "+full_name,{"type":"object","properties":{}},lambda args:handler(args)):raise RuntimeError("tool registration failed")
             registrations.append(full_name)
             return full_name
         def register_command(name,handler):

@@ -104,4 +104,17 @@ assert.ok(toolsSource.includes('register("fs.write"'), "a write tool must exist,
 assert.ok(toolsSource.includes('"fs.write"') && gatewaySource.includes('"fs.write"'), "fs.write must be classified as a write tool");
 assert.ok(main.includes("typeof raw === \"string\"") || main.includes("normalizeError"), "tool errors arrive as strings and must be accepted");
 
+// --- security fixes from the 2026-11-26 audit ------------------------------
+const pluginsSource = read("../../server/hxcore/plugins.py");
+for (const attr of ["__traceback__", "tb_frame", "f_globals", "f_locals", "f_code", "gi_frame"]) {
+  assert.ok(pluginsSource.includes('"' + attr + '"'), "plugin sandbox must reject " + attr);
+}
+assert.ok(pluginsSource.includes("lambda args:handler(args)"), "plugin tools must receive their arguments");
+const gatewayCode = read("../../server/gateway_core.py");
+assert.ok(gatewayCode.includes("def normalized_path("), "proxied paths must be decoded before matching");
+assert.ok(/safe_path = normalized_path\(path\)/.test(gatewayCode), "the blocked-prefix check must use the normalised path");
+assert.ok(gatewayCode.includes('self.headers.get("Transfer-Encoding") is not None'), "chunked bodies must be rejected outright");
+assert.ok(gatewayCode.includes("if code >= 400:"), "error responses must close the connection so unread bodies cannot leak into the next request");
+assert.equal((gatewayCode.match(/gateway internal error/g) || []).length, 1, "one request must produce one error response");
+
 console.log("PASS: secure shell protocol/static contract");
