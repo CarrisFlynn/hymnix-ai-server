@@ -104,7 +104,9 @@ export function findConflicts(commands, id, binding, platform) {
   const key = bindingKey(binding, platform);
   if (!key) return [];
   return (commands || [])
-    .filter((command) => command.id !== id && command.binding && !command.fixed)
+    // Fixed commands are included: binding a command to bare Enter or Escape
+    // would fire two actions at once, and the editor must say so.
+    .filter((command) => command.id !== id && command.binding)
     .filter((command) => bindingKey(command.binding, platform) === key)
     .map((command) => ({ id: command.id, label: command.label }));
 }

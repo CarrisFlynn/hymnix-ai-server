@@ -328,7 +328,7 @@ release-1.3.0/  已发布的安装版、免安装版与发布文档
 
 ## 安全说明
 
-Windows 构建由 [SignPath Foundation](https://signpath.org/) 提供代码签名。
+Windows 构建**目前未签名**；安装包未签名，首次运行会被 Windows SmartScreen 拦截提示。
 
 
 - 网关默认本地优先；模型请求需要 API key，管理接口使用独立的管理 key。

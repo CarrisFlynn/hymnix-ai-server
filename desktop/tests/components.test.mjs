@@ -189,8 +189,10 @@ test("the editor refuses a combination another command already owns", () => {
   assert.deepEqual(owner.map((row) => row.id), ["palette.open"]);
   // Rebinding a command onto its own key is not a conflict.
   assert.deepEqual(findConflicts(DEFAULT_SHORTCUTS, "session.new", { code: "KeyN", modifiers: ["ctrl"] }), []);
-  // Fixed rows never lose their key to an editor change.
-  assert.deepEqual(findConflicts(DEFAULT_SHORTCUTS, "session.new", { code: "Escape", modifiers: [] }), []);
+  // Fixed keys must be reported too: binding to bare Escape or Enter would fire
+  // two actions at once, which is exactly what the editor has to refuse.
+  assert.deepEqual(findConflicts(DEFAULT_SHORTCUTS, "session.new", { code: "Escape", modifiers: [] }).map((row) => row.id), ["chat.stop"]);
+  assert.deepEqual(findConflicts(DEFAULT_SHORTCUTS, "session.new", { code: "Enter", modifiers: [] }).map((row) => row.id), ["chat.send"]);
 });
 
 test("overrides store only the changes and reset cleanly", () => {

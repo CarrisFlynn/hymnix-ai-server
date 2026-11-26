@@ -80,6 +80,14 @@ node scripts/smoke-packaged.mjs  # 打包后的 exe 冒烟（版本/任务页/�
 | P0-3b | 错误响应不读 body → 残留污染下一条 keep-alive 请求（本轮新发现） | `_json` 在 `code >= 400` 时强制 `Connection: close` | 编码路径不再出现 501 错位 |
 | P0-4 | 插件工具收不到参数 | `lambda args:handler(args)` | 静态断言 + 代码审查 |
 | P1-5 | 一次异常发两份 500 | 删除重复块 | 断言 `gateway internal error` 只出现 1 次 |
+| P1-6 | 未装 Ollama 时点启动会崩主进程 | spawn 后挂 `error` 监听 | typecheck + 代码审查 |
+| P1-8 | 空选择批量按钮 = 全批 | 空选择禁用按钮，且函数不再回退到全部 | 组件测试改写成分支断言 |
+| P1-10 | 审批等 90s、网关 60s 过期 | 改 55s | 代码审查 |
+| P1-11 | 中文模式改写 DOM 且不可逆 | 移除 `installAutoTranslate()` 调用，全部走 t() | 语言切换实测 |
+| P1-12 | 停止回复无标记 | 无条件 `stopped: true` | 代码审查 |
+| P1-13 | 固定键不参与冲突检测 | `findConflicts` 纳入 fixed；测试改为断言 Enter/Escape 冲突 | 测试通过 |
+| P1-14 | 遗留 Tk 控制台绑 0.0.0.0 | 改回 127.0.0.1 | 语法检查 |
+| P1-16 | README 虚假签名声明 | 改为"未签名，SmartScreen 会提示" | 文案审查 |
 
 产物名/哈希见第 5 节。剩余 P1/P2 与 UI 语义问题（审批批量、总是允许、90 秒、停止标记、快捷键固定键、DOM 改写、重启清理、Ollama spawn 崩溃、签名声明）尚未修，见审计报告第 5-16 条。
 

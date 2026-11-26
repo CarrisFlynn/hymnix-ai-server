@@ -805,7 +805,7 @@ function App() {
         setApprovalsError(t("The request expired before you decided"));
         setApprovals((current) => current.filter((row) => row.id !== record.id));
         resolve({ decision: "deny" });
-      }, 90_000);
+      }, 55_000);
       approvalWaiters.current.set(record.id, (outcome) => { window.clearTimeout(timer); resolve(outcome); });
       void refreshApprovals();
     });
@@ -1320,7 +1320,9 @@ function App() {
     }, 350);
     return () => window.clearTimeout(timer);
   }, [messages, draft, model, currentSessionId, sessionName, savedSessions.length]);
-  useEffect(() => { installAutoTranslate(); }, [lang]);
+  // No DOM rewriting: every string goes through t()/tf(), which keeps React and
+  // the language switch in agreement (the old MutationObserver could not undo).
+
   useEffect(() => { translateDom(); }, [active, messages, models, state, error, termEntries, fileText, history]);
   useEffect(() => {
     const offOut = window.hymnix.terminal.onOutput((event: any) => {
@@ -1624,7 +1626,8 @@ function App() {
     setMessages((current) => {
       const last = current[current.length - 1];
       if (!last || last.role !== "assistant" || last.error) return current;
-      return current.map((item, index) => index === current.length - 1 ? { ...item, stopped: item.stopped || !item.content ? true : item.stopped, tokensPerSecond: undefined } : item);
+      // A manual stop is a fact, not a guess about whether content arrived.
+        return current.map((item, index) => index === current.length - 1 ? { ...item, stopped: true, tokensPerSecond: undefined } : item);
     });
   }
   function editMessage(index: number): void {
@@ -3282,8 +3285,8 @@ function App() {
           <div className="drawer-toolbar">
             <label className="drawer-check"><input type="checkbox" checked={approvals.length > 0 && approvalsSelected.length === approvals.length} onChange={() => setApprovalsSelected(approvalsSelected.length === approvals.length ? [] : pendingApprovals.map((row) => row.id))} />{t("Select all")}</label>
             <button type="button" className="btn ghost" onClick={() => setApprovalsRiskFirst((value) => !value)}>{t(approvalsRiskFirst ? "Risk first" : "Newest first")}</button>
-            <button type="button" className="btn primary" onClick={() => void decideApprovals("approve")} disabled={approvalsBusy || !approvals.length}>{t("Allow selected")}</button>
-            <button type="button" className="btn danger" onClick={() => void decideApprovals("deny")} disabled={approvalsBusy || !approvals.length}>{t("Deny selected")}</button>
+            <button type="button" className="btn primary" onClick={() => void decideApprovals("approve")} disabled={approvalsBusy || !approvals.length || !approvalsSelected.length}>{t("Allow selected")}</button>
+            <button type="button" className="btn danger" onClick={() => void decideApprovals("deny")} disabled={approvalsBusy || !approvals.length || !approvalsSelected.length}>{t("Deny selected")}</button>
           </div>
           {approvals.length === 0
             ? <p className="drawer-note">{t("Nothing is waiting for you.")}</p>

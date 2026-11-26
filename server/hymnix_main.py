@@ -7188,7 +7188,7 @@ class HuimengAIClient:
                 cfg = json.load(open(path, encoding="utf-8"))
             except Exception:
                 cfg = {}
-        cfg.update({"listen_host": "0.0.0.0", "listen_port": port,
+        cfg.update({"listen_host": "127.0.0.1", "listen_port": port,
                     "upstream_host": "127.0.0.1", "upstream_port": 11434,
                     "max_body_mb": 32, "online_timeout_s": 120, "keep_log_days": 30})
         if api_key:

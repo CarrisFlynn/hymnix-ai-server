@@ -1055,6 +1055,9 @@ function registerCloudIpc(): void {
     if (current.online) return { ok: true, online: true, ready: true, models: current.models };
     try {
       ownedOllama = spawn("ollama", ["serve"], { windowsHide: true, stdio: "ignore", detached: false });
+      // "command not found" is an asynchronous error event, not a throw; without
+      // this listener the whole main process died when Ollama was not installed.
+      ownedOllama.on("error", () => { ownedOllama = null; });
     } catch (error) {
       return { ok: false, online: false, ready: false, code: "ollama_unavailable", error: "ollama_unavailable",
         detail: "Ollama is not installed or not on PATH." };

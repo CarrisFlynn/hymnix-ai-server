@@ -357,7 +357,7 @@ release-1.3.0/  published installer, portable build and release documents
 
 ## Security notes
 
-Windows builds are code signed through the [SignPath Foundation](https://signpath.org/).
+Windows builds are **not code signed yet**; the installers are unsigned and Windows SmartScreen will warn on first run.
 
 
 - The gateway is local-first and requires an API key for model requests and a separate administration key for administrative endpoints.
