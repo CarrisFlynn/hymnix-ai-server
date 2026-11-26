@@ -1,6 +1,6 @@
 {
   "name": "hymnix-desktop",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "private": true,
   "description": "Hymnix Orbit - Hymnix scheduler with local gateway connectivity: orchestrate local models, serve a private OpenAI-compatible endpoint, keep every session on your machine.",
   "author": {
@@ -10,7 +10,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && vite build && node scripts/fix-renderer-html.mjs dist/renderer/index.html",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node tests/protocol.test.mjs && node --test tests/gateway-lifecycle.test.mjs tests/model-download.test.mjs tests/model-catalog.test.mjs tests/pull-stream.test.mjs tests/terminal-bridge.test.mjs tests/providers.test.mjs tests/components.test.mjs tests/schedule.test.mjs",
+    "test": "node tests/protocol.test.mjs && node --test tests/gateway-lifecycle.test.mjs tests/model-download.test.mjs tests/model-catalog.test.mjs tests/pull-stream.test.mjs tests/terminal-bridge.test.mjs tests/providers.test.mjs tests/components.test.mjs tests/schedule.test.mjs tests/automation.test.mjs",
     "check:css": "node ../tools/check-css-tokens.mjs",
     "check:contrast": "node ../tools/check-contrast.mjs",
     "check:design": "pnpm check:css && pnpm check:contrast",
@@ -59,7 +59,7 @@
         "to": "engine-java/build/hymnix-engine.jar"
       },
       {
-        "from": "../build/hymnix-orbit2-backend/hymnix-server-1.4.0-x64.exe",
+        "from": "../build/hymnix-orbit2-backend/hymnix-server-1.4.1-x64.exe",
         "to": "backend-gateway-headless.exe"
       }
     ],

@@ -2,6 +2,25 @@
 
 Only user-visible changes are listed. Internal refactors, test scaffolding and machine-specific paths are intentionally omitted.
 
+## 1.4.1 — 2026-11-27
+
+Fixes from the fourth review: four defects in the code that shipped in 1.4.0, plus two request-boundary holes.
+
+### Fixed
+
+- **"Always allow" could silently revoke itself.** The confirm button ran a toggle, so a tool that was already auto-approved was removed from the allowlist while the current request was approved. Adding and removing are separate actions now: an allowed tool shows **Revoke always-allow** and clicking it only revokes, without deciding anything.
+- **The approval row never disabled while answering.** The in-flight state was declared but never set, so a double click could decide the same request twice. It is set and cleared around the decision now.
+- **Plugin handlers could run their side effects twice.** If a handler raised `TypeError`/`ValueError` after doing work, the wrapper retried it without arguments. The calling convention is decided by the signature only; exceptions propagate.
+- **`automation.update()` mutated before validating.** A rejected rule left the live task half-edited. Values are validated into locals first, then applied.
+
+### Security
+
+- **Duplicate `Content-Length` headers** are rejected with `400 conflicting_content_length` and the connection is closed (verified with a raw socket: one response).
+- **GET / HEAD / DELETE with a body** are rejected with `400 body_not_allowed`; previously the unread bytes could be parsed as the next request on a keep-alive connection.
+- **`_save_cfg()` did not exist.** Tunnel code called it inside `try/except: pass`, so the forwarded-header flag never persisted; it now writes the configuration atomically.
+- **Tunnel trust no longer switches on before the tunnel works.** The flag is set only after cloudflared spawns, and a failed start leaves it off.
+- **`fs.write` names one contract.** `data`/`text` are normalised to `content` before validation, and the schema requires `path` + `content`, so the model no longer sees a contract it cannot satisfy.
+
 ## 1.4.0 — 2026-11-26
 
 The six capabilities the desktop shell was missing, four provider dialects behind one composer, and three rounds of security review closed.

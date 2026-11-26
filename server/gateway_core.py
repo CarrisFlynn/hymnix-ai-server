@@ -290,6 +290,10 @@ def _write_text_atomic(path, text):
         raise
 
 
+def _save_cfg():
+    """Persist the live configuration through the atomic writer."""
+    _write_text_atomic(CONFIG_PATH, json.dumps(CFG, ensure_ascii=False, indent=2))
+
 def _today_str():
     return time.strftime("%Y-%m-%d")
 
@@ -652,13 +656,8 @@ def _tunnel_watchdog():
 
 
 def start_tunnel():
-    # cloudflared reaches us over loopback, so without trusting its headers every
-    # guest would look like 127.0.0.1. The flag is scoped to the tunnel's lifetime.
-    CFG["trust_proxy_headers"] = True
-    try:
-        _save_cfg()
-    except Exception:
-        pass
+    # Forwarded identity is only believable while our own tunnel is the hop, so the
+    # flag is turned on after a successful spawn and cleared when the tunnel stops.
     if not str(CFG.get("host_password") or "").strip():
         TUNNEL_STATE["state"] = "failed"
         _tunnel_note("refused: share password is empty")
@@ -683,6 +682,12 @@ def start_tunnel():
         _tunnel_note("spawn failed: %s" % exc)
         return tunnel_status()
     TUNNEL_STATE["proc"] = proc
+    # Forwarded identity is only believable while our own tunnel is the hop.
+    CFG["trust_proxy_headers"] = True
+    try:
+        _save_cfg()
+    except Exception:
+        CFG["trust_proxy_headers"] = False
     TUNNEL_STATE["state"] = "starting"
     TUNNEL_STATE["url"] = ""
     TUNNEL_STATE["started_ever"] = True
@@ -1888,6 +1893,35 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
             return
+
+        # Two different Content-Length values mean the sender is trying to make the
+        # proxy and the server disagree about where this request ends.
+        try:
+            lengths = self.headers.get_all("Content-Length") or []
+        except AttributeError:
+            lengths = [self.headers.get("Content-Length")] if self.headers.get("Content-Length") else []
+        declared_values = {str(value).strip() for value in lengths}
+        if len(declared_values) > 1:
+            self.close_connection = True
+            try:
+                self._json(400, {"ok": False, "error": "conflicting_content_length"})
+            except Exception:
+                pass
+            return
+        # GET, HEAD and DELETE never carry a body here. An unread body would be
+        # parsed as the next request on this keep-alive connection.
+        if method in ("GET", "HEAD", "DELETE"):
+            try:
+                declared = int(next(iter(declared_values), "0") or 0)
+            except ValueError:
+                declared = 0
+            if declared > 0:
+                self.close_connection = True
+                try:
+                    self._json(400, {"ok": False, "error": "body_not_allowed"})
+                except Exception:
+                    pass
+                return
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
         try:

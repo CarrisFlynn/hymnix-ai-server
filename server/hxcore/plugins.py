@@ -24,13 +24,17 @@ _TIMEOUT=float(os.environ.get("HX_PLUGIN_TIMEOUT", "3"))
 # os/sys objects: random._os is os, so one attribute access escaped the sandbox.
 _MODULE_ATTRS={"_os","_sys","os","sys","_io","io","_builtins","builtins","_warnings","_imp","_thread","_signal","_ctypes","ctypes","_collections_abc","_frozen_importlib","_frozen_importlib_external","importlib","posixpath","ntpath","subprocess","_random","_socket"}
 def _call_handler(handler, args):
-    """Call a plugin handler with args when it accepts one, without args otherwise."""
+    """Call a plugin handler with args when its signature accepts one.
+
+    Only the signature decides the calling convention. An exception raised inside
+    the handler must propagate: retrying without arguments would run its side
+    effects twice.
+    """
     try:
-        if len(inspect.signature(handler).parameters) >= 1:
-            return handler(args)
+        parameters = inspect.signature(handler).parameters
     except (TypeError, ValueError):
-        pass
-    return handler()
+        return handler()
+    return handler(args) if len(parameters) >= 1 else handler()
 
 
 _FORBIDDEN_ATTRS={"__class__","__base__","__bases__","__subclasses__","__mro__","__globals__","__builtins__","__code__","__closure__","__dict__","__getattribute__","__import__","__loader__","__spec__","__reduce__","__reduce_ex__",

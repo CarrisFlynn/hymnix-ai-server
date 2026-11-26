@@ -1,6 +1,7 @@
 export type Lang = "en" | "zh";
 
 export const zh: Record<string, string> = {
+  "Revoke always-allow": "撤销总是允许",
   "Every future call to {tool} is approved automatically, whatever arguments it carries. This request is approved now as well.": "之后对 {tool} 的每一次调用都会自动放行，不管带什么参数；当前这条请求也会同时被批准。",
   "Answering…": "处理中…",
   "That date is more than five years away": "这个日期在五年以后，太远了",

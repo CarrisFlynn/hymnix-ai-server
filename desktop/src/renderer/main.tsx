@@ -771,12 +771,15 @@ function App() {
   }
   /** Turning an automatic approval off is immediate; turning it on is a dialog. */
   function forgetAlwaysAllow(tool: string): void {
-    writeAlwaysAllow(tool);
+    setAlwaysAllowFor(tool, false);
   }
   /** Persist one tool-wide automatic approval (only called after the risk dialog). */
-  function writeAlwaysAllow(tool: string): void {
+  /** Persist one tool-wide approval. Adding and removing are separate on purpose. */
+  function setAlwaysAllowFor(tool: string, allowed: boolean): void {
     setAlwaysAllow((current) => {
-      const next = current.includes(tool) ? current.filter((item) => item !== tool) : current.concat([tool]);
+      const next = allowed
+        ? (current.includes(tool) ? current : current.concat([tool]))
+        : current.filter((item) => item !== tool);
       writeJsonArray(ALWAYS_ALLOW_KEY, next);
       return next;
     });
@@ -787,6 +790,9 @@ function App() {
    * real answer instead of calling the tool again.
    */
   async function decideApproval(id: string, decision: "approve" | "deny"): Promise<{ ok: boolean; result?: unknown; error?: string }> {
+    if (answeringRef.current.has(id)) return { ok: false, error: "in_flight" };
+    answeringRef.current.add(id);
+    setAnswering((current) => current.concat([id]));
     const record = approvals.find((item) => item.id === id);
     const waiter = approvalWaiters.current.get(id);
     setApprovalsBusy(true); setApprovalsError("");
@@ -804,7 +810,11 @@ function App() {
       setApprovalsError(message);
       if (waiter) { approvalWaiters.current.delete(id); waiter({ decision: "deny" }); }
       return { ok: false, error: message };
-    } finally { setApprovalsBusy(false); }
+    } finally {
+      answeringRef.current.delete(id);
+      setAnswering((current) => current.filter((row) => row !== id));
+      setApprovalsBusy(false);
+    }
   }
   function toggleApprovalSelection(id: string): void {
     setApprovalsSelected((current) => current.includes(id) ? current.filter((row) => row !== id) : current.concat([id]));
@@ -3494,7 +3504,12 @@ function App() {
                   <div className="approval-row-actions">
                     <button type="button" className="btn primary" onClick={() => void decideApproval(row.id, "approve")} disabled={approvalsBusy || answering.includes(row.id)}>{t("Allow once")}</button>
                     <button type="button" className="btn danger" onClick={() => void decideApproval(row.id, "deny")} disabled={approvalsBusy || answering.includes(row.id)}>{t("Deny")}</button>
-                    <button type="button" className={alwaysAllow.includes(row.tool) ? "btn primary" : "btn ghost"} onClick={() => { setRiskAcknowledged(false); setAlwaysAllowConfirm({ tool: row.tool, id: row.id }); }}>{t(alwaysAllow.includes(row.tool) ? "Always allowed" : "Always allow")}</button>
+                    <button type="button" className={alwaysAllow.includes(row.tool) ? "btn ghost" : "btn ghost"} onClick={() => {
+                      if (answering.includes(row.id)) return;
+                      if (alwaysAllow.includes(row.tool)) { setAlwaysAllowFor(row.tool, false); return; }
+                      setRiskAcknowledged(false);
+                      setAlwaysAllowConfirm({ tool: row.tool, id: row.id });
+                    }} disabled={answering.includes(row.id)}>{t(answering.includes(row.id) ? "Answering…" : alwaysAllow.includes(row.tool) ? "Revoke always-allow" : "Always allow")}</button>
                     <button type="button" className={sessionAllow.includes(row.tool) ? "btn primary" : "btn ghost"} onClick={() => toggleSessionAllow(row.tool)}>{t(sessionAllow.includes(row.tool) ? "Allowed this session" : "Allow this session")}</button>
                   </div>
                 </li>)}
@@ -3672,7 +3687,7 @@ function App() {
         <label className="risk-ack"><input type="checkbox" checked={riskAcknowledged} onChange={(event) => setRiskAcknowledged(event.target.checked)} />{t("I understand, and I want to continue")}</label>
         <div className="dialog-actions">
           <button type="button" className="btn" onClick={() => setAlwaysAllowConfirm(null)}>{t("Cancel")}</button>
-          <button type="button" className="btn danger" disabled={!riskAcknowledged} onClick={() => { const pending = alwaysAllowConfirm; setAlwaysAllowConfirm(null); if (pending) { writeAlwaysAllow(pending.tool); void decideApproval(pending.id, "approve"); } }}>{t("Always allow")}</button>
+          <button type="button" className="btn danger" disabled={!riskAcknowledged} onClick={() => { const pending = alwaysAllowConfirm; setAlwaysAllowConfirm(null); if (pending) { setAlwaysAllowFor(pending.tool, true); void decideApproval(pending.id, "approve"); } }}>{t("Always allow")}</button>
         </div>
       </section>
     </div>}

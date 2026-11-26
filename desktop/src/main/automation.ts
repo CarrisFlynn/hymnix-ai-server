@@ -11,7 +11,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { AutomationTask, ScheduleRule } from "../shared/protocol";
-import { advanceOccurrence, nextOccurrence, normalizeRule } from "../shared/schedule";
+import { advanceOccurrence, nextOccurrence, normalizeRule } from "../shared/schedule.ts";
 
 const MAX_TASKS = 50;
 const TICK_MS = 20_000;
@@ -26,12 +26,22 @@ export class AutomationCenter {
   private tasks: AutomationTask[] = [];
   private timer: NodeJS.Timeout | null = null;
 
+  private readonly file: string;
+  private readonly deliver: Deliver;
+  private readonly publish: (task: AutomationTask) => void;
+  private readonly clock: () => number;
+
   constructor(
-    private readonly file: string,
-    private readonly deliver: Deliver,
-    private readonly publish: (task: AutomationTask) => void,
-    private readonly clock: () => number = Date.now,
-  ) {}
+    file: string,
+    deliver: Deliver,
+    publish: (task: AutomationTask) => void,
+    clock: () => number = Date.now,
+  ) {
+    this.file = file;
+    this.deliver = deliver;
+    this.publish = publish;
+    this.clock = clock;
+  }
 
   /** Read the store; anything malformed is dropped rather than guessed at. */
   load(): void {
@@ -86,29 +96,38 @@ export class AutomationCenter {
   update(id: string, patch: { title?: unknown; prompt?: unknown; rule?: unknown; enabled?: unknown }): { ok: boolean; task?: AutomationTask; error?: string } {
     const task = this.tasks.find((item) => item.id === id);
     if (!task) return { ok: false, error: "not_found" };
+    // Validate into locals first: a rejected patch must not leave the live task
+    // half-edited, even when nothing is saved.
+    let title = task.title;
+    let prompt = task.prompt;
+    let rule = task.rule;
+    let nextAt = task.nextAt;
     if (patch.title !== undefined) {
-      const title = String(patch.title).trim().slice(0, MAX_TITLE);
+      title = String(patch.title).trim().slice(0, MAX_TITLE);
       if (!title) return { ok: false, error: "title_required" };
-      task.title = title;
     }
     if (patch.prompt !== undefined) {
-      const prompt = String(patch.prompt).trim().slice(0, MAX_PROMPT);
+      prompt = String(patch.prompt).trim().slice(0, MAX_PROMPT);
       if (!prompt) return { ok: false, error: "prompt_required" };
-      task.prompt = prompt;
     }
     if (patch.rule !== undefined) {
       const normalized = normalizeRule(patch.rule);
       if ("error" in normalized) return { ok: false, error: normalized.error };
-      task.rule = normalized.rule;
-      const next = nextOccurrence(task.rule, this.clock());
-      if (next == null) return { ok: false, error: "not_future" };
-      if (task.rule.kind === "at" && task.rule.at - this.clock() > MAX_AHEAD_MS) return { ok: false, error: "too_far" };
-      task.nextAt = next;
+      rule = normalized.rule;
+      nextAt = nextOccurrence(rule, this.clock());
+      if (nextAt == null) return { ok: false, error: "not_future" };
+      if (rule.kind === "at" && rule.at - this.clock() > MAX_AHEAD_MS) return { ok: false, error: "too_far" };
     }
+    let enabled = task.enabled;
     if (patch.enabled !== undefined) {
-      task.enabled = Boolean(patch.enabled);
-      task.nextAt = task.enabled ? nextOccurrence(task.rule, this.clock()) : null;
+      enabled = Boolean(patch.enabled);
+      nextAt = enabled ? nextOccurrence(rule, this.clock()) : null;
     }
+    task.title = title;
+    task.prompt = prompt;
+    task.rule = rule;
+    task.enabled = enabled;
+    task.nextAt = nextAt;
     this.save();
     this.publish(task);
     return { ok: true, task: { ...task } };
