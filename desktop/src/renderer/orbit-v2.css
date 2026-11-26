@@ -438,6 +438,10 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 .list-row strong, .list-row small { display: block; }
 .list-row small { margin-top: 3px; color: var(--muted); font-size: calc(11px * var(--text-scale, 1)); }
 .history-actions { display: flex; align-items: center; gap: 5px; }
+/* Monitor lives inside Sharing now: the nested page keeps its cards but drops
+   the page padding, so it reads as one more section of the same page. */
+.view-page .view-page { padding: 0; min-height: 0; }
+.view-page .view-page .page-head { margin-top: var(--s-5); }
 .metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 12px; }
 .metric-card { display: flex; min-width: 0; flex-direction: column; gap: 7px; padding: 13px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
 .metric-card > span { color: var(--muted); font-size: calc(11px * var(--text-scale, 1)); }

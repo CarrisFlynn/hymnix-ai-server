@@ -25,9 +25,21 @@ export type AdminModelActionResponse = { ok: boolean; model: string; status?: st
 
 export type GatewayMessageRole = "system" | "user" | "assistant" | "tool";
 
+export type GatewayToolCall = {
+  id: string;
+  type?: string;
+  function: { name: string; arguments: string };
+};
+
 export type GatewayMessage = {
   role: GatewayMessageRole;
   content: string;
+  /** assistant turns: the calls the model asked for. */
+  tool_calls?: GatewayToolCall[];
+  /** tool turns: which call this answers. */
+  tool_call_id?: string;
+  /** tool turns: the tool name, for dialects that match by name. */
+  name?: string;
 };
 
 export type GatewayError = {
@@ -201,7 +213,8 @@ export type AdminClientsResponse = {
  * The three upstream dialects Hymnix can speak. `anthropic` is the Messages API
  * Claude Code uses; `openclaw` is an OpenClaw gateway, which routes by agent.
  */
-export type ProviderKind = "openai" | "anthropic" | "openclaw";
+/** Every dialect the desktop can speak. `ollama` is the native /api/chat API. */
+export type ProviderKind = "ollama" | "openai" | "anthropic" | "openclaw";
 
 export type ProviderConfig = {
   kind: ProviderKind;

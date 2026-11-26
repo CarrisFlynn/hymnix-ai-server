@@ -3,16 +3,21 @@ import { createServer } from "node:http";
 import { after, before, describe, it } from "node:test";
 import {
   chatEndpoint,
+  detectKind,
   listProviderModels,
   messagesEndpoint,
   modelsEndpoint,
   normalizeKind,
+  ollamaEndpoint,
   openClawModel,
   probeProvider,
   providerConfig,
   readableError,
   streamProvider,
+  toAnthropicChat,
   toAnthropicMessages,
+  toAnthropicTools,
+  toOllamaMessages,
 } from "../src/main/providers.ts";
 
 /** Small HTTP server that records the last request and replies with a scripted body. */
@@ -315,5 +320,172 @@ describe("failures stay explainable", () => {
   it("explains a closed port instead of leaking a stack trace", () => {
     assert.match(readableError(new Error("fetch failed")), /连不上这个地址/);
     assert.match(readableError(JSON.parse('{"status":404,"message":"nope"}') && JSON.stringify({ status: 404, message: "nope" })), /404/);
+  });
+});
+
+
+// --- four dialects, one contract -------------------------------------------
+// Every transport must (a) send the tools it was given and (b) surface a tool
+// call as a tool_calls delta, or the plan/approval loop cannot run on it.
+
+function callCollector() {
+  const calls = new Map();
+  return {
+    emit(delta) {
+      for (const raw of delta.choices?.[0]?.delta?.tool_calls ?? []) {
+        const key = raw.index ?? 0;
+        const current = calls.get(key) ?? { id: "", name: "", arguments: "" };
+        calls.set(key, { id: raw.id || current.id, name: raw.function?.name || current.name, arguments: current.arguments + (raw.function?.arguments || "") });
+      }
+    },
+    list() { return [...calls.values()].filter((call) => call.name); },
+  };
+}
+
+const DATA = (payload) => "data: " + JSON.stringify(payload) + "\n\n";
+const TOOL = [{ type: "function", function: { name: "fs.write", description: "write", parameters: { type: "object", properties: { path: { type: "string" }, content: { type: "string" } } } } }];
+
+describe("native Ollama dialect", () => {
+  it("maps tool calls to objects and tool results to plain messages", () => {
+    const rows = toOllamaMessages([
+      { role: "system", content: "be brief" },
+      { role: "user", content: "go" },
+      { role: "assistant", content: "", tool_calls: [{ id: "c1", function: { name: "fs.write", arguments: JSON.stringify({ path: "a.txt", content: "x" }) } }] },
+      { role: "tool", content: "ok", tool_call_id: "c1", name: "fs.write" },
+    ]);
+    assert.deepEqual(rows[0], { role: "system", content: "be brief" });
+    assert.equal(rows[2].role, "assistant");
+    assert.deepEqual(rows[2].tool_calls[0].function, { name: "fs.write", arguments: { path: "a.txt", content: "x" } });
+    assert.equal(rows[3].role, "tool");
+    assert.equal(rows[3].content, "ok");
+    assert.equal(rows[3].tool_name, "fs.write");
+  });
+
+  it("posts /api/chat with tools and returns structured calls", async () => {
+    const { server, seen } = recorder((_, response) => {
+      response.writeHead(200, { "content-type": "application/x-ndjson" });
+      response.write(JSON.stringify({ message: { role: "assistant", content: "thinking" }, done: false }) + "\n");
+      response.write(JSON.stringify({ message: { role: "assistant", content: "", tool_calls: [{ function: { name: "fs.write", arguments: { path: "x.txt", content: "hi" } } }] }, done: false }) + "\n");
+      response.write(JSON.stringify({ message: { role: "assistant", content: "" }, done: true }) + "\n");
+      response.end();
+    });
+    const base = await listen(server);
+    const sink = callCollector();
+    const texts = [];
+    await streamProvider(
+      { kind: "ollama", baseUrl: base, model: "qwen3:8b", apiKey: "" },
+      [{ role: "user", content: "write a file" }],
+      new AbortController().signal,
+      (delta) => { sink.emit(delta); const chunk = delta.choices?.[0]?.delta?.content; if (chunk) texts.push(chunk); },
+      TOOL,
+    );
+    server.close();
+    assert.equal(seen[0].url, "/api/chat");
+    assert.equal(seen[0].body.model, "qwen3:8b");
+    assert.equal(seen[0].body.tools[0].function.name, "fs.write");
+    assert.deepEqual(texts, ["thinking"]);
+    const calls = sink.list();
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].name, "fs.write");
+    assert.deepEqual(JSON.parse(calls[0].arguments), { path: "x.txt", content: "hi" });
+  });
+
+  it("builds the native endpoint from any base form", () => {
+    assert.equal(ollamaEndpoint("http://127.0.0.1:11434", "/api/chat"), "http://127.0.0.1:11434/api/chat");
+    assert.equal(ollamaEndpoint("http://127.0.0.1:11434/", "/api/tags"), "http://127.0.0.1:11434/api/tags");
+    assert.equal(ollamaEndpoint("http://127.0.0.1:11434/v1", "/api/chat"), "http://127.0.0.1:11434/api/chat");
+  });
+
+  it("detects the dialect from the address", () => {
+    assert.equal(detectKind("http://127.0.0.1:11434"), "ollama");
+    assert.equal(detectKind("http://127.0.0.1:11434/v1"), "ollama");
+    assert.equal(detectKind("https://api.anthropic.com"), "anthropic");
+    assert.equal(detectKind("http://127.0.0.1:18789"), "openclaw");
+    assert.equal(detectKind("https://api.deepseek.com/v1"), "openai");
+    assert.equal(normalizeKind("ollama"), "ollama");
+    assert.equal(normalizeKind("local"), "ollama");
+  });
+});
+
+describe("tool plumbing in the other three dialects", () => {
+  it("posts OpenAI tools verbatim and forwards tool_calls deltas", async () => {
+    const { server, seen } = recorder((_, response) => {
+      sse(response, [
+        DATA({ choices: [{ delta: { tool_calls: [{ index: 0, id: "call_1", function: { name: "fs.write", arguments: '{"path":"a",' } }] } }] }),
+        DATA({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '"content":"b"}' } }] } }] }),
+        "data: [DONE]\n\n",
+      ]);
+    });
+    const base = await listen(server);
+    const sink = callCollector();
+    await streamProvider(
+      { kind: "openai", baseUrl: base, model: "gpt-4o-mini", apiKey: "k" },
+      [{ role: "user", content: "go" }],
+      new AbortController().signal,
+      (delta) => sink.emit(delta),
+      TOOL,
+    );
+    server.close();
+    assert.equal(seen[0].url, "/v1/chat/completions");
+    assert.equal(seen[0].body.tools[0].function.name, "fs.write");
+    assert.equal(seen[0].headers.authorization, "Bearer k");
+    assert.deepEqual(JSON.parse(sink.list()[0].arguments), { path: "a", content: "b" });
+  });
+
+  it("posts Anthropic tools with input_schema and reassembles tool_use blocks", async () => {
+    const { server, seen } = recorder((_, response) => {
+      sse(response, [
+        DATA({ type: "content_block_start", index: 1, content_block: { type: "tool_use", id: "toolu_1", name: "fs.write" } }),
+        DATA({ type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: '{"path":"a.txt"}' } }),
+        DATA({ type: "message_stop" }),
+      ]);
+    });
+    const base = await listen(server);
+    const sink = callCollector();
+    await streamProvider(
+      { kind: "anthropic", baseUrl: base, model: "claude-sonnet-4-5", apiKey: "k" },
+      [{ role: "system", content: "be brief" }, { role: "user", content: "go" }],
+      new AbortController().signal,
+      (delta) => sink.emit(delta),
+      TOOL,
+    );
+    server.close();
+    assert.equal(seen[0].url, "/v1/messages");
+    assert.equal(seen[0].body.system, "be brief");
+    assert.equal(seen[0].body.tools[0].name, "fs.write");
+    assert.deepEqual(seen[0].body.tools[0].input_schema, TOOL[0].function.parameters);
+    const calls = sink.list();
+    assert.equal(calls[0].name, "fs.write");
+    assert.deepEqual(JSON.parse(calls[0].arguments), { path: "a.txt" });
+  });
+
+  it("carries tool results back to Anthropic as tool_result blocks", () => {
+    const { messages } = toAnthropicChat([
+      { role: "user", content: "fix it" },
+      { role: "assistant", content: "on it", tool_calls: [{ id: "toolu_1", function: { name: "fs.write", arguments: JSON.stringify({ path: "a" }) } }] },
+      { role: "tool", content: "written", tool_call_id: "toolu_1", name: "fs.write" },
+    ]);
+    const blocks = messages.flatMap((turn) => (Array.isArray(turn.content) ? turn.content : []));
+    assert.ok(blocks.some((block) => block.type === "tool_use" && block.id === "toolu_1"));
+    assert.ok(blocks.some((block) => block.type === "tool_result" && block.tool_use_id === "toolu_1"));
+  });
+
+  it("passes tools to OpenClaw and keeps its agent header", async () => {
+    const { server, seen } = recorder((_, response) => {
+      sse(response, [DATA({ choices: [{ delta: { content: "hi" } }] }), "data: [DONE]\n\n"]);
+    });
+    const base = await listen(server);
+    await streamProvider(
+      { kind: "openclaw", baseUrl: base, model: "openclaw", apiKey: "k", agentId: "research" },
+      [{ role: "user", content: "hello" }],
+      new AbortController().signal,
+      () => undefined,
+      TOOL,
+    );
+    server.close();
+    assert.equal(seen[0].url, "/v1/chat/completions");
+    assert.equal(seen[0].headers["x-openclaw-agent-id"], "research");
+    assert.equal(seen[0].body.tools[0].function.name, "fs.write");
+    assert.equal(seen[0].body.model, "openclaw/research");
   });
 });

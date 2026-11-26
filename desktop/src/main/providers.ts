@@ -20,7 +20,7 @@
  */
 import type { ChatDelta, ChatToolCallDelta, GatewayMessage } from "../shared/protocol";
 
-export type ProviderKind = "openai" | "anthropic" | "openclaw";
+export type ProviderKind = "ollama" | "openai" | "anthropic" | "openclaw";
 
 export type ProviderConfig = {
   kind: ProviderKind;
@@ -46,12 +46,18 @@ export type ProviderProbe = {
   message: string;
 };
 
-export const PROVIDER_KINDS: ProviderKind[] = ["openai", "anthropic", "openclaw"];
+export const PROVIDER_KINDS: ProviderKind[] = ["ollama", "openai", "anthropic", "openclaw"];
 
 /** Anthropic's docs default; also what Claude Code asks for on short turns. */
 export const ANTHROPIC_DEFAULT_MAX_TOKENS = 8192;
 
 export const PROVIDER_DEFAULTS: Record<ProviderKind, { label: string; baseUrl: string; model: string; hint: string }> = {
+  ollama: {
+    label: "Ollama (native)",
+    baseUrl: "http://127.0.0.1:11434",
+    model: "qwen3:8b",
+    hint: "The daemon's own POST /api/chat: tool calls arrive structured, and no API key is needed.",
+  },
   openai: {
     label: "OpenAI compatible",
     baseUrl: "https://api.openai.com",
@@ -76,7 +82,20 @@ export function normalizeKind(value: unknown): ProviderKind {
   const text = String(value ?? "").trim().toLowerCase().replace(/[\s_]+/g, "-");
   if (text === "anthropic" || text === "claude" || text === "claude-code" || text === "claudeai") return "anthropic";
   if (text === "openclaw" || text === "open-claw" || text === "claw") return "openclaw";
+  if (text === "ollama" || text === "local" || text === "ollama-local" || text === "daemon") return "ollama";
   return "openai";
+}
+
+/**
+ * Guess the dialect from an address, so a pasted local or vendor URL works
+ * without the user understanding the difference first.
+ */
+export function detectKind(baseUrl: string, fallback: ProviderKind = "openai"): ProviderKind {
+  const value = String(baseUrl ?? "").toLowerCase();
+  if (/:11434\b/.test(value) || /\/api\/(chat|tags|generate|ps)\b/.test(value)) return "ollama";
+  if (/anthropic\.com|claude/.test(value)) return "anthropic";
+  if (/openclaw|:18789\b/.test(value)) return "openclaw";
+  return fallback;
 }
 
 export function providerConfig(input: Partial<ProviderConfig> | null | undefined): ProviderConfig {
@@ -132,6 +151,13 @@ export function modelsEndpoint(base: string): string {
 
 export function messagesEndpoint(base: string): string {
   return withVersionSuffix(base, "/messages", true);
+}
+
+/** Native Ollama endpoint: the address is its own root, not an OpenAI /v1. */
+export function ollamaEndpoint(base: string, path: string): string {
+  const root = stripBase(base).replace(/\/v1$/, "");
+  if (!root) throw new Error(JSON.stringify({ code: "base_url_missing", message: "Enter a provider address first" }));
+  return root + path;
 }
 
 // ------------------------------------------------------------------- errors
@@ -261,13 +287,168 @@ async function getJson(url: string, headers: Record<string, string>, signal: Abo
 
 // ------------------------------------------------------------------ OpenAI
 
-async function streamOpenai(config: ProviderConfig, messages: GatewayMessage[], signal: AbortSignal, emit: (delta: ChatDelta) => void): Promise<void> {
+function safeParseArgs(value: unknown): Record<string, unknown> {
+  if (value && typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
+  if (typeof value !== "string" || !value.trim()) return {};
+  try { const parsed = JSON.parse(value); return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {}; } catch { return {}; }
+}
+
+/** Ollama wants tool-call arguments as objects and tool results as plain messages. */
+export function toOllamaMessages(messages: GatewayMessage[]): Array<Record<string, unknown>> {
+  const rows: Array<Record<string, unknown>> = [];
+  for (const message of messages ?? []) {
+    if (!message) continue;
+    if (message.role === "assistant" && message.tool_calls?.length) {
+      rows.push({
+        role: "assistant",
+        content: message.content || "",
+        tool_calls: message.tool_calls.map((call) => ({ function: { name: call.function.name, arguments: safeParseArgs(call.function.arguments) } })),
+      });
+      continue;
+    }
+    if (message.role === "tool") {
+      const row: Record<string, unknown> = { role: "tool", content: message.content ?? "" };
+      if (message.name) row.tool_name = message.name;
+      rows.push(row);
+      continue;
+    }
+    rows.push({ role: message.role, content: message.content ?? "" });
+  }
+  return rows;
+}
+
+/** OpenAI / OpenClaw tool schema is passed through untouched. */
+export function toOpenAiTools(tools: unknown): unknown[] | undefined {
+  return Array.isArray(tools) && tools.length ? tools : undefined;
+}
+
+/** Anthropic declares the schema under input_schema. */
+export function toAnthropicTools(tools: unknown): Array<Record<string, unknown>> | undefined {
+  if (!Array.isArray(tools) || !tools.length) return undefined;
+  return tools.map((tool) => {
+    const fn = (tool as { function?: { name?: unknown; description?: unknown; parameters?: unknown } }).function ?? {};
+    return {
+      name: String(fn.name ?? ""),
+      description: String(fn.description ?? ""),
+      input_schema: (fn.parameters as Record<string, unknown>) ?? { type: "object", properties: {} },
+    };
+  }).filter((tool) => tool.name);
+}
+
+/**
+ * OpenAI-shaped history → Anthropic turns, including tool_use and tool_result
+ * blocks so the Messages API can actually run a tool loop.
+ */
+export function toAnthropicChat(messages: GatewayMessage[]): { system: string; messages: Array<{ role: "user" | "assistant"; content: unknown }> } {
+  const system: string[] = [];
+  const turns: Array<{ role: "user" | "assistant"; content: unknown }> = [];
+  const push = (role: "user" | "assistant", block: unknown) => {
+    const last = turns[turns.length - 1];
+    if (last && last.role === role) {
+      if (Array.isArray(last.content)) last.content.push(block);
+      else last.content = [{ type: "text", text: last.content }, block];
+      return;
+    }
+    turns.push({ role, content: Array.isArray(block) ? block : [block] });
+  };
+  for (const message of messages ?? []) {
+    if (!message) continue;
+    if (message.role === "system") { if (message.content) system.push(message.content); continue; }
+    if (message.role === "tool") {
+      push("user", { type: "tool_result", tool_use_id: message.tool_call_id ?? "", content: message.content ?? "" });
+      continue;
+    }
+    if (message.role === "assistant") {
+      if (message.tool_calls?.length) {
+        for (const call of message.tool_calls) {
+          push("assistant", { type: "tool_use", id: call.id, name: call.function.name, input: safeParseArgs(call.function.arguments) });
+        }
+      }
+      if (message.content) push("assistant", { type: "text", text: message.content });
+      continue;
+    }
+    if (message.content) push("user", { type: "text", text: message.content });
+  }
+  // The API requires alternating turns and a user first.
+  const flattened = turns.map((turn) => ({
+    role: turn.role,
+    content: Array.isArray(turn.content) && turn.content.length === 1 && (turn.content[0] as { type?: string }).type === "text"
+      ? String((turn.content[0] as { text?: string }).text ?? "")
+      : turn.content,
+  }));
+  if (!flattened.length) flattened.push({ role: "user", content: "(continue)" });
+  if (flattened[0].role === "assistant") flattened.unshift({ role: "user", content: "(continue)" });
+  return { system: system.join("\n\n"), messages: flattened };
+}
+
+/** Native Ollama chat: NDJSON frames, tool calls delivered whole. */
+async function streamOllama(config: ProviderConfig, messages: GatewayMessage[], tools: unknown, signal: AbortSignal, emit: (delta: ChatDelta) => void): Promise<void> {
+  const body: Record<string, unknown> = { model: config.model, messages: toOllamaMessages(messages), stream: true };
+  const specs = toOpenAiTools(tools);
+  if (specs) body.tools = specs;
+  const response = await postJson(ollamaEndpoint(config.baseUrl, "/api/chat"), { "Content-Type": "application/json", Accept: "application/x-ndjson" }, body, signal);
+  if (!response.body) throw new Error(JSON.stringify({ status: response.status, message: "Ollama response has no body" }));
+  // Frames arrive one JSON object per line. Handle each as it lands: a thinking
+  // model can spend half a minute before the first token, and buffering the whole
+  // reply made the app look frozen.
+  let sawCall = false;
+  const handle = (line: string): void => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    let frame: Record<string, unknown>;
+    try { frame = JSON.parse(trimmed) as Record<string, unknown>; } catch { return; }
+    if (typeof frame.error === "string") throw new Error(JSON.stringify({ status: 502, code: "ollama_error", message: frame.error }));
+    const message = (frame.message ?? {}) as Record<string, unknown>;
+    const content = typeof message.content === "string" ? message.content : "";
+    const thinking = typeof message.thinking === "string" ? message.thinking : "";
+    if (content || thinking) {
+      emit({ choices: [{ delta: { ...(content ? { content } : {}), ...(thinking ? { reasoning_content: thinking } : {}) } }] });
+    }
+    const calls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
+    if (calls.length) {
+      sawCall = true;
+      emit({ choices: [{ delta: { tool_calls: calls.map((call, index) => ({
+        index,
+        id: "ollama_" + index + "_" + Math.random().toString(36).slice(2, 8),
+        type: "function",
+        function: {
+          name: String((call as { function?: { name?: unknown } }).function?.name ?? ""),
+          arguments: JSON.stringify((call as { function?: { arguments?: unknown } }).function?.arguments ?? {}),
+        },
+      })) } }] });
+    }
+    if (frame.done === true) {
+      emit({ choices: [{ finish_reason: sawCall ? "tool_calls" : "stop", delta: {} }] });
+    }
+  };
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    for (;;) {
+      const part = await reader.read();
+      if (part.done) break;
+      buffer += decoder.decode(part.value ?? new Uint8Array(), { stream: true });
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() ?? "";
+      for (const line of lines) handle(line);
+    }
+    buffer += decoder.decode();
+    if (buffer.trim()) handle(buffer);
+  } finally {
+    try { await reader.cancel(); } catch { /* already released */ }
+    reader.releaseLock();
+  }
+}
+
+async function streamOpenai(config: ProviderConfig, messages: GatewayMessage[], tools: unknown, signal: AbortSignal, emit: (delta: ChatDelta) => void): Promise<void> {
   const body: Record<string, unknown> = { model: config.model, messages, stream: true };
   if (config.reasoningEffort) body.reasoning_effort = config.reasoningEffort;
   if (config.maxTokens > 0) body.max_tokens = config.maxTokens;
   // Tools go out verbatim; the model answers with tool_calls deltas, which the
   // renderer assembles into one call per index.
-  if (config.tools?.length) body.tools = config.tools;
+  const specs = toOpenAiTools(tools);
+  if (specs) body.tools = specs;
   const response = await postJson(chatEndpoint(config.baseUrl), authHeaders(config, "bearer"), body, signal);
   await consumeStream(response, (payload) => {
     const choices = Array.isArray(payload.choices) ? (payload.choices as Array<Record<string, unknown>>) : [];
@@ -343,8 +524,8 @@ export function toAnthropicMessages(messages: GatewayMessage[] | Array<{ role: s
   return { system: system.join("\n\n"), messages: turns };
 }
 
-async function streamAnthropic(config: ProviderConfig, messages: GatewayMessage[], signal: AbortSignal, emit: (delta: ChatDelta) => void): Promise<void> {
-  const request = toAnthropicMessages(messages);
+async function streamAnthropic(config: ProviderConfig, messages: GatewayMessage[], tools: unknown, signal: AbortSignal, emit: (delta: ChatDelta) => void): Promise<void> {
+  const request = toAnthropicChat(messages);
   const body: Record<string, unknown> = {
     model: config.model,
     max_tokens: config.maxTokens > 0 ? config.maxTokens : ANTHROPIC_DEFAULT_MAX_TOKENS,
@@ -352,6 +533,8 @@ async function streamAnthropic(config: ProviderConfig, messages: GatewayMessage[
     stream: true,
   };
   if (request.system) body.system = request.system;
+  const specs = toAnthropicTools(tools);
+  if (specs) body.tools = specs;
   const response = await postJson(messagesEndpoint(config.baseUrl), authHeaders(config, "anthropic"), body, signal);
   await consumeStream(response, (payload) => {
     const type = typeof payload.type === "string" ? payload.type : "";
@@ -363,9 +546,28 @@ async function streamAnthropic(config: ProviderConfig, messages: GatewayMessage[
         message: typeof detail.message === "string" ? detail.message : "The Anthropic endpoint reported an error",
       }));
     }
+    if (type === "content_block_start") {
+      const block = (payload.content_block ?? {}) as Record<string, unknown>;
+      if (block.type === "tool_use") {
+        emit({ choices: [{ delta: { tool_calls: [{
+          index: typeof payload.index === "number" ? payload.index : 0,
+          id: typeof block.id === "string" ? block.id : "tool_" + Math.random().toString(36).slice(2, 8),
+          type: "function",
+          function: { name: typeof block.name === "string" ? block.name : "", arguments: "" },
+        }] } }] });
+      }
+      return;
+    }
     if (type === "content_block_delta") {
       const delta = (payload.delta ?? {}) as Record<string, unknown>;
       const kind = typeof delta.type === "string" ? delta.type : "";
+      if (kind === "input_json_delta" && typeof delta.partial_json === "string") {
+        emit({ choices: [{ delta: { tool_calls: [{
+          index: typeof payload.index === "number" ? payload.index : 0,
+          function: { arguments: delta.partial_json },
+        }] } }] });
+        return;
+      }
       if (kind === "text_delta" && typeof delta.text === "string" && delta.text) {
         emit({ choices: [{ delta: { content: delta.text } }] });
       } else if (kind === "thinking_delta" && typeof delta.thinking === "string" && delta.thinking) {
@@ -403,8 +605,10 @@ function openClawHeaders(config: ProviderConfig): Record<string, string> {
   return headers;
 }
 
-async function streamOpenClaw(config: ProviderConfig, messages: GatewayMessage[], signal: AbortSignal, emit: (delta: ChatDelta) => void): Promise<void> {
+async function streamOpenClaw(config: ProviderConfig, messages: GatewayMessage[], tools: unknown, signal: AbortSignal, emit: (delta: ChatDelta) => void): Promise<void> {
   const body: Record<string, unknown> = { model: openClawModel(config), messages, stream: true };
+  const specs = toOpenAiTools(tools);
+  if (specs) body.tools = specs;
   const response = await postJson(chatEndpoint(config.baseUrl), openClawHeaders(config), body, signal);
   await consumeStream(response, (payload) => {
     const choices = Array.isArray(payload.choices) ? (payload.choices as Array<Record<string, unknown>>) : [];
@@ -412,8 +616,17 @@ async function streamOpenClaw(config: ProviderConfig, messages: GatewayMessage[]
     const rawDelta = (first.delta ?? first.message ?? {}) as Record<string, unknown>;
     const content = typeof rawDelta.content === "string" ? rawDelta.content : "";
     const reasoning = typeof rawDelta.reasoning_content === "string" ? rawDelta.reasoning_content : "";
-    if (!content && !reasoning) return;
-    emit({ choices: [{ delta: { ...(content ? { content } : {}), ...(reasoning ? { reasoning_content: reasoning } : {}) } }] });
+    const toolCalls = Array.isArray(rawDelta.tool_calls) ? rawDelta.tool_calls as ChatToolCallDelta[] : undefined;
+    const finishReason = typeof first.finish_reason === "string" ? first.finish_reason : undefined;
+    if (!content && !reasoning && !toolCalls && !finishReason) return;
+    emit({ choices: [{
+      ...(finishReason ? { finish_reason: finishReason } : {}),
+      delta: {
+        ...(content ? { content } : {}),
+        ...(reasoning ? { reasoning_content: reasoning } : {}),
+        ...(toolCalls ? { tool_calls: toolCalls } : {}),
+      },
+    }] });
   });
 }
 
@@ -424,16 +637,23 @@ export async function streamProvider(
   messages: GatewayMessage[],
   signal: AbortSignal,
   emit: (delta: ChatDelta) => void,
+  tools?: unknown,
 ): Promise<void> {
   const config = providerConfig(input);
-  if (config.kind === "anthropic") return streamAnthropic(config, messages, signal, emit);
-  if (config.kind === "openclaw") return streamOpenClaw(config, messages, signal, emit);
-  return streamOpenai(config, messages, signal, emit);
+  if (config.kind === "ollama") return streamOllama(config, messages, tools, signal, emit);
+  if (config.kind === "anthropic") return streamAnthropic(config, messages, tools, signal, emit);
+  if (config.kind === "openclaw") return streamOpenClaw(config, messages, tools, signal, emit);
+  return streamOpenai(config, messages, tools, signal, emit);
 }
 
 /** Model ids the provider advertises. Throws when the endpoint denies or lacks one. */
 export async function listProviderModels(input: Partial<ProviderConfig>, signal: AbortSignal): Promise<string[]> {
   const config = providerConfig(input);
+  if (config.kind === "ollama") {
+    const payload = await getJson(ollamaEndpoint(config.baseUrl, "/api/tags"), { Accept: "application/json" }, signal);
+    const rows = Array.isArray(payload.models) ? (payload.models as Array<Record<string, unknown>>) : [];
+    return rows.map((row) => (typeof row.name === "string" ? row.name : typeof row.model === "string" ? row.model : "")).filter(Boolean);
+  }
   const url = config.kind === "anthropic" ? modelsEndpoint(config.baseUrl) + "?limit=100" : modelsEndpoint(config.baseUrl);
   const payload = await getJson(url, authHeaders(config, config.kind === "anthropic" ? "anthropic" : "bearer"), signal);
   const rows = Array.isArray(payload.data) ? (payload.data as Array<Record<string, unknown>>) : [];

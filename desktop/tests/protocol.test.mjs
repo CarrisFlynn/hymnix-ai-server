@@ -67,7 +67,7 @@ assert.equal(pkg.build.nsis.displayLanguageSelector, true, "installer must show 
 // --- provider adapters: three dialects behind one chat contract -------------
 const providers = read("../src/main/providers.ts");
 const protocol = read("../src/shared/protocol.ts");
-for (const token of ['export type ProviderKind = "openai" | "anthropic" | "openclaw"', "ProviderApi", "ProviderProbeResult"]) {
+for (const token of ['export type ProviderKind = "ollama" | "openai" | "anthropic" | "openclaw"', "ProviderApi", "ProviderProbeResult"]) {
   assert.ok(protocol.includes(token), `protocol must declare ${token}`);
 }
 for (const token of ["streamAnthropic", "streamOpenClaw", "toAnthropicMessages", "openClawModel", "probeProvider", '"/v1/messages"']) {
@@ -89,7 +89,7 @@ assert.ok(!renderer.includes('gatewayTab === "Cloud API"'), "the cloud tab is no
 // unusable because the readiness gate only accepted 1.3.x.
 assert.ok(main.includes('/api/tags'), "the model list must come from Ollama directly");
 assert.ok(main.includes('/api/ps'), "load state must come from Ollama directly");
-assert.ok(main.includes("new URL(\"/v1/chat/completions\", ollamaBase())"), "a local chat turn must go straight to Ollama");
+assert.ok(main.includes('kind: "ollama"') && main.includes("streamProvider("), "a local chat turn must run through the native Ollama adapter");
 assert.ok(!/channels\.health[\s\S]{0,200}await gateway\.bootstrap\(\)/.test(main), "health must not require the gateway");
 const lifecycleModule = read("../src/main/gateway-lifecycle.ts");
 assert.ok(!/\^1\\\.3/.test(lifecycleModule), "the readiness gate must not hard-code 1.3");

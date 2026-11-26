@@ -164,7 +164,7 @@ function Icon({ name }: { name: string }) { return <svg viewBox="0 0 24 24" aria
 
 const navGroups = [
   { title: "WORKSPACE", items: ["Chat", "Models", "Gateway", "Plugins", "Changelog", "Support"] },
-  { title: "DEVELOPER", items: ["Monitor", "Terminal", "Jobs"] }
+  { title: "DEVELOPER", items: ["Terminal", "Jobs"] }
 ];
 
 /** The two product surfaces, mirroring ChatGPT / Codex: same history, different agent. */
@@ -198,6 +198,7 @@ const PROVIDER_CATALOG = [
   { id: "qwen", label: "通义千问", kind: "openai", base: "https://dashscope.aliyuncs.com/compatible-mode/v1", models: ["qwen3-max", "qwen-plus"] },
   { id: "openrouter", label: "OpenRouter", kind: "openai", base: "https://openrouter.ai/api/v1", models: [] },
   { id: "groq", label: "Groq", kind: "openai", base: "https://api.groq.com/openai/v1", models: [] },
+  { id: "ollama", label: "Ollama (native)", kind: "ollama", base: "http://127.0.0.1:11434", models: [] },
   { id: "openclaw", label: "OpenClaw local gateway", kind: "openclaw", base: "http://127.0.0.1:18789", models: ["openclaw/default"] },
   { id: "custom", label: "Custom", kind: "openai", base: "", models: [] }
 ] as const;
@@ -219,6 +220,7 @@ const DEFAULT_UI_SETTINGS = { betaChannel: false, runAtStartup: false, dpiScalin
 const PROVIDER_PRESETS: Array<{ kind: ProviderKind; label: string; base: string; model: string; note: string; keyHint: string }> = [
   { kind: "openai", label: "OpenAI compatible", base: "https://api.openai.com", model: "gpt-4o-mini", keyHint: "API key", note: "Any endpoint that serves chat completions: OpenAI, DeepSeek, Moonshot, OpenRouter." },
   { kind: "anthropic", label: "Anthropic (Claude Code)", base: "https://api.anthropic.com", model: "claude-sonnet-4-5", keyHint: "API key", note: "The Messages API Claude Code speaks: x-api-key, anthropic-version, content blocks." },
+  { kind: "ollama", label: "Ollama (native)", base: "http://127.0.0.1:11434", model: "", keyHint: "Not needed", note: "The daemon's own POST /api/chat. Tool calls arrive structured, so the plan loop and approvals work; no key required." },
   { kind: "openclaw", label: "OpenClaw", base: "http://127.0.0.1:18789", model: "openclaw/default", keyHint: "Gateway token", note: "OpenClaw gateway on your machine; the model field addresses an agent, not a model id." },
 ];
 
@@ -1057,14 +1059,14 @@ function App() {
   useEffect(() => { void window.hymnix.github.stars().then((value) => setStars(value?.stars ?? null)).catch(() => undefined); }, []);
   useEffect(() => { document.documentElement.style.scrollBehavior = uiSettings.smoothScroll ? "smooth" : "auto"; }, [uiSettings.smoothScroll]);
   useEffect(() => {
-    if (active !== "Gateway" && active !== "Monitor") return;
+    if (active !== "Gateway") return;
     void pollTunnel();
     void loadHostClients();
     const timer = window.setInterval(() => { void pollTunnel(); void loadHostClients(); }, 2000);
     return () => window.clearInterval(timer);
   }, [active]);
   useEffect(() => {
-    if (active !== "Monitor" || !monitorAutoRefresh) return;
+    if (active !== "Gateway" || !monitorAutoRefresh) return;
     const timer = window.setInterval(() => { void loadHealth(); if (adminKey.trim()) void loadStatus(); }, 5000);
     return () => window.clearInterval(timer);
   }, [active, monitorAutoRefresh, adminKey]);
@@ -1254,7 +1256,7 @@ function App() {
       if (pressed("chat.copy", event)) { event.preventDefault(); void copyLastReply(); return; }
       if (pressed("chat.export", event)) { event.preventDefault(); exportChat(); return; }
       const pageIds = ["page.1", "page.2", "page.3", "page.4", "page.5"];
-      const pageNames = ["Chat", "Models", "Gateway", "Monitor", "Terminal"];
+      const pageNames = ["Chat", "Models", "Gateway", "Terminal", "Jobs"];
       const pageIndex = pageIds.findIndex((id) => pressed(id, event));
       if (pageIndex >= 0) { event.preventDefault(); setActive(pageNames[pageIndex]); return; }
       if (event.key === "Escape") {
@@ -2698,6 +2700,7 @@ function App() {
           </div>)}</div> : <div className="empty-inline">{online ? tf("{count} connected · refresh to list them", { count: String(online) }) : t("No one is connected right now.")}</div>}
         </div>
 
+      {renderMonitor()}
     </section>;
   }
   function renderChangelog() {
@@ -3253,7 +3256,7 @@ function App() {
       <div className="palette" role="dialog" aria-label={t("Command palette")} onClick={(event) => event.stopPropagation()}>
         <input autoFocus className="palette-input" value={paletteQuery} placeholder={t("Type a command or a page…")} onChange={(event) => setPaletteQuery(event.target.value)} />
         <div className="palette-list">
-          {["Chat", "Models", "Gateway", "Plugins", "Monitor", "Terminal", "Jobs", "Changelog", "Support", "Settings"]
+          {["Chat", "Models", "Gateway", "Plugins", "Terminal", "Jobs", "Changelog", "Support", "Settings"]
             .filter((page) => t(page).toLowerCase().includes(paletteQuery.toLowerCase()))
             .map((page) => <button type="button" key={page} className="palette-item" onClick={() => { setActive(page); setPaletteOpen(false); }}><span>{t(page)}</span><small>{t("Page")}</small></button>)}
           <button type="button" className="palette-item" onClick={() => { createSession(); setPaletteOpen(false); }}><span>{t("New chat")}</span><small>Ctrl+N</small></button>

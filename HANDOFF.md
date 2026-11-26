@@ -39,6 +39,8 @@ pnpm exec electron-builder --win --x64
 | 启动闸门修复 | `gateway-lifecycle.ts` `compatibleVersion` | 旧代码只认 `1.3.x`，1.4.0 一升版本就整体报废；已改为 1.3/1.4 + 回归测试 |
 | 本地能力直连 Ollama | `main.ts` `ollamaBase/ollamaModels/ollamaLoad` | 健康、模型列表/加载/卸载/删除、启动 Ollama、本地聊天不再经过网关；**杀网关进程后仍能列出 6 个模型并聊出 "pong"** |
 | 两个产品真的不同 | `main.tsx` 空状态 + `surface-chip` | AI：AI 标记 / 「想让我帮你做什么？」/ 通用提示；Orbit：ORBIT 标记 / 「你在做什么？」/ 编码提示 |
+| 四套接口方言 | `providers.ts` + `protocol.ts` | `ollama`/`openai`/`anthropic`/`openclaw` 全部支持工具；27 项供应商测试（含桩服务器）全绿；本地聊天走原生 `/api/chat` |
+| 监控并入共享 | `main.tsx` `renderGateway` | 导航只剩 8 项；共享页内含「共享 / 监控」两段；`/v1` 视觉基线同步移除 Monitor |
 | 更新日志本地化 | `main.ts` `changelog:get(lang)` | 中文界面读 `CHANGELOG.zh-CN.md`，正文限宽 74ch |
 | 英文系统提示词修复 | `main.tsx` `CODE_MODE_PROMPT` | 英文会话不再发送字面键 |
 
@@ -78,11 +80,9 @@ node scripts/smoke-packaged.mjs  # 打包后的 exe 冒烟（版本/任务页/�
 - `build/hymnix-orbit2-backend/hymnix-server-1.4.0-x64.exe`（PyInstaller，`pnpm build:backend`，读根目录 `VERSION` 命名）
 - `engine-java/build/hymnix-engine.jar`、`cloudflared.exe`、`server/assets/hymnix-red-white-star.ico`
 - 产物落在 `..\release\`（本轮已出，未签名）：
-  - `Hymnix-Orbit-1.4.0-Setup.exe` — 168,177,629 B · `0fb688df…c25b620`
-  - `Hymnix-Orbit-1.4.0-Portable.exe` — 155,292,473 B · `91c74e0b…06e2062`
-  - `Hymnix-Orbit-1.4.0-Setup.exe.blockmap` — 177,165 B
+  - `Hymnix-Orbit-1.4.0-Setup.exe` — 168,179,981 B · `035cb713…c2473ba`
+  - `Hymnix-Orbit-1.4.0-Portable.exe` — 155,291,265 B · `4711c047…61bc23b`
   - 校验：`release/SHA256SUMS.txt`
-- 打包后的 exe 已冒烟验证（`desktop/scripts/smoke-packaged.mjs`）：版本 1.4.0、导航有「任务」、对话有「计划」页。
 
 ## 6. 设计约束（踩过的坑，别重犯）
 

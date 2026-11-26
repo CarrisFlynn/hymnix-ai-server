@@ -308,15 +308,24 @@ function registerGatewayIpc(): void {
       const ownGateway = (() => {
         try { return new URL(base).origin === new URL(gateway.snapshot().base).origin; } catch { return false; }
       })();
-      const url = ownGateway ? new URL("/v1/chat/completions", ollamaBase()) : gatewayUrl(base,"v1/chat/completions");
-      const headers: Record<string,string> = {Accept:"text/event-stream","Content-Type":"application/json"};
-      if (!ownGateway) headers.Authorization = "Bearer " + apiKey;
-      // Ollama rejects reasoning_effort for models without thinking support
-      // ("does not support thinking"), and local models mostly lack it, so the
-      // local path simply does not send the field. Cloud adapters keep it.
-      // Only keyed (cloud) turns carry reasoning_effort. Local Ollama rejects it
-      // for models without thinking support, whether called directly or through
-      // our gateway, and the failure surfaces as "does not support thinking".
+      // A local turn runs through the native Ollama adapter: structured tool
+      // calls arrive as tool_calls, not as text, and no reasoning_effort is sent
+      // (models without thinking support reject it). A remote host keeps talking
+      // to its own gateway.
+      if (ownGateway && !suppliedKey) {
+        await streamProvider(
+          { kind: "ollama", baseUrl: ollamaBase().origin, model },
+          messages as GatewayMessage[],
+          controller.signal,
+          (delta) => { if (!event.sender.isDestroyed()) event.sender.send(channels.delta,{requestId,delta}); },
+          toolSpecs,
+        );
+        doneSeen = true; sendComplete();
+        return;
+      }
+      const url = gatewayUrl(base,"v1/chat/completions");
+      const headers: Record<string,string> = {Accept:"text/event-stream","Content-Type":"application/json", Authorization:"Bearer " + apiKey};
+      // Only keyed (cloud) turns carry reasoning_effort.
       const reasoning = suppliedKey && typeof value.reasoningEffort === "string" && value.reasoningEffort ? { reasoning_effort: value.reasoningEffort } : {};
       const response = await fetch(url, {method:"POST",signal:controller.signal,headers,body:JSON.stringify({model,messages:messages as GatewayMessage[],stream:true,...reasoning,...(toolSpecs?{tools:toolSpecs}:{})})});
       if (!response.ok) { const body=await response.json().catch(()=>null); throw new Error(JSON.stringify(errorPayload(response.status,body,"Gateway chat HTTP "+response.status))); }
