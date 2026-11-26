@@ -4,117 +4,38 @@ Only user-visible changes are listed. Internal refactors, test scaffolding and m
 
 ## 1.4.0 — 2026-11-26
 
-The four capabilities the desktop shell was missing, built on the contracts already in the app rather than beside them.
+The six capabilities the desktop shell was missing, four provider dialects behind one composer, and three rounds of security review closed.
 
 ### Added
 
-- **Automation.** The new Automation page schedules prompts: once, every N minutes, daily or weekly. When a task is due the app opens a fresh conversation and sends its prompt. Missed runs collapse into a single catch-up delivery instead of replaying a backlog (the same model DSH uses: a rule plus a next-occurrence instant).
-
+- **Automation.** A scheduled-prompt page: once, every N minutes, daily or weekly. When a task is due the app opens a fresh conversation and sends its prompt; missed runs collapse into a single catch-up delivery instead of replaying a backlog (the same rule-plus-next-occurrence model DSH uses).
 - **Plan tab.** A fourth conversation view. Orbit publishes steps through a `todo_write` tool call and the tab renders them with live status, per-step duration and the evidence behind each step (tool calls, approvals, plan rewrites). Any step can also be marked done or skipped by hand, and the tab badge tracks `done/total`.
-- **Tool loop.** A coding turn now runs model → tool → model up to six rounds: the gateway's read-only tools (files, repository search, web fetch, calculator, clock, system info) are advertised to the model, their results are fed back, and a turn stops honestly when the model produces a final answer or the round budget runs out.
-- **Approval inbox.** A title-bar badge (and Ctrl+Shift+A) opens a drawer listing every pending request, danger first: risk level, reasons, collapsible redacted arguments, age and the gateway's 60-second expiry, batch allow/deny, plus "always allow" (persisted per tool) and "allow this session". Decisions are archived and can be reviewed later; a request that arrives while the window is in the background also raises an OS notification.
-- **Background jobs.** Long shell commands, model downloads and gateway restarts share one list (page: Jobs, Ctrl+Shift+J) with streamed output, elapsed time, an exit code and a cancel that kills the whole process tree. Terminal commands appear in both the terminal and the job list because they are the same process.
-- **Editable shortcuts.** Ctrl+/ opens a reference sheet of every global command. Settings → Shortcuts records a new combination inline, names the command that already owns a combination instead of silently stealing it, keeps Escape and Enter locked, and stores only the overrides.
-
-### Fixed
-
-- **Every tool call ran without asking.** The gateway's auto-approve branch was written as `if True:`, so the approval queue below it was dead code and any tool executed the moment the model asked. It now follows the `auto_approve_tools` setting, which is what makes the approval inbox reachable.
-- **There was nothing to approve.** Every exposed tool was classified safe, so even a working queue stayed empty. `fs.write` is now a real tool: it writes one UTF-8 file inside the workspace, atomically, and every call asks first.
-- **The shell rejected the gateway's own answers.** Tool and approval responses carry `error` as a short string; both parsers demanded an object and threw `tools_schema_error` / `approval_schema_error` instead of showing the result.
-- **A picked model could not be used until it was preloaded.** Sending is now allowed immediately and Ollama loads the model on the first request; the "load" button remains a convenience.
-- **Local turns sent `reasoning_effort`.** Ollama answers "does not support thinking" for most local models; the field is now cloud-only.
-- A model that prints its tool call as text ("{\"name\": ...}") rather than emitting `tool_calls` is now understood, so small local models can still drive the loop.
-- **Approving a tool call never worked.** The shell posted `approve`/`deny` while the gateway decides with `allow`/`deny`, and it parsed the reply as an `id`/`decision` pair the gateway never sends. An approval now runs the tool and returns its result, so an approved call no longer has to be repeated.
-- **English sessions sent `CODE_MODE_PROMPT` as their system prompt** — the literal i18n key, because the English dictionary is the key itself. The coding brief is now a real sentence with a Chinese translation.
-- Plan, job and shortcut rows now share fixed column widths, so the duration, exit code and button edges line up down the list instead of drifting with each row's content.
-- The shortcut sheet sits in its own scrim with equal margins, and scrollable lists inside cards show a thin scrollbar instead of slicing the last row.
-- Plan and job durations no longer render as a meaningless `0ms` when a step is measured in single-digit milliseconds.
-
-### Design pass — neutral surfaces at 14px (2026-11-25)
-
-- All nine presets now share one neutral surface system (near-white / near-black, hairline borders, no tinted pages); the preset only changes the accent colour. Accent is reserved for primary actions, focus, the active tab and the active level badge.
-- Base type is 14px, with 13px controls and 11-12px meta text; the type scale still multiplies by the text-size setting.
-- Rhythm is compact and consistent: 30px rows, 8px inline padding in the rail, 10px panel padding, 1px hairlines; nothing overlaps the composer or the page content any more.
-- The conversation list belongs to the Chat page: on Models, Sharing, Plugins, Settings, Monitor, Terminal, Changelog and Sponsor the list is hidden and the content takes the full width.
-- Page heads are light (17px title, one muted line, actions on the right) so content gets the vertical space.
-
-## Unreleased — Codex-style shell and a real model picker (2026-11-25)
+- **Approval inbox.** The title-bar badge (Ctrl+Shift+A) opens a drawer: pending requests sorted by risk, each row expanding its redacted arguments, batch allow/deny, and per-tool "always allow" (persisted) or "allow this session". Decisions are archived; a request that arrives while the window is in the background raises an OS notification.
+- **Background jobs.** Long commands, model downloads and gateway restarts share one Jobs page: streamed output, elapsed time, exit code, and a cancel that kills the whole process tree.
+- **Editable shortcuts.** Ctrl+/ opens a reference sheet; Settings → Shortcuts records a new combination inline, names the command that already owns a duplicate (fixed keys included), and stores only the changes.
+- **Four provider dialects.** Native Ollama `/api/chat` (frame-by-frame streaming, structured `tool_calls`, no key), OpenAI-compatible `/v1/chat/completions`, Anthropic `/v1/messages` with `tool_use`/`tool_result` blocks, and OpenClaw with its agent header. A pasted address is recognised by shape, and all four carry tool calls.
+- **Risk acknowledgements.** Turning on full access, or "always allow" for a tool, opens a dialog that names the blast radius and requires a tick.
+- **Sharing carries the monitor.** Service details, connected clients and recent activity moved into the Sharing page; the rail drops to eight entries.
 
 ### Changed
 
-- The window is now three columns: a navigation rail (Hymnix AI / Orbit switch, New chat, pages), the conversation list, and the content area. The right-hand inspector is gone; model and reasoning live in the composer, telemetry in the status bar and the Context tab.
-- The product switch mirrors ChatGPT / Codex: **Hymnix AI** is the general assistant, **Hymnix Orbit** is the coding agent; both share one conversation history.
-- Each conversation carries three views: **Chat**, **Context** (system prompt, workspace, model, reasoning, token estimate, telemetry) and **Trace** (tool activity, approvals, recent log).
-- The composer is one rounded card with attach, a tool-approval chip (ask every time / auto allow), the model chip and a circular send that becomes Stop while generating.
-- The model chip opens a panel with the model list and a reasoning slider (Low / Medium / High / Max) whose gradient flows faster and hotter as it climbs; Max stays disabled until a provider declares support.
-- The model list is grouped: local models, cloud providers (with their own models) and remote hosts. Unconfigured sources appear as placeholders that jump straight to the right settings page.
-- Models page is organised around where replies run: **Local models**, **Cloud API**, **Remote hosts**. Cloud providers are saved profiles (vendor catalog or custom endpoint, multiple models each, optional Max support); the remote-host section carries the tunnel address, password and favourites, with the one-line explanation of what a tunnel does.
-- Sharing page now only shares this computer; connecting to a friend or adding a provider moved to the Models page.
-- Every page sits in the same three-column shell with a consistent page head, and content is capped at a comfortable reading width.
-
-### Added
-
-- A persistent status bar: connection state, current model and source, GPU / VRAM / RAM, and the active reasoning level.
-- Provider registry in the gateway (`/admin/providers`: save, edit, delete, select, add/remove model, fetch models), with the API key masked and the chosen profile copied into the runtime config the chat path already used.
-- A global tool-approval switch (`auto_approve_tools`, default off) shared by every conversation; auto-approved calls are still logged.
+- **The gateway is optional.** Health, model list, load/unload/delete, Ollama start and a local chat turn all talk to Ollama directly, so stopping the gateway no longer stops the app.
+- **"Always allow" answers the request.** It now approves the pending call and remembers the preference in one action, the way DSH's approval card does; the row disables while the answer is in flight.
+- **Language switching is reversible.** The DOM-rewriting translator is gone; every string goes through `t()`.
+- **Docs state the truth about signing.** README and `docs/SIGNING.md` say the builds are unsigned.
 
 ### Fixed
 
-- The old inspector, its overlay behaviour and the chat header it duplicated are removed, so nothing covers the composer any more.
-- Long page content is centred instead of drifting right, and the status bar no longer clips at 1024-1280px.
-
-## Unreleased — 1.3.3 patch round (2026-11-25)
-
-A hardening and repair pass over the 1.3.3 shell: the security chain in the gateway, the interaction bugs the Claude-style layout introduced, the contrast and theme defects the design gates missed, and the first visible layout work of the 2.0 plan.
-
-### Security
-
-- Every `/admin/*` route now authenticates before dispatch, so no handler can be published without the admin key.
-- `/admin/network` no longer returns the share password in plain text; only a direct loopback caller that already proved the admin key can reveal it, and requests arriving through the public tunnel never can.
-- CORS is an allowlist (`app://hymnix`, loopback pages) instead of `*`, which closes the DNS-rebinding read path.
-- Share-password guessing now feeds the same ban list as API keys, and the default admin key is 144 bits instead of 48.
-- Guest API keys can no longer reach model management (`/api/pull`, `/api/delete`, `/api/create`, `/api/copy`, `/api/blobs`).
-- Cloud provider base URLs are validated: `http(s)` only, and link-local metadata addresses are rejected.
-- The terminal no longer resolves the shell through `PATH` (`shell: true` removed), only runs inside the selected workspace, and kills the whole process tree on cancel and on quit.
-- The dashboard keeps the admin key in page memory instead of `localStorage`.
-
-### Fixed
-
-- Unloading the model that is producing a reply no longer loops forever: the confirmation path bypasses the busy guard instead of re-opening the dialog.
-- Branching from a reply stops the running stream, so tokens can no longer be appended to the new conversation.
-- "Choose cache folder" uses its own picker and no longer repoints the workspace root, the file browser or the terminal.
-- The tunnel Restart button really restarts; the main process used to map everything except "stop" to "start".
-- Tool calls and the approval list speak the same field names as the gateway; the approval list tolerates the gateway's snake_case.
-- `/health` actually fills its five-second cache; the assignment used to sit after an unconditional return.
-- Conversation cleanup archives first and truncates second, and both writes are atomic.
-- Diff application writes through a temp file and `os.replace`, so an interrupted write cannot truncate a source file.
-- Daily quota set in the config now reaches the headless gateway, so the 429 limit works in the desktop build.
-- Plugins: a dunder-attribute block stops the `__subclasses__` escape, and a trace-hook deadline actually interrupts runaway plugin code instead of merely abandoning the wait.
-
-### Appearance and layout
-
-- Soften accent no longer references its own custom property (which wiped the background off every primary button, switch, badge and progress bar); it now desaturates towards the theme's text colour and stays above 4.5:1.
-- First launch no longer flashes white: the theme bootstrap is a blocking classic script, and the window is created with the last resolved background colour.
-- Auto appearance is reachable again from Settings (Light / Dark / Auto), and choosing a theme of the other mode still wins explicitly.
-- Light / Dark / Auto, text size, density and reduce-motion now apply before the first paint, so the layout no longer reflows on boot.
-- The close-button hover, the terminal SYS/WRN/ERR tags, the tonal button hover and the error-panel icon meet WCAG AA in all nine themes.
-- The chat inspector becomes a drawer that reserves its own width below 1280 px instead of covering the composer and the last replies.
-- Below 1023 px the sidebar is a clean icon rail: labels are removed instead of wrapping into vertical columns.
-- The composer shows the current model and reasoning effort as chips, so neither lives only in the inspector.
-- A stopped reply keeps what arrived and shows "Stopped" with Retry.
-- The Windows text face is used throughout; the duplicated, unreachable Inter and duplicate mono weights (240 KB of dead payload) are gone.
-- Two unreachable 680 px media queries were retargeted to the reachable 860 px band.
-
-### Added
-
-- A real in-app update check (Settings → About) that reads the latest GitHub release and compares versions.
-- Guests can disconnect and return to local mode from Sharing & connections.
-
-### Tooling
-
-- The contrast gate now checks 31 pairs per theme, including the console tags, the close-button hover, the tonal hover and pressed states, and parses `color-mix()` with real sRGB interpolation.
-- The token gate also rejects named colours (`white`, `black`), which is how a hard-coded close-button label slipped through.
-- Visual baselines regenerated for all nine themes.
+- **A 1.4.0 build could not start its own gateway.** The readiness gate only accepted 1.3.x, so every 1.4.0 install failed with an invalid readiness record. Fixed, with a regression test.
+- **Approving a tool call never worked.** The shell sent a different verdict word than the gateway accepts and parsed the reply as another shape; `fs.write` was also missing `import tempfile`, so approved writes raised an exception. The full loop now runs and returns the tool result.
+- **The gateway's auto-approve branch was `if True:`**, so every tool ran unattended and the approval queue was dead code.
+- **Local turns sent `reasoning_effort`**, a picked model had to be preloaded, and a tool call written as text was not recognised.
+- **Starting Ollama when it is not installed** no longer takes the main process down.
+- **An English session sent the literal `CODE_MODE_PROMPT` key** instead of a real system prompt.
+- **The approval window was 90 s against a 60 s gateway TTL**; it is 55 s now.
+- **Shortcut conflicts ignored fixed keys**; an empty batch selection approved everything; a stopped reply showed no marker; restart skipped cleanup.
+- **Security (three review rounds).** Plugin sandbox escape through exception tracebacks (and `type`/`object` removed inside it); admin-API bypass through encoded paths, now decoded repeatedly with the normalised path forwarded; chunked and OPTIONS request smuggling, now rejected at the door with the connection closed; error responses that corrupted the next keep-alive request; cloudflared hashed over the whole file; forwarded headers no longer trusted by default and stripped when proxying; MCP commands limited to known runtimes with no shell metacharacters; preview restricted to the app's own folders; a token never sent over plain http to a remote host; `terminal.unsubscribe` no longer kills the process.
+- **Legacy Tk console listens on `127.0.0.1`**, not `0.0.0.0`.
 
 ## 1.3.3 — 2026-11-24
 
