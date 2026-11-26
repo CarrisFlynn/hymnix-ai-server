@@ -9,16 +9,16 @@ Hymnix 将 Ollama 兼容模型接入一套完整的桌面工作流：对话、�
 ![许可证](https://img.shields.io/badge/license-AGPL--3.0-blue)
 ![平台](https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey)
 ![Python](https://img.shields.io/badge/python-3.11%2B-3776AB)
-![发布](https://img.shields.io/badge/release-1.3.2-blueviolet)
+![发布](https://img.shields.io/badge/release-1.3.3-blueviolet)
 
 ## 截图
 
-![Hymnix Orbit 总览](docs/images/orbit-hero-en.png)
+![Hymnix Orbit 总览](docs/screenshots/orbit-chat.png)
 
 | | |
 |---|---|
-| ![对话](docs/images/orbit-1.3.0/chat.png) | ![网关](docs/images/orbit-1.3.0/gateway.png) |
-| ![模型](docs/images/orbit-1.3.0/models.png) | ![终端](docs/images/orbit-1.3.0/terminal.png) |
+| ![对话](docs/screenshots/orbit-chat.png) | ![网关](docs/images/orbit-1.3.0/gateway.png) |
+| ![模型](docs/screenshots/orbit-models.png) | ![终端](docs/screenshots/orbit-terminal.png) |
 | ![设置](docs/images/orbit-1.3.0/settings.png) | ![监控](docs/images/orbit-1.3.0/monitor.png) |
 
 更多截图（对话、网关、模型、终端、监控、历史、更新日志、赞助、设置）见 [docs/images/orbit-1.3.0](docs/images/orbit-1.3.0)；1.2 旧界面截图保留在 [docs/images/en](docs/images/en)。

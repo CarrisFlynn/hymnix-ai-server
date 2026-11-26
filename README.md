@@ -8,18 +8,18 @@ Hymnix connects Ollama-compatible models to a practical desktop workflow: chat, 
 
 ![License](https://img.shields.io/badge/license-AGPL--3.0-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey)
-![Release](https://img.shields.io/badge/release-1.3.2-blueviolet)
+![Release](https://img.shields.io/badge/release-1.3.3-blueviolet)
 ![Python](https://img.shields.io/badge/python-3.11%2B-3776AB)
 
 ## Screenshots
 
-![Hymnix Orbit overview](docs/images/orbit-hero-en.png)
+![Hymnix Orbit overview](docs/screenshots/orbit-chat.png)
 
 | | |
 |---|---|
-| ![Chat](docs/images/orbit-1.3.0/chat.png) | ![Gateway](docs/images/orbit-1.3.0/gateway.png) |
-| ![Models](docs/images/orbit-1.3.0/models.png) | ![Terminal](docs/images/orbit-1.3.0/terminal.png) |
-| ![Settings](docs/images/orbit-1.3.0/settings.png) | ![Monitor](docs/images/orbit-1.3.0/monitor.png) |
+| ![Chat](docs/screenshots/orbit-chat.png) | ![Gateway](docs/screenshots/orbit-terminal.png) |
+| ![Models](docs/screenshots/orbit-models.png) | ![Terminal](docs/screenshots/orbit-terminal.png) |
+| ![Settings](docs/screenshots/orbit-models.png) | ![Monitor](docs/screenshots/orbit-models.png) |
 
 More captures (chat, gateway, models, terminal, monitor, history, changelog, support, settings) are in [docs/images/orbit-1.3.0](docs/images/orbit-1.3.0). Screenshots of the previous 1.2 UI are kept in [docs/images/en](docs/images/en).
 
