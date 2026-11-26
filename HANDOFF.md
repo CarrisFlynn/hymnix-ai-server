@@ -124,8 +124,8 @@ node scripts/smoke-packaged.mjs  # 打包后的 exe 冒烟（版本/任务页/�
 - `build/hymnix-orbit2-backend/hymnix-server-1.4.0-x64.exe`（PyInstaller，`pnpm build:backend`，读根目录 `VERSION` 命名）
 - `engine-java/build/hymnix-engine.jar`、`cloudflared.exe`、`server/assets/hymnix-red-white-star.ico`
 - 产物落在 `..\release\`（本轮已出，未签名）：
-  - `Hymnix-Orbit-1.4.0-Setup.exe` — 168,190,271 B · `29ad08c6…89e9daa`
-  - `Hymnix-Orbit-1.4.0-Portable.exe` — 155,297,826 B · `98f62ade…d0725cf`
+  - `Hymnix-Orbit-1.4.0-Setup.exe` — 168,184,143 B · `6883ca45…1dc8aec`
+  - `Hymnix-Orbit-1.4.0-Portable.exe` — 155,295,115 B · `a3211fba…6f3f624`
   - 校验：`release/SHA256SUMS.txt`
 
 ## 6. 设计约束（踩过的坑，别重犯）
