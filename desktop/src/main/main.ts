@@ -311,7 +311,14 @@ function registerGatewayIpc(): void {
       const url = ownGateway ? new URL("/v1/chat/completions", ollamaBase()) : gatewayUrl(base,"v1/chat/completions");
       const headers: Record<string,string> = {Accept:"text/event-stream","Content-Type":"application/json"};
       if (!ownGateway) headers.Authorization = "Bearer " + apiKey;
-      const response = await fetch(url, {method:"POST",signal:controller.signal,headers,body:JSON.stringify({model,messages:messages as GatewayMessage[],stream:true,...(typeof value.reasoningEffort==="string"&&value.reasoningEffort?{reasoning_effort:value.reasoningEffort}:{}),...(toolSpecs?{tools:toolSpecs}:{})})});
+      // Ollama rejects reasoning_effort for models without thinking support
+      // ("does not support thinking"), and local models mostly lack it, so the
+      // local path simply does not send the field. Cloud adapters keep it.
+      // Only keyed (cloud) turns carry reasoning_effort. Local Ollama rejects it
+      // for models without thinking support, whether called directly or through
+      // our gateway, and the failure surfaces as "does not support thinking".
+      const reasoning = suppliedKey && typeof value.reasoningEffort === "string" && value.reasoningEffort ? { reasoning_effort: value.reasoningEffort } : {};
+      const response = await fetch(url, {method:"POST",signal:controller.signal,headers,body:JSON.stringify({model,messages:messages as GatewayMessage[],stream:true,...reasoning,...(toolSpecs?{tools:toolSpecs}:{})})});
       if (!response.ok) { const body=await response.json().catch(()=>null); throw new Error(JSON.stringify(errorPayload(response.status,body,"Gateway chat HTTP "+response.status))); }
       if (!response.body) throw new Error(JSON.stringify({status:response.status,message:"Gateway chat response has no body"}));
       reader=response.body.getReader();
@@ -499,8 +506,16 @@ function parseToolCallResponse(payload: unknown): unknown {
   const value=payload as Record<string,unknown>;
   if (typeof value.ok !== "boolean") throw new Error(JSON.stringify({code:"tools_schema_error",message:"Tool call response ok must be boolean"}));
   if (value.approval_required !== undefined && (!value.approval_required || typeof value.approval_required !== "object" || Array.isArray(value.approval_required))) throw new Error(JSON.stringify({code:"tools_schema_error",message:"Invalid approval_required"}));
-  if (value.error !== undefined && (!value.error || typeof value.error !== "object" || Array.isArray(value.error) || typeof (value.error as Record<string,unknown>).message !== "string")) throw new Error(JSON.stringify({code:"tools_schema_error",message:"Invalid tool error"}));
-  return value;
+  // The gateway reports failures as a short string ("approval_required"), not as
+  // an object; both shapes are valid on the wire.
+  const normalizeError = (raw: unknown): unknown => {
+    if (raw === undefined) return undefined;
+    if (typeof raw === "string") return raw ? { code: raw, message: raw } : undefined;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw) || typeof (raw as Record<string,unknown>).message !== "string") throw new Error(JSON.stringify({code:"tools_schema_error",message:"Invalid tool error"}));
+    return raw;
+  };
+  const error = normalizeError(value.error);
+  return error === undefined ? { ...value, error: undefined } : { ...value, error };
 }
 function parseApprovalListResponse(payload: unknown): unknown {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new Error(JSON.stringify({code:"approval_schema_error",message:"Approval response must be an object"}));
@@ -535,14 +550,17 @@ function parseApprovalDecisionResponse(payload: unknown, id: string, decision: "
   const value=payload as Record<string,unknown>;
   if(typeof value.ok!=="boolean") throw new Error(JSON.stringify({code:"approval_schema_error",message:"Invalid approval decision response"}));
   if(!value.ok && value.error === undefined) throw new Error(JSON.stringify({code:"approval_schema_error",message:"Invalid approval decision response"}));
-  if(value.error!==undefined&&(!value.error||typeof value.error!=="object"||Array.isArray(value.error)||typeof (value.error as Record<string,unknown>).message!=="string")) throw new Error(JSON.stringify({code:"approval_schema_error",message:"Invalid approval decision error"}));
+  // Same story as tool errors: "" or a bare code is a valid answer, not a shape error.
+  if(value.error!==undefined&&value.error!==""&&typeof value.error!=="string"&&(!value.error||typeof value.error!=="object"||Array.isArray(value.error)||typeof (value.error as Record<string,unknown>).message!=="string")) throw new Error(JSON.stringify({code:"approval_schema_error",message:"Invalid approval decision error"}));
   return {
     ok: value.ok,
     id: typeof value.approval_id === "string" && value.approval_id ? value.approval_id : id,
     decision,
     executed: decision === "approved" && value.result !== undefined,
     result: value.result,
-    ...(value.error === undefined ? {} : { error: value.error }),
+    ...(value.error === undefined || value.error === "" ? {} : {
+      error: typeof value.error === "string" ? { code: value.error, message: value.error } : value.error,
+    }),
   };
 }
 async function toolsJson(path: string, init: RequestInit, keyHeader: "X-API-Key" | "X-Admin-Key", fallback: string): Promise<unknown> {

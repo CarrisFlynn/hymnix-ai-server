@@ -16,6 +16,12 @@ The four capabilities the desktop shell was missing, built on the contracts alre
 
 ### Fixed
 
+- **Every tool call ran without asking.** The gateway's auto-approve branch was written as `if True:`, so the approval queue below it was dead code and any tool executed the moment the model asked. It now follows the `auto_approve_tools` setting, which is what makes the approval inbox reachable.
+- **There was nothing to approve.** Every exposed tool was classified safe, so even a working queue stayed empty. `fs.write` is now a real tool: it writes one UTF-8 file inside the workspace, atomically, and every call asks first.
+- **The shell rejected the gateway's own answers.** Tool and approval responses carry `error` as a short string; both parsers demanded an object and threw `tools_schema_error` / `approval_schema_error` instead of showing the result.
+- **A picked model could not be used until it was preloaded.** Sending is now allowed immediately and Ollama loads the model on the first request; the "load" button remains a convenience.
+- **Local turns sent `reasoning_effort`.** Ollama answers "does not support thinking" for most local models; the field is now cloud-only.
+- A model that prints its tool call as text ("{\"name\": ...}") rather than emitting `tool_calls` is now understood, so small local models can still drive the loop.
 - **Approving a tool call never worked.** The shell posted `approve`/`deny` while the gateway decides with `allow`/`deny`, and it parsed the reply as an `id`/`decision` pair the gateway never sends. An approval now runs the tool and returns its result, so an approved call no longer has to be repeated.
 - **English sessions sent `CODE_MODE_PROMPT` as their system prompt** — the literal i18n key, because the English dictionary is the key itself. The coding brief is now a real sentence with a Chinese translation.
 - Plan, job and shortcut rows now share fixed column widths, so the duration, exit code and button edges line up down the list instead of drifting with each row's content.

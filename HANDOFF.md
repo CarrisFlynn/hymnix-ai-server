@@ -78,9 +78,9 @@ node scripts/smoke-packaged.mjs  # 打包后的 exe 冒烟（版本/任务页/�
 - `build/hymnix-orbit2-backend/hymnix-server-1.4.0-x64.exe`（PyInstaller，`pnpm build:backend`，读根目录 `VERSION` 命名）
 - `engine-java/build/hymnix-engine.jar`、`cloudflared.exe`、`server/assets/hymnix-red-white-star.ico`
 - 产物落在 `..\release\`（本轮已出，未签名）：
-  - `Hymnix-Orbit-1.4.0-Setup.exe` — 168,176,094 B · `94dd3041…2ac4b72`
-  - `Hymnix-Orbit-1.4.0-Portable.exe` — 155,282,847 B · `f953fef6…968fd19`
-  - `Hymnix-Orbit-1.4.0-Setup.exe.blockmap` — 177,037 B
+  - `Hymnix-Orbit-1.4.0-Setup.exe` — 168,177,629 B · `0fb688df…c25b620`
+  - `Hymnix-Orbit-1.4.0-Portable.exe` — 155,292,473 B · `91c74e0b…06e2062`
+  - `Hymnix-Orbit-1.4.0-Setup.exe.blockmap` — 177,165 B
   - 校验：`release/SHA256SUMS.txt`
 - 打包后的 exe 已冒烟验证（`desktop/scripts/smoke-packaged.mjs`）：版本 1.4.0、导航有「任务」、对话有「计划」页。
 

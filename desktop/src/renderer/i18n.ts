@@ -1,6 +1,7 @@
 export type Lang = "en" | "zh";
 
 export const zh: Record<string, string> = {
+  "The model asked for this tool as text": "模型以文本形式请求了这个工具",
   "Orbit": "Orbit",
   "AI": "AI",
   "Coding agent": "编码代理",

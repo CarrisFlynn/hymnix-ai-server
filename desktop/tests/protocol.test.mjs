@@ -95,4 +95,13 @@ const lifecycleModule = read("../src/main/gateway-lifecycle.ts");
 assert.ok(!/\^1\\\.3/.test(lifecycleModule), "the readiness gate must not hard-code 1.3");
 assert.ok(lifecycleModule.includes("SUPPORTED_GATEWAY_MINORS"), "the supported gateway versions must be explicit");
 
+// --- approvals must actually gate tool calls --------------------------------
+const gatewaySource = read("../../server/gateway_core.py");
+assert.ok(!/if True:\s*\n\s*# Global "auto allow"/.test(gatewaySource), "the auto-approve branch must follow the setting, not run unconditionally");
+assert.ok(gatewaySource.includes('CFG.get("auto_approve_tools", False)'), "auto-approve must be conditional on the setting");
+const toolsSource = read("../../server/hxcore/tools.py");
+assert.ok(toolsSource.includes('register("fs.write"'), "a write tool must exist, or the approval queue can never fill");
+assert.ok(toolsSource.includes('"fs.write"') && gatewaySource.includes('"fs.write"'), "fs.write must be classified as a write tool");
+assert.ok(main.includes("typeof raw === \"string\"") || main.includes("normalizeError"), "tool errors arrive as strings and must be accepted");
+
 console.log("PASS: secure shell protocol/static contract");

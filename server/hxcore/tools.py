@@ -82,6 +82,30 @@ def _fs_read(args):
     if not os.path.isfile(p): raise ToolError("not_a_file")
     with open(p,"r",encoding="utf-8",errors="replace") as f: return f.read(256*1024)
 
+def _fs_write(args):
+    """Write one UTF-8 file inside the workspace, atomically.
+
+    Classified as a write tool, so the gateway asks for approval before it runs
+    and the read-only policy refuses it outright.
+    """
+    p = _fs_path(args)
+    content = args.get("content", args.get("data", args.get("text")))
+    if not isinstance(content, str):
+        raise ToolError("content_required")
+    data = content.encode("utf-8")
+    if len(data) > 256 * 1024:
+        raise ToolError("content_too_large")
+    parent = os.path.dirname(p)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    tmp = p + ".hymnix-tmp"
+    with open(tmp, "wb") as handle:
+        handle.write(data)
+    os.replace(tmp, p)
+    root = os.path.realpath(root_dir())
+    return {"path": os.path.relpath(p, root).replace("\\", "/"), "bytes": len(data)}
+
+
 def _fs_stat(args):
     p=_fs_path(args); s=os.stat(p)
     return {"path":os.path.relpath(p,root_dir()),"size":s.st_size,"mtime":s.st_mtime,"is_file":stat.S_ISREG(s.st_mode),"is_dir":stat.S_ISDIR(s.st_mode)}
@@ -226,6 +250,7 @@ def builtin_tools() -> list[str]:
     register("fs.list","List root-scoped directory",{"type":"object","properties":{"path":{"type":"string"}}},_fs_list)
     register("fs.read","Read root-scoped UTF-8 text",{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]},_fs_read)
     register("fs.stat","Inspect root-scoped path",{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]},_fs_stat)
+    register("fs.write", "Write one UTF-8 text file inside the workspace (max 256 KB). Content is replaced atomically; parent folders are created. Every call needs approval.",{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"],"additionalProperties":False},_fs_write,danger=True)
     register("sysinfo","Basic system information",{"type":"object","properties":{}},_sysinfo)
     register("web.fetch","Fetch HTTP(S) resource",{"type":"object","properties":{"url":{"type":"string"}},"required":["url"]},_web_fetch)
     register("repo.tree","List root-scoped repository tree",{"type":"object","properties":{"path":{"type":"string"},"depth":{"type":"integer","minimum":1,"maximum":4},"limit":{"type":"integer","minimum":1,"maximum":500}},"additionalProperties":False},_repo_tree)

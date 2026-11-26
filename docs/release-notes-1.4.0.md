@@ -20,6 +20,12 @@ Ctrl+/ 打开全部全局命令的参考表。设置 → 快捷键 可以就地�
 - 计划、任务、快捷键的行改成固定列宽，耗时与按钮的右边缘逐行对齐。
 - 快捷键面板居中显示并留出等距边距；可滚动列表显示细滚动条，不再切掉半行。
 
+**审批与工具**
+- 网关的自动放行分支写成 `if True:`：所有工具不问就执行，审批队列成了死代码。已按设置判断。
+- 新增 `fs.write`：工作区内原子写入，每次调用先审批。审批闭环（请求→挂起→允许→执行→落盘）已实测。
+- 修复两个解析器拒收网关字符串错误、本地模型误发 `reasoning_effort`、选中模型必须预加载才能发送。
+- 支持把「文本形式的工具调用」识别为真正的调用。
+
 **崩溃级修复**
 - 1.4.0 起不来自己的网关：就绪闸门只认 1.3.x，版本号一升就整体报废。已修并加回归测试。
 - 本地能力不再依赖可选网关：健康检查、模型列表、加载/卸载/删除模型、启动 Ollama、本地聊天全部直连 Ollama；网关停掉也能正常聊天。
@@ -45,6 +51,11 @@ Long commands, model downloads and gateway restarts share one Jobs page: streame
 
 **Editable shortcuts**
 Ctrl+/ opens a reference sheet of every global command. Settings → Shortcuts records a new combination inline; a duplicate names the command that already owns it; Escape and Enter stay locked; only the changes are stored.
+
+**Approvals and tools**
+- The gateway's auto-approve branch was `if True:`: every tool ran unattended and the approval queue was dead code.
+- `fs.write` added: atomic writes inside the workspace, one approval per call. The full approval loop was verified end to end.
+- Two response parsers no longer reject the gateway's string errors; local turns no longer send `reasoning_effort`; a picked model can be used without preloading; text-shaped tool calls are recognised.
 
 **Startup and independence**
 - A 1.4.0 build could not start its own gateway (the readiness gate only accepted 1.3.x); fixed with a regression test.

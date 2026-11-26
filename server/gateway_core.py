@@ -1991,9 +1991,10 @@ class Handler(BaseHTTPRequestHandler):
                     pass
                 return self._json(403, {"ok": False, "request_id": request_id, "tool": name,
                                         "error": "policy_denied", "policy": policy, "detail": reason})
-            if True:
+            if bool(CFG.get("auto_approve_tools", False)):
                 # Global "auto allow" switch from the composer. The call is still
-                # audited, it just never enters the approval queue.
+                # audited, it just never enters the approval queue. Without this
+                # branch the queue below was dead code and every tool ran unattended.
                 if not item:
                     return self._json(400, {"ok": False, "error": "unknown_tool"})
                 result = tool_registry.call(name, args)

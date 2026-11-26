@@ -76,7 +76,7 @@ const APPROVAL_ARCHIVE_KEY = "hymnix.approvals.archive.v1";
 const SHORTCUT_KEY = "hymnix.shortcuts.v1";
 
 /** Read-only tools the model is allowed to call mid-turn. */
-const ADVERTISED_TOOLS = new Set(["time.now", "calc", "sysinfo", "fs.list", "fs.read", "fs.stat", "repo.tree", "repo.search", "repo.read", "web.fetch"]);
+const ADVERTISED_TOOLS = new Set(["time.now", "calc", "sysinfo", "fs.list", "fs.read", "fs.stat", "fs.write", "repo.tree", "repo.search", "repo.read", "web.fetch"]);
 
 /**
  * The model's own plan channel. It is handled in this process — no IPC, no
@@ -824,6 +824,35 @@ function App() {
     const advertised = tools.filter((item) => ADVERTISED_TOOLS.has(item.name)).map((item) => ({ type: "function" as const, function: { name: item.name, description: item.description, parameters: item.schema } }));
     return [TODO_TOOL_SPEC, ...advertised];
   }, [tools]);
+  /**
+   * Some local models cannot emit structured tool_calls and answer with the call
+   * as plain JSON text instead (qwen2.5-coder does exactly this through Ollama).
+   * Accept that shape when the whole reply is one object naming an advertised
+   * tool, so the plan loop and the approval queue stay usable with them.
+   */
+  function parseTextToolCall(text: string, specs: unknown[] | undefined): ToolCallPart | null {
+    const trimmed = text.trim();
+    if (trimmed.length > 8000) return null;
+    // Either the whole reply is the call, or the call is one object inside a
+    // short sentence ("... {\"name\": ...} 完成。"), which local models also do.
+    const candidate = trimmed.startsWith("{") && trimmed.endsWith("}")
+      ? trimmed
+      : (() => { const start = trimmed.indexOf("{"); const end = trimmed.lastIndexOf("}"); return start >= 0 && end > start ? trimmed.slice(start, end + 1) : ""; })();
+    if (!candidate) return null;
+    const allowed = new Set<string>();
+    for (const spec of specs || []) {
+      const fn = (spec as { function?: { name?: unknown } }).function;
+      if (fn && typeof fn.name === "string") allowed.add(fn.name);
+    }
+    try {
+      const parsed = JSON.parse(candidate) as { name?: unknown; tool?: unknown; arguments?: unknown; parameters?: unknown };
+      const name = typeof parsed.name === "string" ? parsed.name : typeof parsed.tool === "string" ? parsed.tool : "";
+      if (!name || !allowed.has(name)) return null;
+      const rawArgs = parsed.arguments ?? parsed.parameters ?? {};
+      if (!rawArgs || typeof rawArgs !== "object" || Array.isArray(rawArgs)) return null;
+      return { id: "text-" + crypto.randomUUID().slice(0, 8), name, arguments: JSON.stringify(rawArgs) };
+    } catch { return null; }
+  }
   /** One model turn: streams text into the open bubble and collects tool calls. */
   async function streamTurn(wire: WireMessage[], requestId: string, specs: unknown[] | undefined): Promise<{ text: string; calls: ToolCallPart[] }> {
     const cloudMode = source === "cloud";
@@ -1442,7 +1471,10 @@ function App() {
     if (textOverride === undefined && typed.startsWith("/") && runSlash(typed)) { setDraft(""); return; }
     const usingCloud = source === "cloud";
     const selectedLocal = models.find((item) => item.name === model);
-    const ready = usingCloud ? !!cloudModel.trim() && !!cloudBase.trim() : !!model && selectedLocal?.loaded !== false;
+    // A local model does not have to be resident first: Ollama loads it on the
+    // first request. Gating on "loaded" made a freshly picked model impossible to
+    // use until the user found the load button.
+    const ready = usingCloud ? !!cloudModel.trim() && !!cloudBase.trim() : !!model;
     if (!ready) { setStartupNote(t("Pick a model, start Ollama, or switch to Cloud API.")); window.setTimeout(() => setStartupNote(""), 5000); return; }
     const attached = attachments.map((item) => item.kind === "text" && item.text
       ? `[Attached: ${item.name}]\n\`\`\`\n${item.text}\n\`\`\``
@@ -1468,6 +1500,16 @@ function App() {
         let turn;
         try {
           turn = await streamTurn(wire, requestId, specs);
+          if (!turn.calls.length) {
+            const fallback = parseTextToolCall(turn.text, specs);
+            if (fallback) {
+              // Replace the JSON the model printed with a real call, so the
+              // transcript shows the tool run rather than a blob of arguments.
+              setMessages((current) => current.map((item, index) => index === current.length - 1 && item.role === "assistant" ? { ...item, content: "" } : item));
+              recordEvidence({ kind: "tool", title: fallback.name, detail: t("The model asked for this tool as text"), status: "ok", durationMs: null });
+              turn = { text: "", calls: [fallback] };
+            }
+          }
         } catch (reason) {
           // A local model without tool support answers 400 the moment tools are
           // advertised. Dropping them once is better than failing the turn.
