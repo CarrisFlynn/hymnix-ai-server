@@ -39,3 +39,5 @@ plugins/
 # playwright artifacts
 desktop/test-results/
 desktop/playwright-report/
+.workbuddy/
+logs/
