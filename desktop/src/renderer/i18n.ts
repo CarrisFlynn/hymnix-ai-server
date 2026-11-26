@@ -1,6 +1,20 @@
 export type Lang = "en" | "zh";
 
 export const zh: Record<string, string> = {
+  "Orbit": "Orbit",
+  "AI": "AI",
+  "Coding agent": "编码代理",
+  "General assistant": "通用助手",
+  "Load {model} to start coding": "加载 {model} 后开始编码",
+  "Load {model} to start chatting": "加载 {model} 后开始对话",
+  "What can I help with?": "想让我帮你做什么？",
+  "Summarize this workspace": "总结这个工作区",
+  "Get a short overview of what is in the folder.": "用几句话说明这个文件夹里有什么。",
+  "Draft a message": "起草一段话",
+  "Turn a rough idea into something you can send.": "把粗糙的想法变成可以直接发出去的文字。",
+  "Explain a concept": "解释一个概念",
+  "Get a plain explanation with an example.": "用大白话解释，并给一个例子。",
+  "HYMNIX AI": "HYMNIX AI",
   "The request expired before you decided": "这个请求在你决定之前就过期了",
   "Tools unavailable": "工具不可用",
   "This model does not accept tool calls; answering without the plan loop.": "这个模型不接受工具调用，将不使用计划循环直接回答。",

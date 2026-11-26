@@ -1083,8 +1083,9 @@ function App() {
   }, []);
   useEffect(() => { void loadProviders(); void loadToolPolicy(); }, []);
   useEffect(() => {
-    // The release notes come straight from CHANGELOG.md, packaged beside the app.
-    void window.hymnix.changelog.get().then((result) => {
+    // The release notes come from the changelog packaged beside the app, in the
+    // interface's own language when one exists.
+    void window.hymnix.changelog.get(lang).then((result) => {
       if (!result?.ok || !result.text) return;
       const releases: Array<{ version: string; date: string; groups: Array<{ title: string; items: string[] }> }> = [];
       let current: (typeof releases)[number] | null = null;
@@ -1107,7 +1108,7 @@ function App() {
       }
       setChangelog(releases.filter((release) => release.groups.length > 0).slice(0, 8));
     }).catch(() => undefined);
-  }, []);
+  }, [lang]);
   // Any click outside the composer closes the model panel: a popover must never
   // survive a click on the page, a tab switch or a keystroke into the message box.
   useEffect(() => {
@@ -2206,39 +2207,33 @@ function App() {
       <div className="ready-icon"><Icon name="Models" /></div><div className="ready-copy"><span className="eyebrow">{t("GET STARTED")}</span><h2>{t("Choose a model to begin")}</h2><p>{t("Install a local model, or add a cloud provider and pick one of its models.")}</p></div>
       <div className="ready-actions"><button className="btn primary" onClick={() => { setActive("Models"); setModelsSection("local"); setModelsTab("Discover"); }}>{t("Discover models")}</button><button className="btn" onClick={() => goConfigure("api")}>{t("Add a cloud provider")}</button></div>
     </div> : modelNeedsLoad ? <div className="chat-ready-card">
-      <div className="ready-icon"><Icon name="Models" /></div><div className="ready-copy"><span className="eyebrow">{t("MODEL READY")}</span><h2>{tf("Load {model} to begin", { model })}</h2><p>{t("The model is installed but not loaded. Load it before starting a conversation.")}</p></div>
+      <div className="ready-icon"><Icon name="Models" /></div><div className="ready-copy"><span className="eyebrow">{t("MODEL READY")}</span><h2>{tf(surface === "orbit" ? "Load {model} to start coding" : "Load {model} to start chatting", { model })}</h2><p>{t("The model is installed but not loaded. Load it before starting a conversation.")}</p></div>
       <div className="ready-actions"><button className="btn primary" onClick={() => void modelAction("start", model)} disabled={!!modelBusy}>{t(model && modelBusy === model ? "Loading..." : "Load model")}</button><button className="btn" onClick={() => { setActive("Models"); setModelsSection("local"); }}>{t("Choose another model")}</button></div>
     </div> : cloudUnconfigured ? <div className="chat-ready-card">
       <div className="ready-icon"><span>✦</span></div><div className="ready-copy"><span className="eyebrow">{t("CLOUD API")}</span><h2>{t("Configure a cloud provider")}</h2><p>{t("Add an address and an API key, then pick one of its models.")}</p></div>
       <div className="ready-actions"><button className="btn primary" onClick={() => goConfigure("api")}>{t("Add a cloud provider")}</button><button className="btn" onClick={() => setSource("local")}>{t("Use local model")}</button></div>
     </div> : <div className="chat-landing-head">
-      <div className="empty-orbit" aria-hidden="true"><img src={brandIcon} alt="" /></div><span className="eyebrow">{t("HYMNIX ORBIT")}</span><h2>{t("What are you working on?")}</h2>
+      <div className="empty-orbit" aria-hidden="true"><img src={brandIcon} alt="" /></div><span className="eyebrow">{t(surface === "orbit" ? "HYMNIX ORBIT" : "HYMNIX AI")}</span><h2>{t(surface === "orbit" ? "What are you working on?" : "What can I help with?")}</h2>
       <p>{tf("Start with {workspace} or choose a prompt.", { workspace: t(workspace) })}</p>
     </div>;
     const plainEmpty = !checkingService && !localOffline && !noLocalModels && !modelNeedsLoad && !cloudUnconfigured;
-    const emptyChat = <div className={plainEmpty ? "chat-empty-state" : "chat-empty-state has-card"}>{emptyLead}
-<div className="orbit-board">
-  <div className="orbit-stats">
-    <span><b className="orbit-k">WORKSPACE</b><i>{workspaceName}</i></span>
-    <span><b className="orbit-k">TASKS</b><i>{savedSessions.length}</i></span>
-    <span><b className="orbit-k">MODEL</b><i>{model || t("No model")}</i></span>
-    <span><b className="orbit-k">STATUS</b><i className={state === "ready" ? "ok" : "warn"}>{state === "ready" ? t("Ready") : t("Starting")}</i></span>
-  </div>
-  <div className="orbit-recent">
-    <b className="orbit-k">RECENT</b>
-    {savedSessions.slice(0, 3).map((item) => <button type="button" key={item.id} className="orbit-task" onClick={() => openSession(item.id)}>
-      <span className="orbit-lamp" /><span className="orbit-task-name">{item.name}</span><small>{item.count} {t("messages")}</small></button>)}
-    {savedSessions.length === 0 && <div className="orbit-empty">{t("No tasks yet. Describe what you want done.")}</div>}
-  </div>
-  <div className="orbit-actions">
-    {[[t("Fix a failing test"), t("Find the failing test, fix the code, and run it until it passes.")],
-      [t("Implement a small feature"), t("Describe the feature; Orbit plans, edits and verifies it.")],
+    // The empty conversation is one focal card plus a quiet set of starts. A
+    // dashboard here (stats, recents, four tiles) buried the one thing a new
+    // session needs: a model that is ready and a box to type in.
+    // The two products must read differently: Orbit opens with coding work, the
+    // assistant opens with everyday work. The hero used to say ORBIT in both.
+    const starters: Array<[string, string]> = surface === "orbit" ? [
+      [t("Fix a failing test"), t("Find the failing test, fix the code, and run it until it passes.")],
       [t("Review uncommitted changes"), t("Read the current diff and report risks before committing.")],
-      [t("Explain this repository"), t("Map the modules, entry points and the build commands.")]].map(([label, detail]) => (
-      <button type="button" key={label} className="orbit-action" onClick={() => { setDraft(detail); }}><strong>{label}</strong><span>{detail}</span></button>))}
-  </div>
-</div>
-{composer}{plainEmpty && <div className="prompt-grid"><button className="prompt-card" onClick={() => setDraft(t("Summarize the current workspace"))}><strong>{t("Summarize workspace")}</strong><span>{t("Get a concise overview of your files and project context.")}</span><i>↗</i></button><button className="prompt-card" onClick={() => setDraft(t("Help me inspect a model"))}><strong>{t("Inspect a model")}</strong><span>{t("Compare model details and find a good fit.")}</span><i>↗</i></button><button className="prompt-card" onClick={() => setDraft(t("Help me draft a clear message"))}><strong>{t("Write something")}</strong><span>{t("Turn a rough idea into a polished first draft.")}</span><i>↗</i></button><button className="prompt-card" onClick={() => setDraft(t("Help me write a code example"))}><strong>{t("Write code")}</strong><span>{t("Explain a coding task and get a useful starting point.")}</span><i>↗</i></button></div>}</div>;
+      [t("Explain this repository"), t("Map the modules, entry points and the build commands.")],
+    ] : [
+      [t("Summarize this workspace"), t("Get a short overview of what is in the folder.")],
+      [t("Draft a message"), t("Turn a rough idea into something you can send.")],
+      [t("Explain a concept"), t("Get a plain explanation with an example.")],
+    ];
+    const emptyChat = <div className={plainEmpty ? "chat-empty-state" : "chat-empty-state has-card"}>{emptyLead}
+{plainEmpty && <div className="starter-row">{starters.map(([label, detail]) => <button type="button" key={label} className="starter" onClick={() => setDraft(detail)}>{label}</button>)}</div>}
+{composer}</div>;
 
     const contextPanel = <div className="tab-panel">
       <div className="panel-card">
@@ -2358,6 +2353,7 @@ function App() {
 
     return <section className="chat-page">
       <div className="page-head chat-head">
+        <span className={"surface-chip " + surface} title={t(surface === "orbit" ? "Coding agent" : "General assistant")}>{t(surface === "orbit" ? "Orbit" : "AI")}</span>
         {renamingSession
           ? <form className="rename-session" onSubmit={(event) => { event.preventDefault(); commitRenameSession(); }}><input autoFocus value={renameDraft} onChange={(event) => setRenameDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setRenamingSession(false); }} aria-label={t("Conversation name")} /><button className="btn primary" type="submit">{t("Save name")}</button></form>
           : <h1 className="chat-title" title={t("Double-click to rename")} onDoubleClick={beginRenameSession}>{sessionName}</h1>}

@@ -43,6 +43,10 @@
         "to": "CHANGELOG.md"
       },
       {
+        "from": "../CHANGELOG.zh-CN.md",
+        "to": "CHANGELOG.zh-CN.md"
+      },
+      {
         "from": "../cloudflared.exe",
         "to": "cloudflared.exe"
       },

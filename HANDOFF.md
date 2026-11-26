@@ -36,6 +36,10 @@ pnpm exec electron-builder --win --x64
 | 后台任务 | `src/main/job-center.ts` + `jobs:start|stop|list|clear` + `jobs:update|data` | 30 秒命令实时输出；取消后状态 `cancelled` 且输出冻结（进程树已杀） |
 | 可改快捷键 | `lib/shortcuts.js` + 设置页编辑器 + Ctrl+/ 参考表 | 21 条命令 / 4 组；冲突提示「命令面板 已经在用这个组合键」；改为 CtrlShiftN 后持久化；重置回 CtrlN |
 | 审批链路修复 | `main.ts` `tools:approve/deny` | 发 `allow`/`deny`、回传执行结果（旧代码发的判定词网关不认，从未成功过） |
+| 启动闸门修复 | `gateway-lifecycle.ts` `compatibleVersion` | 旧代码只认 `1.3.x`，1.4.0 一升版本就整体报废；已改为 1.3/1.4 + 回归测试 |
+| 本地能力直连 Ollama | `main.ts` `ollamaBase/ollamaModels/ollamaLoad` | 健康、模型列表/加载/卸载/删除、启动 Ollama、本地聊天不再经过网关；**杀网关进程后仍能列出 6 个模型并聊出 "pong"** |
+| 两个产品真的不同 | `main.tsx` 空状态 + `surface-chip` | AI：AI 标记 / 「想让我帮你做什么？」/ 通用提示；Orbit：ORBIT 标记 / 「你在做什么？」/ 编码提示 |
+| 更新日志本地化 | `main.ts` `changelog:get(lang)` | 中文界面读 `CHANGELOG.zh-CN.md`，正文限宽 74ch |
 | 英文系统提示词修复 | `main.tsx` `CODE_MODE_PROMPT` | 英文会话不再发送字面键 |
 
 布局修正（用户验收时提出的「显示不完整 / 错位」）：
@@ -74,9 +78,9 @@ node scripts/smoke-packaged.mjs  # 打包后的 exe 冒烟（版本/任务页/�
 - `build/hymnix-orbit2-backend/hymnix-server-1.4.0-x64.exe`（PyInstaller，`pnpm build:backend`，读根目录 `VERSION` 命名）
 - `engine-java/build/hymnix-engine.jar`、`cloudflared.exe`、`server/assets/hymnix-red-white-star.ico`
 - 产物落在 `..\release\`（本轮已出，未签名）：
-  - `Hymnix-Orbit-1.4.0-Setup.exe` — 168,162,471 B · `83ae88c7…5214ae0`
-  - `Hymnix-Orbit-1.4.0-Portable.exe` — 155,276,141 B · `d0eec152…178a7f1`
-  - `Hymnix-Orbit-1.4.0-Setup.exe.blockmap` — 177,100 B
+  - `Hymnix-Orbit-1.4.0-Setup.exe` — 168,176,094 B · `94dd3041…2ac4b72`
+  - `Hymnix-Orbit-1.4.0-Portable.exe` — 155,282,847 B · `f953fef6…968fd19`
+  - `Hymnix-Orbit-1.4.0-Setup.exe.blockmap` — 177,037 B
   - 校验：`release/SHA256SUMS.txt`
 - 打包后的 exe 已冒烟验证（`desktop/scripts/smoke-packaged.mjs`）：版本 1.4.0、导航有「任务」、对话有「计划」页。
 
@@ -84,11 +88,12 @@ node scripts/smoke-packaged.mjs  # 打包后的 exe 冒烟（版本/任务页/�
 
 1. **不要"只调样式"**：550C 皮肤插件的原则是 *只覆盖令牌、不重画盒子*。布局崩过多次都是因为叠加式覆盖 CSS。新样式加在文件末尾并写明作用域（1.4.0 的四个卡片就是这么加的）。
 2. **主题不换**：Orbit 与 Hymnix 的差异靠功能（任务、运行、证据、工作台），不靠配色。
-3. **多列表行必须用固定列宽的 grid**：每一行各自成 grid 时，列宽由该行内容决定，右边缘就会一行一个样（1.4.0 被打回两次就是这个问题）。测量方式见 `probe-align.mjs`：每类行的右边缘应该只有一个值。
-4. **所有 `t()` 字符串必须有中文**，否则 `tests/components.test.mjs` 直接失败。扫描器已升级：三元分支里的文案也算（`t(a ? "Always allow" : "Always allowed")`），比较用的字面量（`"danger"`）不算。
-5. **窗口尺寸断言**：`tests/protocol.test.mjs` 要求 `Math.min(1294` / `Math.min(830` 与 `minWidth: 800, minHeight: 560`。
-6. **不要恢复 `renderApprovals()` 页面**：`protocol.test.mjs` 明确要求 Approvals 页保持移除，审批走抽屉。
-7. 空状态不要放"占位符"文案，用户明确反感。
+3. **核心能力不许依赖网关**：网关是可选的（共享、插件、工具、任务台）。健康检查、模型列表/加载、本地聊天、启动 Ollama 必须直连 Ollama（`ollamaBase()`）。任何让网关挂了就整体不可用的改动都算回退。
+4. **多列表行必须用固定列宽的 grid**：每一行各自成 grid 时，列宽由该行内容决定，右边缘就会一行一个样（1.4.0 被打回两次就是这个问题）。测量方式见 `probe-align.mjs`：每类行的右边缘应该只有一个值。
+5. **所有 `t()` 字符串必须有中文**，否则 `tests/components.test.mjs` 直接失败。扫描器已升级：三元分支里的文案也算（`t(a ? "Always allow" : "Always allowed")`），比较用的字面量（`"danger"`）不算。
+6. **窗口尺寸断言**：`tests/protocol.test.mjs` 要求 `Math.min(1294` / `Math.min(830` 与 `minWidth: 800, minHeight: 560`。
+7. **不要恢复 `renderApprovals()` 页面**：`protocol.test.mjs` 明确要求 Approvals 页保持移除，审批走抽屉。
+8. 空状态不要放"占位符"文案，用户明确反感。
 
 ## 7. 版本与发布
 

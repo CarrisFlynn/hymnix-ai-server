@@ -1,0 +1,182 @@
+{
+  "title": "Hymnix Orbit",
+  "version": "1.3.3",
+  "surfaceLabel": "Hymnix AI",
+  "nav": [
+    "对话",
+    "模型",
+    "共享",
+    "插件",
+    "更新日志",
+    "赞助",
+    "监控",
+    "终端"
+  ],
+  "navHtml": "<button type=\"button\" class=\"side-row active\" aria-current=\"page\" title=\"对话\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M4 5h16v10H9l-4 4V5z\"></path></svg><span class=\"side-row-label\">对话</span></button><button type=\"button\" class=\"side-row\" title=\"模型\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M4 7h16v10H4zM9 7v10M15 7v10\"></path></svg><span class=\"side-row-label\">模型</span></button><button type=\"button\" class=\"side-row\" title=\"共享\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M4 12h16M12 4v16M7 7l10 10M17 7L7 17\"></path></svg><span class=\"side-row-label\">共享</span></b",
+  "workspaceLabels": [],
+  "chatTabs": [
+    "对话",
+    "上下文",
+    "轨迹"
+  ],
+  "chatHeadActions": [
+    "对话操作"
+  ],
+  "emptyBlocks": [],
+  "emptyHeadings": [],
+  "actionCards": [],
+  "composerChips": [
+    "添加附件",
+    "工作区内修改",
+    "qwen3-vl:2b本地模型中",
+    "发送"
+  ],
+  "composerHint": "Enter 发送 · Shift+Enter 换行",
+  "statusBar": [
+    "已就绪",
+    "qwen3-vl:2b",
+    "本地模型",
+    "显卡 26%VRAM 2.9/8 GBRAM 14.2/15.2 GB",
+    "显卡 26%",
+    "VRAM 2.9/8 GB",
+    "RAM 14.2/15.2 GB",
+    "推理 中"
+  ],
+  "settingsNav": null,
+  "pages": [
+    {
+      "name": "对话",
+      "present": true,
+      "heading": null,
+      "sub": null,
+      "cards": [],
+      "buttons": [],
+      "empty": []
+    },
+    {
+      "name": "模型",
+      "present": true,
+      "heading": "模型",
+      "sub": "选择回复在哪里运行：这台电脑、云端供应商，或朋友的电脑。",
+      "cards": [],
+      "buttons": [],
+      "empty": []
+    },
+    {
+      "name": "共享",
+      "present": true,
+      "heading": "共享",
+      "sub": "把本机的模型服务分享给朋友；连接别人的电脑与配置云端供应商，都在模型页。",
+      "cards": [
+        "共享这台电脑",
+        "作为主机",
+        "已连接的人"
+      ],
+      "buttons": [
+        "刷新",
+        "保存",
+        "生成",
+        "复制",
+        "开始共享",
+        "重启",
+        "复制",
+        "二维码"
+      ],
+      "empty": [
+        "没有密码时无法开始共享。"
+      ]
+    },
+    {
+      "name": "插件",
+      "present": true,
+      "heading": "插件中心",
+      "sub": "管理本地插件、查看其申请的权限和运行状态。",
+      "cards": [
+        "Clock Tools",
+        "Hello World"
+      ],
+      "buttons": [
+        "刷新插件",
+        "安装本地插件",
+        "授予",
+        "启用",
+        "卸载",
+        "授予",
+        "启用",
+        "卸载"
+      ],
+      "empty": []
+    },
+    {
+      "name": "更新日志",
+      "present": true,
+      "heading": "更新日志",
+      "sub": null,
+      "cards": [],
+      "buttons": [],
+      "empty": []
+    },
+    {
+      "name": "赞助",
+      "present": true,
+      "heading": "赞助",
+      "sub": "赞助项目或发送反馈。",
+      "cards": [],
+      "buttons": [
+        "打开赞助页",
+        "github.com/CarrisFlynn/hymnix-ai-server",
+        "aurora.hymn@outlook.com",
+        "hymnixstudio@outlook.com",
+        "shayhyhmnix@gmail.com",
+        "x.com/ShayHymnix"
+      ],
+      "empty": []
+    },
+    {
+      "name": "监控",
+      "present": true,
+      "heading": "监控",
+      "sub": "查看网关健康、用量与当前操作。",
+      "cards": [
+        "服务详情",
+        "已连接的客户端",
+        "最近活动"
+      ],
+      "buttons": [
+        "刷新",
+        "加载详情",
+        "记住这台设备",
+        "清除"
+      ],
+      "empty": []
+    },
+    {
+      "name": "终端",
+      "present": true,
+      "heading": null,
+      "sub": null,
+      "cards": [],
+      "buttons": [],
+      "empty": []
+    },
+    {
+      "name": "任务",
+      "present": false
+    },
+    {
+      "name": "设置",
+      "present": false
+    }
+  ],
+  "switcher": {
+    "before": "Hymnix AI",
+    "menu": []
+  },
+  "switcherAfter": {
+    "menu": [
+      "Hymnix AIGeneral assistant✓",
+      "Hymnix OrbitCoding agent"
+    ],
+    "bodyText": true
+  }
+}

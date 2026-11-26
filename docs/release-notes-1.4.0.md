@@ -20,6 +20,12 @@ Ctrl+/ 打开全部全局命令的参考表。设置 → 快捷键 可以就地�
 - 计划、任务、快捷键的行改成固定列宽，耗时与按钮的右边缘逐行对齐。
 - 快捷键面板居中显示并留出等距边距；可滚动列表显示细滚动条，不再切掉半行。
 
+**崩溃级修复**
+- 1.4.0 起不来自己的网关：就绪闸门只认 1.3.x，版本号一升就整体报废。已修并加回归测试。
+- 本地能力不再依赖可选网关：健康检查、模型列表、加载/卸载/删除模型、启动 Ollama、本地聊天全部直连 Ollama；网关停掉也能正常聊天。
+- Hymnix AI 不再显示成 Orbit：两个产品各有标记、首屏文案与提示任务。
+- 中文界面改为读中文更新日志，并限制正文行宽。
+
 **修复**
 - 桌面端审批此前从未真正生效：发出的判定词和网关期望的不一致，返回体也按另一种形状解析。现在「允许」会直接执行工具并带回结果。
 - 英文界面会把 `CODE_MODE_PROMPT` 这个字面键当成系统提示词发出去，现在是真正的英文提示词，并配了中文翻译。
@@ -39,6 +45,12 @@ Long commands, model downloads and gateway restarts share one Jobs page: streame
 
 **Editable shortcuts**
 Ctrl+/ opens a reference sheet of every global command. Settings → Shortcuts records a new combination inline; a duplicate names the command that already owns it; Escape and Enter stay locked; only the changes are stored.
+
+**Startup and independence**
+- A 1.4.0 build could not start its own gateway (the readiness gate only accepted 1.3.x); fixed with a regression test.
+- Local capability no longer needs the optional gateway: health, model list, load/unload/delete, Ollama start and a local chat turn all talk to Ollama directly.
+- Hymnix AI no longer opens looking like Orbit: each surface has its own badge, hero copy and starter prompts.
+- A Chinese interface now reads the Chinese changelog, with a capped reading column.
 
 **Layout**
 - Plan, job and shortcut rows share fixed column widths, so durations and buttons line up down the list.

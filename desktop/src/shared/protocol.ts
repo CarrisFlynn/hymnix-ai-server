@@ -650,7 +650,7 @@ export type DesktopApi = {
   system: SystemApi;
   credentials: CredentialsApi;
   github: { stars: () => Promise<{ ok: boolean; stars: number | null }> };
-  changelog: { get: () => Promise<{ ok: boolean; text: string }> };
+  changelog: { get: (lang?: "zh" | "en") => Promise<{ ok: boolean; text: string }> };
   updates: { check: () => Promise<{ ok: boolean; current?: string; version?: string; url?: string; newer?: boolean; error?: string }> };
   cloud: CloudApi;
   providers: ProvidersApi;

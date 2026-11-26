@@ -1,0 +1,23 @@
+import { _electron as electron } from "@playwright/test";
+import { resolve } from "node:path";
+const cwd = resolve(process.cwd());
+const env = { ...process.env };
+delete env.ELECTRON_RUN_AS_NODE;
+const app = await electron.launch({ args: ["--user-data-dir=C:\\Users\\xiaoy\\AppData\\Local\\Temp\\hymnix-look", "."], cwd, env });
+const win = await app.firstWindow();
+await win.waitForFunction(() => Boolean(window.__hymnixDev), null, { timeout: 60000 });
+await win.evaluate(() => { localStorage.setItem("hymnix.welcome","1"); localStorage.setItem("hymnix.whatsNew","1.4.0"); localStorage.setItem("hymnix.lang","zh"); });
+await win.reload();
+await win.waitForFunction(() => Boolean(window.__hymnixDev), null, { timeout: 60000 });
+await win.evaluate(() => window.__hymnixDev.dismissOverlays());
+await win.setViewportSize({ width: 1926, height: 1200 });
+await win.waitForTimeout(2500);
+await win.screenshot({ path: resolve(cwd, "../.look-1926.png") });
+// plain state: load the model so the "needs load" card disappears
+await win.evaluate(async () => { try { await window.hymnix.models.start("qwen3:0.6b"); } catch { /* ignore */ } });
+await win.waitForTimeout(2000);
+await win.evaluate(() => window.__hymnixDev.navigate("Chat"));
+await win.waitForTimeout(1500);
+await win.screenshot({ path: resolve(cwd, "../.look-plain.png") });
+console.log("LOOK_DONE");
+await app.close();

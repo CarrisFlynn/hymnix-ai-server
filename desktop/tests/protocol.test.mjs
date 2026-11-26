@@ -83,4 +83,16 @@ for (const token of ["PROVIDER_PRESETS", "switchProviderKind", "providerDraft", 
   assert.ok(renderer.includes(token), `renderer must wire ${token}`);
 }
 assert.ok(!renderer.includes('gatewayTab === "Cloud API"'), "the cloud tab is now the API providers tab");
+// --- core capability must not depend on the optional gateway -----------------
+// The gateway is an extra: health, the model list, model control and a local chat
+// turn all work with it stopped. Regression: a 1.4.0 bump once made the whole app
+// unusable because the readiness gate only accepted 1.3.x.
+assert.ok(main.includes('/api/tags'), "the model list must come from Ollama directly");
+assert.ok(main.includes('/api/ps'), "load state must come from Ollama directly");
+assert.ok(main.includes("new URL(\"/v1/chat/completions\", ollamaBase())"), "a local chat turn must go straight to Ollama");
+assert.ok(!/channels\.health[\s\S]{0,200}await gateway\.bootstrap\(\)/.test(main), "health must not require the gateway");
+const lifecycleModule = read("../src/main/gateway-lifecycle.ts");
+assert.ok(!/\^1\\\.3/.test(lifecycleModule), "the readiness gate must not hard-code 1.3");
+assert.ok(lifecycleModule.includes("SUPPORTED_GATEWAY_MINORS"), "the supported gateway versions must be explicit");
+
 console.log("PASS: secure shell protocol/static contract");

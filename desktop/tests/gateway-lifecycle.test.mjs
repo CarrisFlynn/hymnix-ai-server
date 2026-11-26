@@ -4,7 +4,7 @@ import {createServer} from "node:http";
 import {fileURLToPath} from "node:url";
 import {setTimeout as delay} from "node:timers/promises";
 import test from "node:test";
-import {GatewayLifecycle} from "../src/main/gateway-lifecycle.ts";
+import {GatewayLifecycle, compatibleVersion} from "../src/main/gateway-lifecycle.ts";
 
 const fixturePath = fileURLToPath(new URL("./fixtures/gateway-child.cjs", import.meta.url));
 
@@ -23,6 +23,21 @@ function lifecycle(t, defaultPort, mode, options = {}) {
   t.after(() => gateway.stop());
   return {gateway, logs};
 }
+
+test("the readiness gate accepts this release and its predecessor, nothing else", () => {
+  // The 1.4.0 bump once broke startup: the gate matched only /^1\.3/.
+  for (const version of ["1.4.0", "1.4.1", "1.3.3", "1.3.2"]) assert.equal(compatibleVersion(version), true, version + " must be accepted");
+  // A minor-only report means the same server family; anything else is a stranger.
+  assert.equal(compatibleVersion("1.4"), true);
+  for (const version of ["2.0.0", "1.2.9", "1.5.0", "", "banana", null, undefined, 1.4]) assert.equal(compatibleVersion(version), false, String(version) + " must be rejected");
+});
+
+test("an owned 1.4.0 backend is adopted, not rejected", async (t) => {
+  const {gateway} = lifecycle(t, 0, "ready");
+  const started = await gateway.start();
+  assert.equal(started.ready, true, started.error);
+  assert.equal(started.external, false);
+});
 
 test("compatible external gateway remains running through restart and stop", async (t) => {
   const port = await loopbackServer(t, "1.3.2");

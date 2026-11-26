@@ -4,12 +4,13 @@ const path = require("node:path");
 
 const dir = process.env.HYMNIX_DESKTOP_CONTROL_DIR;
 const mode = process.argv[2];
+const version = process.argv[3] || "1.3.2";
 if (mode === "exit") process.exit(13);
-const server = http.createServer((_, res) => res.end(JSON.stringify({ok: true, gateway: "1.3.2"})));
+const server = http.createServer((_, res) => res.end(JSON.stringify({ok: true, gateway: version})));
 if (mode === "ready") {
   server.listen(0, "127.0.0.1", () => {
     const tmp = path.join(dir, "ready.tmp");
-    fs.writeFileSync(tmp, JSON.stringify({port: server.address().port, version: "1.3.2"}));
+    fs.writeFileSync(tmp, JSON.stringify({port: server.address().port, version}));
     fs.renameSync(tmp, path.join(dir, "ready.json"));
   });
 }

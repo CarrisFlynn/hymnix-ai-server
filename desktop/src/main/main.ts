@@ -1,7 +1,7 @@
 import {app,BrowserWindow,Menu,Notification,Tray,WebContentsView,dialog,ipcMain,net,nativeTheme,protocol,safeStorage,screen,session,shell} from "electron";
 import {basename,extname,isAbsolute,join,relative,resolve,sep} from "node:path";
 import {pathToFileURL} from "node:url";
-import {GatewayLifecycle} from "./gateway-lifecycle";
+import {DEFAULT_GATEWAY_PORT, GatewayLifecycle} from "./gateway-lifecycle";
 import {existsSync,realpathSync,statfsSync,statSync,readdirSync,readFileSync,writeFileSync,mkdirSync} from "node:fs";
 import {spawn,execFile,ChildProcess} from "node:child_process";
 import os from "node:os";
@@ -72,6 +72,8 @@ const jobCenter = new JobCenter((channel, payload) => {
 });
 /** Terminal request id → job id, so cancelling one closes the other. */
 const terminalJobs = new Map<string, string>();
+/** An Ollama process this app started, so stopping it never touches someone else's. */
+let ownedOllama: ChildProcess | null = null;
 const channels = {health:"gateway:health",models:"gateway:models",adminHistory:"gateway:admin-history",adminStatus:"gateway:admin-status",adminErrors:"gateway:admin-errors",adminClients:"gateway:admin-clients",stream:"gateway:stream",cancel:"gateway:cancel",delta:"gateway:delta",complete:"gateway:complete"} as const;
 const productRoot = app.isPackaged ? process.resourcesPath : join(__dirname,"../../..");
 const backendPath = app.isPackaged ? join(process.resourcesPath,"backend-gateway-headless.exe") : join(productRoot,"server","headless_gateway.py");
@@ -202,7 +204,17 @@ function registerFilesIpc(): void {
   ipcMain.handle("files:read", (event, raw: unknown) => { assertSender(event); if(!raw||typeof raw!=="object")throw filesError("invalid_request","Read request must be an object"); const v=raw as Record<string,unknown>; const path=validateFilePath(v.path); const start=parseFileLimit(v.start,1,Number.MAX_SAFE_INTEGER,"start"); const lines=parseFileLimit(v.lines,100,fileLimits.readLines,"lines"); const text=readUtf8Bounded(path); const all=text.split(/\r?\n/); const end=Math.min(all.length,start+lines-1); return {ok:true,path:relative(filesRootOrThrow(),path).replaceAll(sep,"/"),start,end,total:all.length,text:all.slice(start-1,end).join("\n")}; });
 }
 function registerGatewayIpc(): void {
-  ipcMain.handle(channels.health, async (event): Promise<GatewayHealth> => { assertSender(event); await gateway.bootstrap(); const response = await fetch(gatewayUrl(gatewayBase(),"health"), {signal:AbortSignal.timeout(5000),headers:{Accept:"application/json"}}); if (!response.ok) { const body=await response.json().catch(() => null); throw new Error(JSON.stringify(errorPayload(response.status,body,"Gateway health HTTP " + response.status))); } let payload: unknown; try { payload=await response.json(); } catch { throw healthSchemaError("Gateway health response must be valid JSON"); } return parseGatewayHealth(payload); });
+  // Health answers for the app itself: Ollama reachable? How many models?
+  // The gateway is an optional extra and never gates this call.
+  ipcMain.handle(channels.health, async (event): Promise<GatewayHealth> => {
+    assertSender(event);
+    try {
+      const models = await ollamaModels();
+      return { ok: true, gateway: "direct", ollama: true, models: models.length, uptime_s: 0, clients_online: 0, tunnel: "" };
+    } catch {
+      return { ok: true, gateway: "direct", ollama: false, models: 0, uptime_s: 0, clients_online: 0, tunnel: "" };
+    }
+  });
   ipcMain.handle(channels.adminHistory, async (event, rawAdminKey: unknown, rawQuery: unknown): Promise<AdminHistoryResponse> => {
     assertSender(event);
     const adminKey=resolveAdminKey(rawAdminKey);
@@ -284,9 +296,22 @@ function registerGatewayIpc(): void {
         doneSeen = true; sendComplete();
         return;
       }
-      const base = gatewayBase();
+      // A local turn does not need the gateway: talk to Ollama's own
+      // OpenAI-compatible endpoint. A remote host still goes through its gateway
+      // because that is what the other machine exposes.
+      // Never call gatewayBase() here: it throws when the gateway is down, and a
+      // local chat turn must not depend on it. snapshot() always answers.
+      const base = requestedBase;
       const apiKey = suppliedKey || localApiKey();
-      const response = await fetch(gatewayUrl(base,"v1/chat/completions"), {method:"POST",signal:controller.signal,headers:{Accept:"text/event-stream","Content-Type":"application/json",Authorization:"Bearer "+apiKey},body:JSON.stringify({model,messages:messages as GatewayMessage[],stream:true,...(typeof value.reasoningEffort==="string"&&value.reasoningEffort?{reasoning_effort:value.reasoningEffort}:{}),...(toolSpecs?{tools:toolSpecs}:{})})});
+      // Compare against the gateway base this app actually owns: a busy default
+      // port moves it, and the renderer sends whatever bootstrap reported.
+      const ownGateway = (() => {
+        try { return new URL(base).origin === new URL(gateway.snapshot().base).origin; } catch { return false; }
+      })();
+      const url = ownGateway ? new URL("/v1/chat/completions", ollamaBase()) : gatewayUrl(base,"v1/chat/completions");
+      const headers: Record<string,string> = {Accept:"text/event-stream","Content-Type":"application/json"};
+      if (!ownGateway) headers.Authorization = "Bearer " + apiKey;
+      const response = await fetch(url, {method:"POST",signal:controller.signal,headers,body:JSON.stringify({model,messages:messages as GatewayMessage[],stream:true,...(typeof value.reasoningEffort==="string"&&value.reasoningEffort?{reasoning_effort:value.reasoningEffort}:{}),...(toolSpecs?{tools:toolSpecs}:{})})});
       if (!response.ok) { const body=await response.json().catch(()=>null); throw new Error(JSON.stringify(errorPayload(response.status,body,"Gateway chat HTTP "+response.status))); }
       if (!response.body) throw new Error(JSON.stringify({status:response.status,message:"Gateway chat response has no body"}));
       reader=response.body.getReader();
@@ -384,6 +409,71 @@ function registerTerminalIpc(): void {
     const jobId = terminalJobs.get(requestId);
     if (jobId) { jobCenter.finish(jobId, "cancelled"); terminalJobs.delete(requestId); }
   });
+}
+
+// ---------- direct Ollama (core capability, gateway optional) ----------
+/**
+ * The desktop app owns its own local-model capability. Talking to the gateway
+ * for health, the model list or a chat turn meant one broken accessory took the
+ * whole app down, which is exactly what a version bump did once. Ollama is
+ * reachable on this machine regardless of whether the gateway runs.
+ */
+const OLLAMA_DEFAULT_PORT = 11434;
+
+/** Where Ollama listens: env override, saved config, or the conventional port. */
+function ollamaBase(): URL {
+  const override = process.env.OLLAMA_HOST?.trim();
+  if (override) {
+    try { return new URL(/^https?:\/\//.test(override) ? override : "http://" + override); } catch { /* fall through */ }
+  }
+  let port = OLLAMA_DEFAULT_PORT;
+  const candidates = [join(app.getPath("userData"), "gateway_config.json"), join(productRoot, "config", "gateway_config.json")];
+  for (const file of candidates) {
+    try {
+      const config = JSON.parse(readFileSync(file, "utf8")) as { upstream_port?: number };
+      if (typeof config.upstream_port === "number" && config.upstream_port > 0 && config.upstream_port < 65536) { port = config.upstream_port; break; }
+    } catch { /* try the next candidate */ }
+  }
+  return new URL("http://127.0.0.1:" + port);
+}
+
+async function ollamaJson<T>(path: string, init?: RequestInit, timeoutMs = 10000): Promise<T> {
+  const response = await fetch(new URL(path, ollamaBase()), {
+    ...init,
+    headers: { Accept: "application/json", ...(init?.headers as Record<string, string> | undefined) },
+    signal: init?.signal ?? AbortSignal.timeout(timeoutMs),
+  });
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    const detail = body && typeof body === "object" && typeof (body as { error?: unknown }).error === "string" ? (body as { error: string }).error : "";
+    throw new Error(JSON.stringify({ code: "ollama_http_" + response.status, message: detail || "Ollama returned HTTP " + response.status }));
+  }
+  return body as T;
+}
+
+type OllamaTags = { models?: Array<{ name?: string; model?: string; size?: number }> };
+type OllamaRunning = { models?: Array<{ name?: string; model?: string }> };
+
+/** Installed models, with the ones currently held in memory flagged. */
+async function ollamaModels(): Promise<Array<{ name: string; size: number; loaded: boolean }>> {
+  const tags = await ollamaJson<OllamaTags>("/api/tags", { method: "GET" });
+  const running = await ollamaJson<OllamaRunning>("/api/ps", { method: "GET" }).catch(() => ({ models: [] as OllamaRunning["models"] }));
+  const loaded = new Set((running.models || []).map((item) => String(item.name || item.model || "")));
+  return (tags.models || [])
+    .map((item) => {
+      const name = String(item.name || item.model || "");
+      return { name, size: Number(item.size || 0), loaded: loaded.has(name) };
+    })
+    .filter((item) => item.name);
+}
+
+/** Load a model into memory, or drop it (keep_alive 0). */
+async function ollamaLoad(model: string, keepAlive: string): Promise<void> {
+  await ollamaJson("/api/generate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model, prompt: "", stream: false, keep_alive: keepAlive }),
+  }, 180000);
 }
 
 // ---------- model management ----------
@@ -592,11 +682,33 @@ function registerModelIpc(): void {
       activePulls.delete(senderId);
     }
   });
-  ipcMain.handle(modelChannels.list, async (event) => { assertSender(event); return adminJson("admin/models"); });
-  ipcMain.handle(modelChannels.pull, async (event, model: unknown) => { assertSender(event); return adminJson("admin/models/pull", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ model: required(model, "model") }) }); });
-  ipcMain.handle(modelChannels.remove, async (event, model: unknown) => { assertSender(event); return adminJson("admin/models/delete", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ model: required(model, "model") }) }); });
-  ipcMain.handle(modelChannels.start, async (event, model: unknown) => { assertSender(event); return adminJson("admin/models/start", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ model: required(model, "model") }) }); });
-  ipcMain.handle(modelChannels.stop, async (event, model: unknown) => { assertSender(event); return adminJson("admin/models/stop", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ model: required(model, "model") }) }); });
+  // Model control is core: it must work with the gateway stopped.
+  ipcMain.handle(modelChannels.list, async (event) => { assertSender(event); return { models: await ollamaModels() }; });
+  ipcMain.handle(modelChannels.pull, async (event, model: unknown) => {
+    assertSender(event);
+    const name = required(model, "model");
+    await ollamaJson("/api/pull", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: name, stream: false }) }, 1800000);
+    return { ok: true, model: name };
+  });
+  ipcMain.handle(modelChannels.remove, async (event, model: unknown) => {
+    assertSender(event);
+    const name = required(model, "model");
+    // Ollama renamed the field over time; send both so either version accepts it.
+    await ollamaJson("/api/delete", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, model: name }) });
+    return { ok: true, model: name };
+  });
+  ipcMain.handle(modelChannels.start, async (event, model: unknown) => {
+    assertSender(event);
+    const name = required(model, "model");
+    await ollamaLoad(name, "10m");
+    return { ok: true, model: name, status: "loaded" };
+  });
+  ipcMain.handle(modelChannels.stop, async (event, model: unknown) => {
+    assertSender(event);
+    const name = required(model, "model");
+    await ollamaLoad(name, "0");
+    return { ok: true, model: name, status: "unloaded" };
+  });
 }
 // ---------- integrated host / guest networking ----------
 const netChannels = { connect:"network:connect", network:"network:info", tunnel:"network:tunnel", networkSave:"network:save", tunnelStatus:"network:tunnelStatus", get:"network:get", clients:"network:clients", disconnect:"network:disconnect" } as const;
@@ -891,29 +1003,50 @@ function registerCloudIpc(): void {
   ipcMain.handle("ollama:control", async (event, action: unknown): Promise<OllamaControlResult> => {
     assertSender(event);
     const command = action === "start" || action === "stop" ? action : "status";
-    const payload = await adminJson("admin/ollama", {
-      method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({action: command}),
-    }) as Partial<OllamaControlResult>;
-    if (typeof payload.ok !== "boolean" || typeof payload.online !== "boolean") {
-      throw new Error(JSON.stringify({code: "ollama_schema_error", message: "Invalid Ollama control response"}));
+    const probe = async () => {
+      try { const models = await ollamaModels(); return { online: true, models: models.length }; } catch { return { online: false, models: 0 }; }
+    };
+    const current = await probe();
+    if (command === "status") return { ok: true, online: current.online, ready: current.online, models: current.models };
+    if (command === "stop") {
+      // The app only stops an Ollama it started; killing someone else's service
+      // is not ours to decide.
+      if (ownedOllama && !ownedOllama.killed) {
+        try { if (ownedOllama.pid) spawn("taskkill", ["/pid", String(ownedOllama.pid), "/t", "/f"], { windowsHide: true, stdio: "ignore" }); } catch { /* already gone */ }
+        ownedOllama = null;
+      }
+      const after = await probe();
+      return { ok: true, online: after.online, ready: after.online, models: after.models, detail: after.online ? "Ollama is managed outside this app." : "" };
     }
-    const ready = payload.online && payload.ready !== false;
-    if (command === "start" && payload.ok && !ready) {
-      const code = "ollama_start_timeout";
-      return {...payload, ok: false, online: payload.online, ready, code, error: code,
-        detail: payload.detail || "Ollama did not become ready before the startup deadline."};
+    if (current.online) return { ok: true, online: true, ready: true, models: current.models };
+    try {
+      ownedOllama = spawn("ollama", ["serve"], { windowsHide: true, stdio: "ignore", detached: false });
+    } catch (error) {
+      return { ok: false, online: false, ready: false, code: "ollama_unavailable", error: "ollama_unavailable",
+        detail: "Ollama is not installed or not on PATH." };
     }
-    return {...payload, ok: payload.ok, online: payload.online, ready};
+    const deadline = Date.now() + 25000;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      const check = await probe();
+      if (check.online) return { ok: true, online: true, ready: true, models: check.models };
+    }
+    return { ok: false, online: false, ready: false, code: "ollama_start_timeout", error: "ollama_start_timeout",
+      detail: "Ollama did not become ready before the startup deadline." };
   });
-  ipcMain.handle("changelog:get", (event) => {
+  ipcMain.handle("changelog:get", (event, rawLang: unknown) => {
     assertSender(event);
-    const candidates = app.isPackaged
-      ? [join(process.resourcesPath, "CHANGELOG.md")]
-      : [join(__dirname, "../../..", "CHANGELOG.md"), join(process.resourcesPath, "CHANGELOG.md")];
-    for (const file of candidates) {
-      try { return { ok: true, text: readFileSync(file, "utf8") }; } catch { /* try the next one */ }
+    // Release notes exist in both languages; a Chinese interface reading the
+    // English file was a visible half-translation.
+    const lang = rawLang === "zh" ? "zh" : "en";
+    const names = lang === "zh" ? ["CHANGELOG.zh-CN.md", "CHANGELOG.md"] : ["CHANGELOG.md", "CHANGELOG.zh-CN.md"];
+    const roots = app.isPackaged ? [process.resourcesPath, join(__dirname, "../../..")] : [join(__dirname, "../../.."), process.resourcesPath];
+    for (const name of names) {
+      for (const dir of roots) {
+        try { return { ok: true, text: readFileSync(join(dir, name), "utf8"), lang }; } catch { /* try the next candidate */ }
+      }
     }
-    return { ok: false, text: "" };
+    return { ok: false, text: "", lang };
   });
   ipcMain.handle("providers:list", async (event) => { assertSender(event); return adminJson("admin/providers"); });
   ipcMain.handle("providers:save", async (event, raw: unknown) => { assertSender(event); return adminJson("admin/providers", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(raw && typeof raw === "object" ? raw : {}) }); });

@@ -266,10 +266,14 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 .prompt-card strong { color: var(--text); font-size: calc(12px * var(--text-scale, 1)); font-weight: 600; }
 .prompt-card span { color: var(--muted); font-size: calc(11px * var(--text-scale, 1)); line-height: 1.45; }
 .prompt-card i { position: absolute; top: 12px; right: 12px; color: var(--faint); font-style: normal; }
-.chat-ready-card { display: flex; width: min(700px, calc(100% - 24px)); align-items: flex-start; gap: 16px; margin: auto; padding: 22px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+.chat-ready-card { display: flex; width: min(700px, calc(100% - 24px)); align-items: flex-start; gap: 16px; margin: auto; padding: 22px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); text-align: left; }
 .ready-icon { display: grid; width: 40px; height: 40px; flex: 0 0 40px; place-items: center; border-radius: 10px; background: var(--accent-soft); color: var(--accent-text); }
 .ready-icon svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.5; }
-.ready-copy { flex: 1; }
+.ready-copy { flex: 1; min-width: 0; text-align: left; }
+/* Quiet starts: one line of text buttons, not a tile grid. */
+.starter-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 2px; }
+.starter { padding: 6px 12px; border: 1px solid var(--border); border-radius: 999px; background: transparent; color: var(--muted); font-size: calc(12px * var(--text-scale, 1)); }
+.starter:hover { border-color: var(--border-strong); background: var(--highlight); color: var(--text); }
 .ready-copy h2 { margin: 3px 0 5px; font-size: calc(17px * var(--text-scale, 1)); }
 .ready-copy p { margin: 0; color: var(--muted); font-size: calc(13px * var(--text-scale, 1)); }
 .ready-copy .error { margin-top: 8px; }
@@ -1623,6 +1627,8 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 .side-brand-wrap .product-menu { top: 44px; right: 0; left: 0; width: auto; }
 
 /* One row: title, then the three tabs right after it, actions pinned right. */
+.surface-chip { flex: 0 0 auto; padding: 2px 7px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); font-size: calc(10.5px * var(--text-scale, 1)); letter-spacing: .04em; text-transform: uppercase; }
+.surface-chip.orbit { border-color: var(--accent); color: var(--accent-text); background: var(--accent-soft); }
 .chat-head { display: flex; height: 44px; flex: 0 0 auto; align-items: center; gap: 22px; padding: 0 24px; border-bottom: 1px solid var(--border); }
 .chat-title { overflow: hidden; max-width: 38%; margin: 0; color: var(--text); font-size: calc(15px * var(--text-scale, 1)); font-weight: 600; letter-spacing: -.01em; text-overflow: ellipsis; white-space: nowrap; cursor: text; }
 .chat-head .chat-tabs { display: flex; height: 100%; align-items: stretch; gap: 18px; padding: 0; border: 0; }
@@ -1705,7 +1711,7 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 .timeline-meta { display: flex; flex-direction: column; gap: 3px; }
 .timeline-meta strong { color: var(--text); font-size: calc(15px * var(--text-scale, 1)); font-weight: 600; letter-spacing: -.01em; }
 .timeline-meta small { color: var(--faint); font-size: calc(11.5px * var(--text-scale, 1)); }
-.timeline-body { display: flex; min-width: 0; flex-direction: column; gap: 16px; }
+.timeline-body { display: flex; min-width: 0; max-width: 74ch; flex-direction: column; gap: 16px; }
 .timeline-group h4 { margin: 0 0 6px; color: var(--accent-text); font-size: calc(12px * var(--text-scale, 1)); font-weight: 600; letter-spacing: .02em; }
 .timeline-group p { margin: 0 0 5px; color: var(--muted); font-size: calc(13.5px * var(--text-scale, 1)); line-height: 1.65; }
 .timeline-group p:last-child { margin-bottom: 0; }

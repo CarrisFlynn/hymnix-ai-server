@@ -8,7 +8,19 @@ import type {AppBootstrap, GatewayRestartResult} from "../shared/protocol";
 export const DEFAULT_GATEWAY_PORT = 11435;
 const baseForPort = (port: number) => "http://127.0.0.1:" + port;
 const messageOf = (error: unknown) => error instanceof Error ? error.message : String(error);
-const compatibleVersion = (value: unknown) => typeof value === "string" && /^1\.3(?:\.|$)/.test(value);
+/**
+ * Gateway versions this desktop speaks. The local HTTP contract did not change
+ * between 1.3 and 1.4, so both stay accepted; anything else is a different
+ * server and must not be adopted. This used to be the literal "1.3", which made
+ * every 1.4.0 build reject its own backend ("Invalid headless gateway record")
+ * and left the whole app without models, chat or approval state.
+ */
+const SUPPORTED_GATEWAY_MINORS = new Set(["1.3", "1.4"]);
+export function compatibleVersion(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  const match = /^(\d+\.\d+)(?:\.|$)/.exec(value.trim());
+  return Boolean(match && SUPPORTED_GATEWAY_MINORS.has(match[1]));
+}
 
 type ManagedGateway = {
   dir: string;
