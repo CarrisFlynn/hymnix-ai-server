@@ -2,13 +2,10 @@
 
 ## 现在是什么状态
 
-已经打通签名流水线（electron-builder + 自带 signtool）：
+**当前发布物未签名。** 主程序 `Hymnix Orbit.exe` 与两个安装包都没有数字签名，首次运行会触发 Windows SmartScreen 警告。
 
-- 主程序 `Hymnix Orbit.exe` 与安装包都未签名
-- 证书是**自签名**：`CN=Hymnix Orbit (Self-Signed)`
-- `Get-AuthenticodeSignature` 结果：`UnknownError`（"证书链终止于不受信任的根"）——这是自签名的正常结果，不是失败
-
-也就是说：签名机制没问题，缺的是**受信任的证书**。
+- 签名流水线（electron-builder + signtool）已经可用，但仓库里没有受信任的证书，所以构建时签名被跳过。
+- 仓库另带一个**自签名**脚本（`CN=Hymnix Orbit (Self-Signed)`），只用于内测机器上临时压制 SmartScreen；它不是受信任证书，公开分发前必须换成正式证书。`Get-AuthenticodeSignature` 对自签名产物报 `UnknownError`（证书链终止于不受信任的根）是预期结果，不代表签名失败。
 
 ## 自签名证书（内测用）
 

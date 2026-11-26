@@ -1335,37 +1335,5 @@ function translateText(raw: string): string {
 
 const ATTRS = ["placeholder", "title", "aria-label"];
 
-export function translateDom(): void {
-  if (current !== "zh") return;
-  let translated = 0;
-  (globalThis as any).__i18n = { translated: 0, lang: current };
-  if (typeof document === "undefined" || !document.body) return;
-  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-  const nodes: any[] = [];
-  while (walker.nextNode()) nodes.push(walker.currentNode);
-  for (const node of nodes) {
-    const parent = node.parentElement;
-    if (!parent || parent.closest("[data-no-translate]")) continue;
-    const tag = parent.tagName;
-    if (tag === "SCRIPT" || tag === "STYLE" || tag === "TEXTAREA" || tag === "INPUT") continue;
-    const next = translateText(node.nodeValue || "");
-    if (next !== node.nodeValue) { node.nodeValue = next; translated++; (globalThis as any).__i18n.translated = translated; }
-  }
-  const elements: any[] = Array.from(document.body.querySelectorAll("*"));
-  for (const element of elements) {
-    for (const attr of ATTRS) {
-      const value = element.getAttribute(attr);
-      if (!value) continue;
-      const next = translateText(value);
-      if (next !== value) element.setAttribute(attr, next);
-    }
-  }
-}
 
 let observer: any = null;
-export function installAutoTranslate(): void {
-  translateDom();
-  if (typeof MutationObserver === "undefined" || observer) return;
-  observer = new MutationObserver(() => translateDom());
-  observer.observe(document.body, { childList: true, subtree: true, characterData: true });
-}
