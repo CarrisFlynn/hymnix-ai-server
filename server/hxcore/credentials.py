@@ -41,6 +41,12 @@ def git_credential(host: str, *, protocol: str = "https", timeout: float = 5, _r
         if not isinstance(host, str) or not host.strip():
             result["error"] = "invalid_host"
             return result
+        # A newline or space would let the value forge protocol=/username= lines
+        # in the git credential payload.
+        import re as _re
+        if not _re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,252}", host.strip()):
+            result["error"] = "invalid_host"
+            return result
         if not isinstance(protocol, str) or not protocol.strip():
             result["error"] = "invalid_protocol"
             return result

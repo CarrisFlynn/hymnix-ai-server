@@ -1,6 +1,16 @@
 export type Lang = "en" | "zh";
 
 export const zh: Record<string, string> = {
+  "Turn on full access?": "要开启完全权限吗？",
+  "Full access stops asking before each tool call. The model can then change files and run commands on this machine without a prompt between steps.": "完全权限会取消每次工具调用前的确认：模型可以在没有提示的情况下改文件、跑命令。",
+  "Fewer stops: fewer chances to catch a wrong path or a destructive command.": "少一次确认，就少一次拦住错路径或破坏性命令的机会。",
+  "Only for work you already trust; switch back the moment it is done.": "只在你已经信任的任务里用，做完就切回来。",
+  "I understand, and I want to continue": "我已了解风险，仍要继续",
+  "Turn on full access": "开启完全权限",
+  "Always allow this tool?": "要总是允许这个工具吗？",
+  "Every future call to {tool} is approved automatically, whatever arguments it carries.": "之后对 {tool} 的每一次调用都会自动放行，不管带什么参数。",
+  "It keeps working after a restart until you turn it off in the approval drawer.": "重启后依然有效，直到你在审批抽屉里关掉它。",
+  "A narrower option is to allow it once per call, or for this session only.": "更窄的选择是每次单独允许，或只允许本次会话。",
   "The model asked for this tool as text": "模型以文本形式请求了这个工具",
   "Orbit": "Orbit",
   "AI": "AI",

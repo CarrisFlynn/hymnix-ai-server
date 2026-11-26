@@ -477,6 +477,11 @@ function App() {
   const [providerError, setProviderError] = useState("");
   const [toolPolicy, setToolPolicy] = useState<"read" | "workspace" | "full">("workspace");
   const [policyMenu, setPolicyMenu] = useState(false);
+  // Widening the tool policy, or auto-approving a whole tool, is a consent
+  // decision, not a toggle: both go through a dialog that names the blast radius.
+  const [policyConfirm, setPolicyConfirm] = useState<null | { next: "read" | "workspace" | "full" }>(null);
+  const [alwaysAllowConfirm, setAlwaysAllowConfirm] = useState<string | null>(null);
+  const [riskAcknowledged, setRiskAcknowledged] = useState(false);
   const [effortDrag, setEffortDrag] = useState<number | null>(null);
   const [modelPopover, setModelPopover] = useState<"closed" | "root" | "models">("closed");
   const [sessionSearchOpen, setSessionSearchOpen] = useState(false);
@@ -741,6 +746,12 @@ function App() {
     });
   }
   function toggleAlwaysAllow(tool: string): void {
+    const enabled = alwaysAllow.includes(tool);
+    if (!enabled) { setRiskAcknowledged(false); setAlwaysAllowConfirm(tool); return; }
+    writeAlwaysAllow(tool);
+  }
+  /** Persist one tool-wide automatic approval (only called after the risk dialog). */
+  function writeAlwaysAllow(tool: string): void {
     setAlwaysAllow((current) => {
       const next = current.includes(tool) ? current.filter((item) => item !== tool) : current.concat([tool]);
       writeJsonArray(ALWAYS_ALLOW_KEY, next);
@@ -783,7 +794,9 @@ function App() {
   }
   /** Batch decision: the selection, or every pending row when nothing is ticked. */
   async function decideApprovals(decision: "approve" | "deny"): Promise<void> {
-    const ids = approvalsSelected.length ? approvalsSelected.slice() : pendingApprovals.map((item) => item.id);
+    // An empty selection must not widen into "approve everything": the button
+    // says "selected", and the dangerous calls are the ones nobody ticked.
+    const ids = approvalsSelected.slice();
     if (!ids.length) return;
     for (const id of ids) await decideApproval(id, decision);
     setApprovalsSelected([]);
@@ -2887,12 +2900,18 @@ function App() {
       setToolPolicy(value === "read" || value === "full" ? value : "workspace");
     } catch { /* gateway not ready yet */ }
   }
-  async function chooseToolPolicy(next: "read" | "workspace" | "full"): Promise<void> {
-    setPolicyMenu(false);
+  async function applyToolPolicy(next: "read" | "workspace" | "full"): Promise<void> {
     const previous = toolPolicy;
     setToolPolicy(next);
     try { await window.hymnix.config.set({ tool_policy: next }); }
     catch (reason) { setToolPolicy(previous); setStartupNote(reason instanceof Error ? reason.message : String(reason)); }
+  }
+  async function chooseToolPolicy(next: "read" | "workspace" | "full"): Promise<void> {
+    setPolicyMenu(false);
+    // Widening to full access is a consent decision: the dialog spells out what
+    // stops happening, and nothing changes until the box is ticked.
+    if (next === "full" && toolPolicy !== "full") { setRiskAcknowledged(false); setPolicyConfirm({ next }); return; }
+    await applyToolPolicy(next);
   }
   function openProviderForm(id?: string): void {
     const existing = id ? providers.find((item) => item.id === id) : undefined;
@@ -3456,6 +3475,36 @@ function App() {
       </span>
       <span className="sb-item sb-effort" data-level={effortLevel.key}>{t("Reasoning")} {effortLevel.label}</span>
     </footer>
+    {policyConfirm && <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPolicyConfirm(null); }}>
+      <section className="confirm-dialog risk-dialog" role="dialog" aria-modal="true" aria-labelledby="policy-risk-title">
+        <h3 id="policy-risk-title">{t("Turn on full access?")}</h3>
+        <p className="risk-lead">{t("Full access stops asking before each tool call. The model can then change files and run commands on this machine without a prompt between steps.")}</p>
+        <ul className="risk-list">
+          <li>{t("Fewer stops: fewer chances to catch a wrong path or a destructive command.")}</li>
+          <li>{t("Only for work you already trust; switch back the moment it is done.")}</li>
+        </ul>
+        <label className="risk-ack"><input type="checkbox" checked={riskAcknowledged} onChange={(event) => setRiskAcknowledged(event.target.checked)} />{t("I understand, and I want to continue")}</label>
+        <div className="dialog-actions">
+          <button type="button" className="btn" onClick={() => setPolicyConfirm(null)}>{t("Cancel")}</button>
+          <button type="button" className="btn danger" disabled={!riskAcknowledged} onClick={() => { const next = policyConfirm.next; setPolicyConfirm(null); void applyToolPolicy(next); }}>{t("Turn on full access")}</button>
+        </div>
+      </section>
+    </div>}
+    {alwaysAllowConfirm && <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setAlwaysAllowConfirm(null); }}>
+      <section className="confirm-dialog risk-dialog" role="dialog" aria-modal="true" aria-labelledby="always-risk-title">
+        <h3 id="always-risk-title">{t("Always allow this tool?")}</h3>
+        <p className="risk-lead">{tf("Every future call to {tool} is approved automatically, whatever arguments it carries.", { tool: alwaysAllowConfirm })}</p>
+        <ul className="risk-list">
+          <li>{t("It keeps working after a restart until you turn it off in the approval drawer.")}</li>
+          <li>{t("A narrower option is to allow it once per call, or for this session only.")}</li>
+        </ul>
+        <label className="risk-ack"><input type="checkbox" checked={riskAcknowledged} onChange={(event) => setRiskAcknowledged(event.target.checked)} />{t("I understand, and I want to continue")}</label>
+        <div className="dialog-actions">
+          <button type="button" className="btn" onClick={() => setAlwaysAllowConfirm(null)}>{t("Cancel")}</button>
+          <button type="button" className="btn danger" disabled={!riskAcknowledged} onClick={() => { const tool = alwaysAllowConfirm; setAlwaysAllowConfirm(null); writeAlwaysAllow(tool); }}>{t("Always allow")}</button>
+        </div>
+      </section>
+    </div>}
     {clearAllConfirm && <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setClearAllConfirm(false); }}><section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="clear-history-title"><div className="dialog-icon">!</div><h2 id="clear-history-title">{tf("Delete {count} conversations?", { count: String(sessions.length) })}</h2><p>{t("All saved conversations will be removed. You can undo this for 10 seconds.")}</p><div className="dialog-actions"><button type="button" className="btn" autoFocus onClick={() => setClearAllConfirm(false)}>{t("Cancel")}</button><button type="button" className="btn danger" onClick={clearAllSessions}>{tf("Delete {count} conversations", { count: String(sessions.length) })}</button></div></section></div>}
     {modelDeleteTarget && <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setModelDeleteTarget(null); }}><section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-model-title"><div className="dialog-icon danger">!</div><h2 id="delete-model-title">{t("Delete model")}</h2><p>{tf("Delete model {model} from this device? This cannot be undone.", { model: modelDeleteTarget })}</p><div className="dialog-actions"><button type="button" className="btn" autoFocus onClick={() => setModelDeleteTarget(null)}>{t("Cancel")}</button><button type="button" className="btn danger" onClick={() => { void modelAction("delete", modelDeleteTarget); setModelDeleteTarget(null); }}>{t("Delete model")}</button></div></section></div>}
     {pluginDeleteTarget && <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPluginDeleteTarget(null); }}><section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="uninstall-plugin-title"><div className="dialog-icon danger">!</div><h2 id="uninstall-plugin-title">{tf("Uninstall {name}?", { name: pluginDeleteTarget.name })}</h2><p>{t("Uninstall moves the plugin to its local recovery folder.")}</p><div className="dialog-actions"><button type="button" className="btn" autoFocus onClick={() => setPluginDeleteTarget(null)}>{t("Cancel")}</button><button type="button" className="btn danger" disabled={!!pluginActionBusy} onClick={() => void uninstallPlugin()}>{t("Uninstall")}</button></div></section></div>}

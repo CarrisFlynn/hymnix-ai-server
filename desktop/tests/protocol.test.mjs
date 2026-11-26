@@ -117,4 +117,17 @@ assert.ok(gatewayCode.includes('self.headers.get("Transfer-Encoding") is not Non
 assert.ok(gatewayCode.includes("if code >= 400:"), "error responses must close the connection so unread bodies cannot leak into the next request");
 assert.equal((gatewayCode.match(/gateway internal error/g) || []).length, 1, "one request must produce one error response");
 
+// --- second-batch hardening -------------------------------------------------
+assert.ok(read("../../server/hxcore/tools.py").includes("tempfile.mkstemp"), "fs.write must use a unique temp file");
+assert.ok(read("../../server/hxcore/approvals.py").includes("os.replace(tmp,p)"), "approval mode writes must be atomic");
+assert.ok(read("../../server/hxcore/approvals.py").includes("rm_rf_variants"), "destructive command variants must be classified");
+assert.ok(read("../../server/hxcore/credentials.py").includes("fullmatch"), "git credential hosts must be validated");
+assert.ok(main.includes("Refusing to send a token over plain http"), "tokens must not travel over cleartext to a remote host");
+assert.ok(main.includes("Preview is limited to the workspace, cache and app data folders"), "preview must stay inside the app's folders");
+assert.ok(main.includes('ipcMain.on("terminal:unsubscribe"'), "unsubscribe must be its own channel");
+assert.ok(!preload.includes('unsubscribe: (id: string) => { ipcRenderer.send("terminal:cancel"'), "unsubscribe must not cancel");
+assert.ok(renderer.includes("Turn on full access?"), "full access needs an acknowledgement dialog");
+assert.ok(renderer.includes("Always allow this tool?"), "tool-wide approval needs an acknowledgement dialog");
+assert.ok(!/ids = approvalsSelected\.length \? approvalsSelected\.slice\(\)/.test(renderer), "an empty selection must never approve everything");
+
 console.log("PASS: secure shell protocol/static contract");

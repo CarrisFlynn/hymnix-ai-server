@@ -90,7 +90,8 @@ const api: DesktopApi & { adminHistory: (adminKey: string, query?: AdminHistoryQ
     bridge: (command) => ipcRenderer.invoke("terminal:bridge", command),
     start: (request: TerminalCommandRequest): Promise<TerminalCommandResult> => ipcRenderer.invoke("terminal:start", request),
     cancel: (id: string) => { ipcRenderer.send("terminal:cancel", id); },
-    unsubscribe: (id: string) => { ipcRenderer.send("terminal:cancel", id); },
+    // Detaching a view is not cancelling the process; the old send killed it.
+    unsubscribe: (id: string) => { ipcRenderer.send("terminal:unsubscribe", id); },
     onOutput: (listener: (event: TerminalOutputEvent) => void) => {
       const handler = (_e: Electron.IpcRendererEvent, payload: TerminalOutputEvent) => listener(payload);
       ipcRenderer.on("terminal:output", handler);

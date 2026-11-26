@@ -1875,6 +1875,14 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
    cascade above stays untouched.
    ========================================================================== */
 
+.risk-dialog { max-width: 460px; }
+.risk-dialog h3 { margin: 0 0 10px; font-size: calc(16px * var(--text-scale, 1)); }
+.risk-lead { margin: 0 0 10px; color: var(--text); font-size: calc(13px * var(--text-scale, 1)); line-height: 1.6; }
+.risk-list { margin: 0 0 14px; padding-left: 18px; color: var(--muted); font-size: calc(12.5px * var(--text-scale, 1)); line-height: 1.6; }
+.risk-list li { margin-bottom: 4px; }
+.risk-ack { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; color: var(--text); font-size: calc(12.5px * var(--text-scale, 1)); }
+.risk-ack input { width: 15px; height: 15px; accent-color: var(--accent-fill); }
+
 /* ---- tab badges ---------------------------------------------------------- */
 .chat-tabs button { position: relative; }
 .tab-badge { margin-left: 6px; padding: 0 5px; border-radius: 999px; background: var(--highlight); color: var(--muted); font-family: var(--font-mono); font-size: calc(10px * var(--text-scale, 1)); line-height: 16px; }

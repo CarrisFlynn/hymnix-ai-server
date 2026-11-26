@@ -41,6 +41,8 @@ pnpm exec electron-builder --win --x64
 | 两个产品真的不同 | `main.tsx` 空状态 + `surface-chip` | AI：AI 标记 / 「想让我帮你做什么？」/ 通用提示；Orbit：ORBIT 标记 / 「你在做什么？」/ 编码提示 |
 | 四套接口方言 | `providers.ts` + `protocol.ts` | `ollama`/`openai`/`anthropic`/`openclaw` 全部支持工具；27 项供应商测试（含桩服务器）全绿；本地聊天走原生 `/api/chat` |
 | 监控并入共享 | `main.tsx` `renderGateway` | 导航只剩 8 项；共享页内含「共享 / 监控」两段；`/v1` 视觉基线同步移除 Monitor |
+| 风险确认对话框 | `main.tsx` `policyConfirm`/`alwaysAllowConfirm` | 切「完全权限」或点「总是允许」都会先弹确认（勾选后才能确认）；文案自写，未照抄参考实现 |
+| P2 加固（本轮） | 见下 | 唯一临时文件、原子写审批模式、危险命令变体、git 凭据主机校验、token 不走明文远host、预览限目录、unsubscribe 不再杀进程 |
 | 更新日志本地化 | `main.ts` `changelog:get(lang)` | 中文界面读 `CHANGELOG.zh-CN.md`，正文限宽 74ch |
 | 英文系统提示词修复 | `main.tsx` `CODE_MODE_PROMPT` | 英文会话不再发送字面键 |
 

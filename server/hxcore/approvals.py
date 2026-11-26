@@ -6,6 +6,12 @@ MODES=("ask","readonly","auto")
 _RULES=[
  ("rm_rf",r"\brm\s+-rf\b","danger","recursive delete"),("del_s",r"\bdel(?:ete)?\b.*(?:/f|/s)","danger","delete files"),("format",r"\bformat(?:\s|$)","danger","format disk"),("mkfs",r"\bmkfs(?:\.|\s|$)","danger","create filesystem"),("shutdown",r"\bshutdown\b","danger","shutdown system"),("taskkill",r"\btaskkill\b","danger","kill process"),("reg_delete",r"\breg\s+delete\b","danger","delete registry"),("bcdedit",r"\bbcdedit\b","danger","edit boot configuration"),("diskpart",r"\bdiskpart\b","danger","partition disk"),("git_force",r"\bgit\s+push\b.*--force(?:-with-lease)?","danger","force push"),("git_reset",r"\bgit\s+reset\s+--hard\b","danger","hard reset"),("pip_install",r"\bpip(?:3)?\s+install\b","danger","package install"),("npm_install",r"\bnpm\s+install\b","danger","package install"),("pip_global",r"\bpip(?:3)?\s+install\b.*(?:-g|--global)","danger","global package install"),("npm_global",r"\bnpm\s+install\b.*(?:-g|--global)","danger","global package install"),("pipe_sh",r"\bcurl\b[^|]*\|\s*(?:sh|bash)\b","danger","remote script execution"),("redirect",r"(?:>>|(?<![<>])>(?![>]))","danger","redirect writes files"),("chmod",r"\bchmod\s+777\b","danger","world writable permissions"),("delete_logs",r"\b(?:rm|del|rmdir)\b[^\n]*(?:logs|backup)","danger","delete logs or backups")]
 _READ=[r"^\s*(?:ls|dir|cat|type|git\s+status|python(?:\s+-c)?|echo)(?:\s|$)",r"^\s*config\s+get(?:\s|$)"]
+_RULES += [
+ ("rm_rf_variants", r"\brm\s+(?:(?:-[a-z]*r[a-z]*|-R)\s*)*(?:-[a-z]*f[a-z]*\s*)?", "danger", "recursive delete"),
+ ("rm_long", r"\brm\b.*--(?:recursive|force|no-preserve-root)", "danger", "recursive delete"),
+ ("pipe_shell", r"\b(?:curl|wget|powershell|pwsh)\b[^\n]*\|\s*(?:ba|z|k)?sh\b", "danger", "remote script execution"),
+ ("iex_download", r"\b(?:iex|invoke-expression)\b[^\n]*(?:downloadstring|invoke-webrequest|wget|curl)", "danger", "remote script execution"),
+]
 _SAFE_TOOLS={"time.now","calc","fs.list","fs.read","fs.stat","sysinfo","web.fetch"}
 _LOCK=threading.RLock()
 def _config_path(): return os.path.join(data_dir(),"config","approvals.json")
@@ -27,7 +33,9 @@ def set_mode(mode):
    cfg=cfg if isinstance(cfg,dict) else {}
   else: cfg={}
   cfg["mode"]=mode; ensure_dir(os.path.dirname(p))
-  with open(p,"w",encoding="utf-8") as f: json.dump(cfg,f,ensure_ascii=False,indent=2)
+  tmp=p+".tmp"
+  with open(tmp,"w",encoding="utf-8") as f: json.dump(cfg,f,ensure_ascii=False,indent=2)
+  os.replace(tmp,p)
   return {"ok":True,"mode":mode}
  except Exception:return {"ok":False,"error":"write_failed"}
 def classify(command):

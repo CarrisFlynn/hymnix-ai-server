@@ -98,10 +98,18 @@ def _fs_write(args):
     parent = os.path.dirname(p)
     if parent:
         os.makedirs(parent, exist_ok=True)
-    tmp = p + ".hymnix-tmp"
-    with open(tmp, "wb") as handle:
-        handle.write(data)
-    os.replace(tmp, p)
+    # A fixed temp name collided when two writers targeted the same path.
+    fd, tmp = tempfile.mkstemp(prefix=".hymnix-", dir=parent or None)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+        os.replace(tmp, p)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
     root = os.path.realpath(root_dir())
     return {"path": os.path.relpath(p, root).replace("\\", "/"), "bytes": len(data)}
 

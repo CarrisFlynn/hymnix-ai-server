@@ -415,6 +415,8 @@ function registerTerminalIpc(): void {
     child.once("exit", (code: number | null) => { terminalProcesses.delete(requestId); terminalJobs.delete(requestId); jobCenter.finish(jobId, code === 0 ? "done" : "failed", code); if (!event.sender.isDestroyed()) event.sender.send(terminalChannels.complete, { id: requestId, code, signal: null }); });
     return { id: requestId };
   });
+  // Detaching one view is not a cancel request; cancelling kills the tree.
+  ipcMain.on("terminal:unsubscribe", (event) => { assertSender(event); });
   ipcMain.on(terminalChannels.cancel, (event, requestId: unknown) => {
     assertSender(event);
     if (typeof requestId !== "string") return;
@@ -754,6 +756,11 @@ function registerNetworkIpc(): void {
     let target: URL;
     try { target = new URL(base + "/connect"); } catch { throw new Error("Invalid server address"); }
     if (target.protocol !== "http:" && target.protocol !== "https:") throw new Error("Server address must be http(s)");
+    // A token over cleartext to an arbitrary host is one typo away from leaking
+    // the key; loopback stays allowed because there is no network in between.
+    const token = typeof value.token === "string" ? value.token.trim() : "";
+    const loopback = target.hostname === "127.0.0.1" || target.hostname === "localhost" || target.hostname === "::1";
+    if (token && target.protocol === "http:" && !loopback) throw new Error("Refusing to send a token over plain http to a remote host; use https.");
     const response = await fetch(target, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: typeof value.name === "string" ? value.name : "", password: typeof value.password === "string" ? value.password : "" }), signal: AbortSignal.timeout(20000) });
     const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
     if (!response.ok || !payload || payload.ok !== true) { const error = errorPayload(response.status, payload, "Connection failed"); throw new Error(JSON.stringify(error)); }
@@ -1018,6 +1025,17 @@ ipcMain.handle("settings:get", async (event) => { assertSender(event); return re
     const target = typeof value.target === "string" ? value.target.trim() : "";
     if (!target) throw new Error("Preview target is empty");
     if (!mainWindow) throw new Error("No window");
+    // A compromised renderer must not be able to read arbitrary disk files
+    // through the preview view.
+    if (!/^https?:\/\//i.test(target)) {
+      const resolved = resolve(target);
+      const roots = [selectedFilesRoot, cachePath(), app.getPath("userData")].filter(Boolean).map((item) => resolve(String(item)));
+      const insideRoot = roots.some((folder) => {
+        const relativeToRoot = relative(folder, resolved);
+        return relativeToRoot === "" || (!relativeToRoot.startsWith("..") && !isAbsolute(relativeToRoot));
+      });
+      if (!insideRoot) throw new Error("Preview is limited to the workspace, cache and app data folders");
+    }
     const url = /^https?:\/\//i.test(target) ? target : pathToFileURL(target).toString();
     if (previewView) { await previewView.webContents.loadURL(url); return { ok: true, reused: true }; }
     const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
