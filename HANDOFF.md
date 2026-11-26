@@ -51,7 +51,8 @@ pnpm exec electron-builder --win --x64
 | 复审 R2 | 示例插件崩 | 包装器按形参调用 | 实测返回 `{"utc": …}` |
 | 复审 R9 | cloudflared 只算前 4KB | 整文件流式哈希 | 12 KB 文件实测正确 |
 | 复审 #2 | 二次编码/双斜杠 | 循环解码 + 折叠斜杠 + 同一路径转发 | 三种写法归一为 /api/pull |
-| 复审 #9 | 总是允许不决策当前请求 | 写入白名单同时 `decideApproval` | 代码路径 + 断言 |
+| 复审 #9 | 总是允许不决策当前请求 | 照 DSH：总是允许=对当前请求的一次回答（批准 + 记住），处理中禁用按钮 | **确定性实测**：真实待审请求 → 确认 → 行消失、白名单含 fs.write、待审清零 |
+| 审批执行 | `tools.py` 缺 tempfile、schema 拒 data/text | 补 import；schema 允许 data/text | 直接调用返回 `{path, bytes}` |
 | 复审 #11 | DOM 改写假修 | 删除调用与导入 | 断言 renderer 不再含 translateDom |
 | 复审 R3/R4/R5 | 漂移/一次性/上限 | `advanceOccurrence` + 完成态 + 五年上限 | 单测 4 项 |
 | #7 重启不清理 | `main.ts` `shutdownAll()` | 退出与重启共用一条清理链；重启先关网关/终端/流再 relaunch |

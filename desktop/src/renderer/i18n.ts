@@ -1,6 +1,8 @@
 export type Lang = "en" | "zh";
 
 export const zh: Record<string, string> = {
+  "Every future call to {tool} is approved automatically, whatever arguments it carries. This request is approved now as well.": "之后对 {tool} 的每一次调用都会自动放行，不管带什么参数；当前这条请求也会同时被批准。",
+  "Answering…": "处理中…",
   "That date is more than five years away": "这个日期在五年以后，太远了",
   "Automation could not run without a model: {title}": "没有模型，自动化任务未能运行：{title}",
   "Automation": "自动化",

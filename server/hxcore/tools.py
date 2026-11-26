@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Schema-checked built-in tools for Hymnix."""
 from __future__ import annotations
+import tempfile
 import ast, datetime, hashlib, ipaddress, json, math, os, platform, socket, stat, time, urllib.error, urllib.parse, urllib.request
 from typing import Any
 import http.client
@@ -258,7 +259,7 @@ def builtin_tools() -> list[str]:
     register("fs.list","List root-scoped directory",{"type":"object","properties":{"path":{"type":"string"}}},_fs_list)
     register("fs.read","Read root-scoped UTF-8 text",{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]},_fs_read)
     register("fs.stat","Inspect root-scoped path",{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]},_fs_stat)
-    register("fs.write", "Write one UTF-8 text file inside the workspace (max 256 KB). Content is replaced atomically; parent folders are created. Every call needs approval.",{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"],"additionalProperties":False},_fs_write,danger=True)
+    register("fs.write", "Write one UTF-8 text file inside the workspace (max 256 KB). Content is replaced atomically; parent folders are created. Every call needs approval.",{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"},"data":{"type":"string"},"text":{"type":"string"}},"required":["path"],"additionalProperties":False},_fs_write,danger=True)
     register("sysinfo","Basic system information",{"type":"object","properties":{}},_sysinfo)
     register("web.fetch","Fetch HTTP(S) resource",{"type":"object","properties":{"url":{"type":"string"}},"required":["url"]},_web_fetch)
     register("repo.tree","List root-scoped repository tree",{"type":"object","properties":{"path":{"type":"string"},"depth":{"type":"integer","minimum":1,"maximum":4},"limit":{"type":"integer","minimum":1,"maximum":500}},"additionalProperties":False},_repo_tree)

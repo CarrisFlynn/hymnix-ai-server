@@ -155,5 +155,10 @@ assert.ok(read("../src/shared/schedule.ts").includes("frequency_too_high"), "rul
 assert.ok(read("../../server/gateway_core.py").includes("body_not_allowed_on_options"), "OPTIONS with a body must be rejected");
 assert.ok(!renderer.includes("translateDom("), "no DOM rewriting may remain in the renderer");
 assert.ok(renderer.includes("sendRef.current(task.prompt)"), "scheduled tasks must reach the live send");
-assert.ok(renderer.includes("writeAlwaysAllow(row.tool); void decideApproval(row.id"), "always-allow must also decide the pending request");
+assert.ok(renderer.includes("decideApproval(pending.id, \"approve\")"), "always-allow must answer the pending request");
+const toolsSourceAgain = read("../../server/hxcore/tools.py");
+assert.ok(/^import tempfile/m.test(toolsSourceAgain), "tools.py must import tempfile for atomic writes");
+assert.ok(toolsSourceAgain.includes('"data":{"type":"string"}'), "fs.write must accept the data alias");
+assert.ok(read("../../server/gateway_core.py").includes("approve=_approved"), "approved tools must run through the registry's approval gate");
+assert.ok(renderer.includes("setAlwaysAllowConfirm({ tool: row.tool, id: row.id })"), "always-allow must carry the request id");
 console.log("PASS: secure shell protocol/static contract");

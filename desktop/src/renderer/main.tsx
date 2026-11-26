@@ -502,7 +502,9 @@ function App() {
   // Widening the tool policy, or auto-approving a whole tool, is a consent
   // decision, not a toggle: both go through a dialog that names the blast radius.
   const [policyConfirm, setPolicyConfirm] = useState<null | { next: "read" | "workspace" | "full" }>(null);
-  const [alwaysAllowConfirm, setAlwaysAllowConfirm] = useState<string | null>(null);
+  const [alwaysAllowConfirm, setAlwaysAllowConfirm] = useState<null | { tool: string; id: string }>(null);
+  const [answering, setAnswering] = useState<string[]>([]);
+  const answeringRef = useRef<Set<string>>(new Set());
   const [riskAcknowledged, setRiskAcknowledged] = useState(false);
   const [effortDrag, setEffortDrag] = useState<number | null>(null);
   const [modelPopover, setModelPopover] = useState<"closed" | "root" | "models">("closed");
@@ -767,9 +769,8 @@ function App() {
       return next;
     });
   }
-  function toggleAlwaysAllow(tool: string): void {
-    const enabled = alwaysAllow.includes(tool);
-    if (!enabled) { setRiskAcknowledged(false); setAlwaysAllowConfirm(tool); return; }
+  /** Turning an automatic approval off is immediate; turning it on is a dialog. */
+  function forgetAlwaysAllow(tool: string): void {
     writeAlwaysAllow(tool);
   }
   /** Persist one tool-wide automatic approval (only called after the risk dialog). */
@@ -3491,9 +3492,9 @@ function App() {
                   <button type="button" className="link-button" onClick={() => setApprovalsExpanded(approvalsExpanded === row.id ? null : row.id)} aria-expanded={approvalsExpanded === row.id}>{t("Arguments")}</button>
                   {approvalsExpanded === row.id && <pre className="approval-args">{JSON.stringify(row.argsRedacted || {}, null, 2)}</pre>}
                   <div className="approval-row-actions">
-                    <button type="button" className="btn primary" onClick={() => void decideApproval(row.id, "approve")} disabled={approvalsBusy}>{t("Allow once")}</button>
-                    <button type="button" className="btn danger" onClick={() => void decideApproval(row.id, "deny")} disabled={approvalsBusy}>{t("Deny")}</button>
-                    <button type="button" className={alwaysAllow.includes(row.tool) ? "btn primary" : "btn ghost"} onClick={() => { if (!alwaysAllow.includes(row.tool)) writeAlwaysAllow(row.tool); void decideApproval(row.id, "approve"); }}>{t(alwaysAllow.includes(row.tool) ? "Always allowed" : "Always allow")}</button>
+                    <button type="button" className="btn primary" onClick={() => void decideApproval(row.id, "approve")} disabled={approvalsBusy || answering.includes(row.id)}>{t("Allow once")}</button>
+                    <button type="button" className="btn danger" onClick={() => void decideApproval(row.id, "deny")} disabled={approvalsBusy || answering.includes(row.id)}>{t("Deny")}</button>
+                    <button type="button" className={alwaysAllow.includes(row.tool) ? "btn primary" : "btn ghost"} onClick={() => { setRiskAcknowledged(false); setAlwaysAllowConfirm({ tool: row.tool, id: row.id }); }}>{t(alwaysAllow.includes(row.tool) ? "Always allowed" : "Always allow")}</button>
                     <button type="button" className={sessionAllow.includes(row.tool) ? "btn primary" : "btn ghost"} onClick={() => toggleSessionAllow(row.tool)}>{t(sessionAllow.includes(row.tool) ? "Allowed this session" : "Allow this session")}</button>
                   </div>
                 </li>)}
@@ -3663,7 +3664,7 @@ function App() {
     {alwaysAllowConfirm && <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setAlwaysAllowConfirm(null); }}>
       <section className="confirm-dialog risk-dialog" role="dialog" aria-modal="true" aria-labelledby="always-risk-title">
         <h3 id="always-risk-title">{t("Always allow this tool?")}</h3>
-        <p className="risk-lead">{tf("Every future call to {tool} is approved automatically, whatever arguments it carries.", { tool: alwaysAllowConfirm })}</p>
+        <p className="risk-lead">{tf("Every future call to {tool} is approved automatically, whatever arguments it carries. This request is approved now as well.", { tool: alwaysAllowConfirm.tool })}</p>
         <ul className="risk-list">
           <li>{t("It keeps working after a restart until you turn it off in the approval drawer.")}</li>
           <li>{t("A narrower option is to allow it once per call, or for this session only.")}</li>
@@ -3671,7 +3672,7 @@ function App() {
         <label className="risk-ack"><input type="checkbox" checked={riskAcknowledged} onChange={(event) => setRiskAcknowledged(event.target.checked)} />{t("I understand, and I want to continue")}</label>
         <div className="dialog-actions">
           <button type="button" className="btn" onClick={() => setAlwaysAllowConfirm(null)}>{t("Cancel")}</button>
-          <button type="button" className="btn danger" disabled={!riskAcknowledged} onClick={() => { const tool = alwaysAllowConfirm; setAlwaysAllowConfirm(null); writeAlwaysAllow(tool); }}>{t("Always allow")}</button>
+          <button type="button" className="btn danger" disabled={!riskAcknowledged} onClick={() => { const pending = alwaysAllowConfirm; setAlwaysAllowConfirm(null); if (pending) { writeAlwaysAllow(pending.tool); void decideApproval(pending.id, "approve"); } }}>{t("Always allow")}</button>
         </div>
       </section>
     </div>}

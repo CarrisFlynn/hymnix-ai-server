@@ -1,0 +1,22 @@
+import { _electron as electron } from "@playwright/test";
+import { resolve } from "node:path";
+const cwd = resolve(process.cwd());
+const env = { ...process.env };
+delete env.ELECTRON_RUN_AS_NODE;
+const app = await electron.launch({ args: ["--user-data-dir=C:\\Users\\xiaoy\\AppData\\Local\\Temp\\hymnix-always11", "."], cwd, env });
+const win = await app.firstWindow();
+win.on("pageerror", (error) => console.log("PAGEERROR " + String(error).slice(0, 300)));
+win.on("console", (message) => { if (message.type() === "error") console.log("CONSOLE " + message.text().slice(0, 200)); });
+await win.waitForFunction(() => Boolean(window.__hymnixDev), null, { timeout: 60000 });
+await win.evaluate(() => { localStorage.setItem("hymnix.welcome","1"); localStorage.setItem("hymnix.whatsNew","1.4.0"); localStorage.setItem("hymnix.lang","zh"); });
+await win.reload();
+await win.waitForFunction(() => Boolean(window.__hymnixDev), null, { timeout: 60000 });
+await win.setViewportSize({ width: 1440, height: 900 });
+await win.evaluate(() => window.__hymnixDev.dismissOverlays());
+for (let i = 0; i < 60; i += 1) { const boot = await win.evaluate(() => window.hymnix.bootstrap()); if (boot.ready) break; await win.waitForTimeout(500); }
+await win.evaluate(() => { window.__hymnixDev.seedApprovals([{ id: "dbg-2", tool: "fs.write", risk: "moderate", reasons: [], argsRedacted: {}, createdAt: Date.now() }]); window.__hymnixDev.openApprovals(); });
+await win.waitForTimeout(500);
+await win.click(".approval-row .btn.ghost", { force: true }).catch((error) => console.log("CLICK_ERR " + String(error).slice(0, 120)));
+await win.waitForTimeout(800);
+console.log("HTML " + JSON.stringify(await win.evaluate(() => ({ dialogs: document.querySelectorAll(".dialog-backdrop").length, risk: document.querySelectorAll(".risk-dialog").length, bodyHas: document.body.innerHTML.includes("要总是允许") }))));
+await app.close();
