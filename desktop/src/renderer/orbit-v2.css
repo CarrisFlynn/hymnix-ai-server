@@ -1812,3 +1812,6 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 .tb-window button:hover { background: var(--highlight); color: var(--text); }
 .tb-window button.close:hover { background: var(--danger); color: var(--surface); }
 .panel-toggle svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; }
+
+/* Hosts whichever page is active; the key on it forces a remount on navigation. */
+.main-host { display: flex; flex: 1 1 auto; min-width: 0; min-height: 0; flex-direction: column; }

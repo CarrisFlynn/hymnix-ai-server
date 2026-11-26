@@ -118,7 +118,8 @@ def _read_version():
 VERSION = _read_version()
 
 DEFAULT_CONFIG = {
-    "listen_host": "0.0.0.0",
+    # Loopback by default; LAN sharing must be switched on explicitly.
+    "listen_host": "127.0.0.1",
     "listen_port": 11435,
     "upstream_host": "127.0.0.1",
     "upstream_port": 11434,
@@ -1299,8 +1300,11 @@ class Handler(BaseHTTPRequestHandler):
     def _admin_key(self):
         k = self.headers.get("X-Admin-Key", "").strip()
         if not k:
-            q = urllib.parse.urlparse(self.path).query
-            k = urllib.parse.parse_qs(q).get("key", [""])[0]
+            # A key in the URL ends up in history, proxy logs and Referer, so the
+            # query fallback is limited to a direct loopback request (the dashboard).
+            if self._direct_local():
+                q = urllib.parse.urlparse(self.path).query
+                k = urllib.parse.parse_qs(q).get("key", [""])[0]
         return k
 
     def _read_body(self):
@@ -1447,8 +1451,7 @@ class Handler(BaseHTTPRequestHandler):
             changed[key] = value
         if changed:
             try:
-                with open(CONFIG_PATH, "w", encoding="utf-8") as handle:
-                    json.dump(CFG, handle, ensure_ascii=False, indent=2)
+                _write_text_atomic(CONFIG_PATH, json.dumps(CFG, ensure_ascii=False, indent=2))
             except Exception:
                 pass
             _sync_runtime(CFG)
@@ -1491,8 +1494,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _save_config_file(self):
         try:
-            with open(CONFIG_PATH, "w", encoding="utf-8") as handle:
-                json.dump(CFG, handle, ensure_ascii=False, indent=2)
+            _write_text_atomic(CONFIG_PATH, json.dumps(CFG, ensure_ascii=False, indent=2))
         except Exception:
             pass
 
@@ -1706,8 +1708,7 @@ class Handler(BaseHTTPRequestHandler):
         if "cloud_enabled" in payload:
             CFG["cloud_enabled"] = bool(payload.get("cloud_enabled"))
         try:
-            with open(CONFIG_PATH, "w", encoding="utf-8") as handle:
-                json.dump(CFG, handle, ensure_ascii=False, indent=2)
+            _write_text_atomic(CONFIG_PATH, json.dumps(CFG, ensure_ascii=False, indent=2))
         except Exception:
             pass
         return self._admin_cloud()
@@ -1764,8 +1765,7 @@ class Handler(BaseHTTPRequestHandler):
         if "allow_remote" in payload:
             CFG["allow_remote"] = bool(payload.get("allow_remote"))
         try:
-            with open(CONFIG_PATH, "w", encoding="utf-8") as handle:
-                json.dump(CFG, handle, ensure_ascii=False, indent=2)
+            _write_text_atomic(CONFIG_PATH, json.dumps(CFG, ensure_ascii=False, indent=2))
         except Exception:
             pass
         _tunnel_note("host identity updated")

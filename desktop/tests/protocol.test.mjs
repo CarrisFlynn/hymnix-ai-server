@@ -16,7 +16,8 @@ assert.ok(!readme.includes("HYMNIx_GATEWAY_TOKEN"), "README must not claim an en
 assert.ok(renderer.includes("__APP_VERSION__"), "renderer must show the app version in About");
 assert.ok(renderer.includes('head("About"') && renderer.includes("{__APP_VERSION__} · Hymnix Studio"), "app version must be in About rather than the title bar");
 assert.ok(!renderer.includes('"ORBIT · "'), "title bar must not carry the old version badge");
-assert.ok(main.includes('minWidth:800,minHeight:560'), "window must support the planned minimum dimensions");
+assert.ok(main.includes("minWidth: 800, minHeight: 560"), "window must support the planned minimum dimensions");
+assert.ok(main.includes("Math.min(1294") && main.includes("Math.min(830"), "window must open at the reference size (1294x830 DIP)");
 assert.ok(main.includes('"window:appearance"') && preload.includes('"window:appearance"'), "native window appearance must follow renderer theme selection");
 for (const view of ["Chat","History","Gateway","Models","Terminal","Monitor","Changelog","Support","Settings"]) assert.ok(renderer.includes(view), `renderer missing view ${view}`);
 for (const token of ['aria-label={t("Navigation")}', 't("Message")', 'className="chat-title"', 'className="side-brand"']) assert.ok(renderer.includes(token), `renderer accessibility/name missing ${token}`);

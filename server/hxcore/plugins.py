@@ -19,6 +19,9 @@ _EXECUTOR=ThreadPoolExecutor(max_workers=4, thread_name_prefix="hymnix-plugin")
 _TIMEOUT=float(os.environ.get("HX_PLUGIN_TIMEOUT", "3"))
 # Attribute names a plugin has no business touching: they are the documented way
 # out of an exec() sandbox (walk __subclasses__ and reach the host interpreter).
+# Module handles reachable through an allowlisted module would hand back the real
+# os/sys objects: random._os is os, so one attribute access escaped the sandbox.
+_MODULE_ATTRS={"_os","_sys","os","sys","_io","io","_builtins","builtins","_warnings","_imp","_thread","_signal","_ctypes","ctypes","_collections_abc","_frozen_importlib","_frozen_importlib_external","importlib","posixpath","ntpath","subprocess","_random","_socket"}
 _FORBIDDEN_ATTRS={"__class__","__base__","__bases__","__subclasses__","__mro__","__globals__","__builtins__","__code__","__closure__","__dict__","__getattribute__","__import__","__loader__","__spec__","__reduce__","__reduce_ex__"}
 class _PluginTimeout(BaseException):
     """Raised inside plugin frames so a plugin cannot swallow its own deadline."""
@@ -257,6 +260,12 @@ def load(pid):
         with open(path,encoding="utf-8") as f:source=f.read()
         tree=ast.parse(source, path)
         for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and (node.attr in _FORBIDDEN_ATTRS or node.attr in _MODULE_ATTRS):
+                _err(pid,"load","plugin_sandbox_escape:"+node.attr)
+                return {"ok":False,"error":"plugin_sandbox_escape","detail":node.attr}
+            if isinstance(node, ast.Name) and node.id in {"__builtins__","eval","exec","compile","globals","locals","vars","breakpoint"}:
+                _err(pid,"load","plugin_sandbox_escape:"+node.id)
+                return {"ok":False,"error":"plugin_sandbox_escape","detail":node.id}
             if isinstance(node, ast.Attribute) and node.attr in _FORBIDDEN_ATTRS:
                 _err(pid,"load","plugin_sandbox_escape:"+node.attr)
                 return {"ok":False,"error":"plugin_sandbox_escape","detail":node.attr}

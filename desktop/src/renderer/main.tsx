@@ -1806,7 +1806,7 @@ function App() {
         {toolCall.status === "idle"
           ? <p className="panel-note">{t("No tool calls in this conversation yet.")}</p>
           : <div className="trace-row"><span className={"trace-dot " + toolCall.status} aria-hidden="true" /><span>{t(toolCall.message || toolCall.status)}</span></div>}
-        {approvals.length > 0 && <div className="trace-list">{approvals.map((approval) => <div className="trace-row" key={approval.id}><span className="trace-tool">{approval.tool}</span><span className="mono">{approval.risk}</span><span className="trace-actions"><button type="button" className="btn" onClick={() => void decideApproval(approval.id, "approve")} disabled={approvalsBusy}>{t("Approve")}</button><button type="button" className="btn ghost" onClick={() => void decideApproval(approval.id, "deny")} disabled={approvalsBusy}>{t("Deny")}</button></span></div>)}</div>}
+        {approvals.length > 0 && <div className="trace-list">{approvals.map((approval) => <div className="trace-row" key={approval.id}><span className="trace-tool">{approval.tool}</span><span className="mono">{approval.risk}</span><code className="trace-args">{JSON.stringify(approval.argsRedacted || {})}</code><span className="trace-actions"><button type="button" className="btn" onClick={() => void decideApproval(approval.id, "approve")} disabled={approvalsBusy}>{t("Approve")}</button><button type="button" className="btn ghost" onClick={() => void decideApproval(approval.id, "deny")} disabled={approvalsBusy}>{t("Deny")}</button></span></div>)}</div>}
         {approvalsError && <p className="error">{approvalsError}</p>}
       </div>
       <div className="panel-card">
@@ -1824,7 +1824,7 @@ function App() {
           <summary><span className={"trace-dot " + toolCall.status} aria-hidden="true" />{t("Tool activity")}{approvals.length > 0 ? " · " + approvals.length + " " + t("pending approvals") : ""}</summary>
           <div className="tool-card-body">
             {toolCall.message ? toolCall.message + "\n" : ""}
-            {approvals.map((approval) => "• " + approval.tool + " · " + approval.risk).join("\n")}
+            {approvals.map((approval) => "• " + approval.tool + " · " + approval.risk + "\n" + JSON.stringify(approval.argsRedacted || {}, null, 1)).join("\n")}
           </div>
         </details>
       : null;
@@ -2689,7 +2689,10 @@ function App() {
     </aside>
 
     <main className={terminalView ? "main terminal-main" : "main"}>
-      {renderView()}
+      {/* Keyed by page: switching pages remounts instead of letting React reuse the
+          previous page's DOM, which is how changelog rows once leaked into other
+          pages' cards. */}
+      <div className="main-host" key={active}>{renderView()}</div>
       {startupNote && !terminalView && <div className="notice" role="status">{startupNote}</div>}
       {(error || connectionError) && !terminalView && <div className="error" role="alert">{error || connectionError}</div>}
     </main>

@@ -50,6 +50,7 @@ def fetch(source_id=None,timeout=8):
         if not src:return {"ok":False,"source":str(source_id or ""),"count":0,"cached":False,"error":"source_not_found"}
         sid=src["id"]
         if not src["url"]:return {"ok":True,"source":sid,"count":0,"cached":False,"error":"offline"}
+        if urllib.parse.urlparse(src["url"]).scheme != "https":return {"ok":False,"source":sid,"count":0,"cached":False,"error":"insecure_index_url"}
         req=urllib.request.Request(src["url"],headers={"User-Agent":"Hymnix-Plugin-Index/1"})
         with urllib.request.urlopen(req,timeout=timeout) as response: raw=response.read(4*1024*1024+1)
         if len(raw)>4*1024*1024:raise ValueError("index_too_large")
@@ -86,12 +87,19 @@ def install_from_index(plugin_id,source_id=None):
         item=next((x for x in cached(source_id).get("plugins",[]) if x.get("id")==plugin_id),None)
         if not item:return {"ok":False,"error":"plugin_not_found","path":""}
         url=item.get("download_url",""); scheme=urllib.parse.urlparse(url).scheme
-        if not url or scheme not in ("http","https"):return {"ok":False,"error":"no_download_url","path":""}
+        # A plugin is executed, so the download must be TLS and hash-pinned: an
+        # index source or a MITM must not be able to swap the payload.
+        if not url or scheme != "https":return {"ok":False,"error":"insecure_download_url","path":""}
+        expected=str(item.get("sha256") or "").strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{64}",expected):return {"ok":False,"error":"missing_sha256","path":""}
         from hxcore import plugins
         src=_source(source_id); sid=src["id"] if src else (source_id or "builtin")
         temp_dir=tempfile.mkdtemp(prefix="plugin-index-",dir=ensure_dir(os.path.join(logs_dir(),"tmp")))
         archive=os.path.join(temp_dir,"plugin.zip"); req=urllib.request.Request(url,headers={"User-Agent":"Hymnix-Plugin-Index/1"})
         with urllib.request.urlopen(req,timeout=8) as response,open(archive,"wb") as out:shutil.copyfileobj(response,out,1024*1024)
+        import hashlib as _hashlib
+        with open(archive,"rb") as handle: actual=_hashlib.sha256(handle.read()).hexdigest()
+        if actual!=expected:return {"ok":False,"error":"sha256_mismatch","path":""}
         unpack=os.path.join(temp_dir,"unpacked");os.makedirs(unpack)
         with zipfile.ZipFile(archive) as zf:
             base=os.path.realpath(unpack)
