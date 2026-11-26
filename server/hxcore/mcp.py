@@ -2,6 +2,23 @@
 """Small stdlib MCP JSON-RPC client for stdio and HTTP/SSE servers."""
 from __future__ import annotations
 import atexit, json, os, queue, shlex, subprocess, threading, time
+
+_METACHARS = set(";|&><\x60$(){}[]\n\r")
+_ALLOWED_MCP_EXECUTABLES = {"node", "npx", "python", "python3", "py", "uvx", "uv",
+                            "deno", "go", "java", "dotnet", "ruby", "php", "bun"}
+
+
+def _mcp_command_allowed(command):
+    """Only a direct run of a known runtime: no shell, no metacharacters."""
+    if not isinstance(command, list) or not command:
+        return False
+    for part in command:
+        if any(ch in _METACHARS for ch in str(part)):
+            return False
+    name = os.path.basename(str(command[0])).lower()
+    if name.endswith(".exe"):
+        name = name[:-4]
+    return name in _ALLOWED_MCP_EXECUTABLES
 from pathlib import Path
 from typing import Any
 from urllib import request
@@ -55,6 +72,10 @@ class McpManager:
             raw_command = spec.get("command")
             command = [str(x) for x in raw_command] if isinstance(raw_command, (list, tuple)) else [str(raw_command)] + [str(x) for x in spec.get("args", [])]
             if len(command) == 1 and any(ch.isspace() for ch in command[0]): command = shlex.split(command[0], posix=False)
+            # A command string from config is attacker-adjacent: one metacharacter
+            # turns "run this server" into "run whatever follows the semicolon".
+            if not _mcp_command_allowed(command):
+                return False
             env = os.environ.copy()
             if isinstance(spec.get("env"), dict): env.update({str(k): str(v) for k,v in spec["env"].items()})
             proc = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace", env=env, bufsize=1)

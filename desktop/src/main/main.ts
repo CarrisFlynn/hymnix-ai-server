@@ -1186,7 +1186,12 @@ ipcMain.handle("window:control", (event, raw: unknown) => {
   assertSender(event);
   const action = typeof raw === "string" ? raw : "";
   const win = BrowserWindow.fromWebContents(event.sender);
-  if (action === "restart") { allowQuit = true; app.relaunch(); app.quit(); return { ok: true }; }
+  if (action === "restart") {
+    // Relaunch only after the old process released its ports and the gateway,
+    // or the new instance inherits a held port and a live backend.
+    void shutdownAll().finally(() => { allowQuit = true; app.relaunch(); app.quit(); });
+    return { ok: true };
+  }
   if (!win) return { ok: false };
   if (action === "minimize") { win.minimize(); return { ok: true, minimized: true }; }
   if (action === "maximize") { if (win.isMaximized()) win.unmaximize(); else win.maximize(); return { ok: true, maximized: win.isMaximized() }; }
@@ -1247,17 +1252,25 @@ try { const cacheDir = bootSettings.cacheDir || defaultCacheDir; mkdirSync(cache
 app.whenReady().then(async()=>{if (!hasInstanceLock) return; const bootT0=Date.now();bootLog("boot start");Menu.setApplicationMenu(null);protocol.handle("app",(request)=>{ const url=new URL(request.url); const relativePath=decodeURIComponent(url.pathname).replace(/^\/+/, "")||"index.html"; const target=join(rendererRoot,relativePath); const relCheck=relative(rendererRoot,target); if(!relCheck||relCheck.startsWith(".."+sep)||relCheck===".."||isAbsolute(relCheck)) return new Response("Forbidden",{status:403}); return net.fetch(pathToFileURL(target).toString()); });session.defaultSession.webRequest.onHeadersReceived((details,callback)=>callback({responseHeaders:{...details.responseHeaders,"Content-Security-Policy":["default-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:*; img-src 'self' data:; font-src 'self'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'"]}}));bootLog("pre-window t=" + (Date.now()-bootT0)); createWindow(); bootLog("window created t=" + (Date.now()-bootT0)); void gateway.start();app.on("activate",()=>{if(BrowserWindow.getAllWindows().length===0)createWindow();});}).catch((error)=>{console.error(error);app.quit();});
 let allowQuit = false;
 let quitCleanup: Promise<void> | undefined;
+/**
+ * One shutdown path for quit and restart. The restart button used to set
+ * allowQuit and relaunch, skipping every cleanup below: terminals, chat streams
+ * and the gateway process all survived the exit.
+ */
+async function shutdownAll(): Promise<void> {
+  if (quitCleanup) return quitCleanup;
+  quitCleanup = (async () => {
+    try { terminalBridge.stop(); } catch (error) { bootLog("bridge shutdown failed: " + String(error)); }
+    try { stopAllTerminals(); } catch (error) { bootLog("terminal shutdown failed: " + String(error)); }
+    for (const controller of chatControllers.values()) { try { controller.abort(); } catch { /* already gone */ } }
+    chatControllers.clear();
+    try { await gateway.stop(); } catch (error) { bootLog("gateway shutdown failed: " + String(error)); }
+  })();
+  return quitCleanup;
+}
 app.on("before-quit", (event) => {
   if (!hasInstanceLock || allowQuit) return;
   event.preventDefault();
-  if (quitCleanup) return;
-  terminalBridge.stop();
-  stopAllTerminals();
-  for (const controller of chatControllers.values()) controller.abort();
-  chatControllers.clear();
-  quitCleanup = gateway.stop().catch((error: unknown) => bootLog("gateway shutdown failed: " + String(error))).finally(() => {
-    allowQuit = true;
-    app.quit();
-  });
+  void shutdownAll().finally(() => { allowQuit = true; app.quit(); });
 });
 app.on("window-all-closed",()=>{if(process.platform!=="darwin")app.quit();});

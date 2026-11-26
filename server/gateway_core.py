@@ -151,6 +151,7 @@ DEFAULT_CONFIG = {
     "idle_unload_seconds": 60,
     "idle_check_seconds": 15,
     "enable_note_injection": False,
+    "trust_proxy_headers": False,
     "power_price": 0.6,
     "base_power_w": 40,
     "timezone": "Asia/Shanghai",
@@ -1258,8 +1259,10 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def _ip(self):
-        # 经 Cloudflare 隧道时，真实来源在 CF-Connecting-IP / X-Forwarded-For 里
-        if self.client_address[0] in ("127.0.0.1", "::1"):
+        # Forwarded headers are only believable when a proxy we trust wrote them.
+        # Any local process can send CF-Connecting-IP over a loopback socket, so
+        # this is opt-in (trust_proxy_headers) and off by default.
+        if self.client_address[0] in ("127.0.0.1", "::1") and bool(CFG.get("trust_proxy_headers", False)):
             fwd = self.headers.get("CF-Connecting-IP", "").strip()
             if not fwd:
                 xff = self.headers.get("X-Forwarded-For", "")
@@ -1327,8 +1330,11 @@ class Handler(BaseHTTPRequestHandler):
         if not k:
             # A key in the URL ends up in history, proxy logs and Referer, so the
             # query fallback is limited to a direct loopback request (the dashboard).
-            if self._direct_local():
-                q = urllib.parse.urlparse(self.path).query
+            parsed_admin = urllib.parse.urlparse(self.path)
+            # Query keys are limited to loopback HTML pages. The admin API must
+            # never take a key from the URL: a smuggled request line could carry it.
+            if self.command == "GET" and self._direct_local() and not parsed_admin.path.startswith("/admin/"):
+                q = parsed_admin.query
                 k = urllib.parse.parse_qs(q).get("key", [""])[0]
         return k
 
@@ -3082,6 +3088,8 @@ class Handler(BaseHTTPRequestHandler):
         for k, v in self.headers.items():
             lk = k.lower()
             if lk in ("host", "connection", "content-length", "authorization",
+                   "cf-connecting-ip", "cf-ray", "cf-visitor", "x-forwarded-for",
+                   "x-forwarded-host", "x-forwarded-proto", "x-real-ip", "forwarded",
                       "x-api-key", "accept-encoding", "keep-alive", "proxy-connection"):
                 continue
             headers[k] = v

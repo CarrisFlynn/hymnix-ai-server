@@ -130,4 +130,16 @@ assert.ok(renderer.includes("Turn on full access?"), "full access needs an ackno
 assert.ok(renderer.includes("Always allow this tool?"), "tool-wide approval needs an acknowledgement dialog");
 assert.ok(!/ids = approvalsSelected\.length \? approvalsSelected\.slice\(\)/.test(renderer), "an empty selection must never approve everything");
 
+// --- final security batch ---------------------------------------------------
+const gatewayFinal = read("../../server/gateway_core.py");
+assert.ok(gatewayFinal.includes('CFG.get("trust_proxy_headers", False)'), "forwarded headers must be opt-in");
+assert.ok(gatewayFinal.includes('not parsed_admin.path.startswith("/admin/")'), "admin API must not accept a query-string key");
+assert.ok(gatewayFinal.includes('"x-forwarded-for"'), "proxy requests must drop forwarded headers");
+const mcpFinal = read("../../server/hxcore/mcp.py");
+assert.ok(mcpFinal.includes("_mcp_command_allowed"), "MCP commands must be validated");
+assert.ok(mcpFinal.includes("_ALLOWED_MCP_EXECUTABLES"), "MCP may only launch known runtimes");
+assert.ok(read("../../server/hymnix_main.py").includes("cloudflared_sha256"), "cloudflared downloads must be hash-pinned");
+assert.ok(main.includes("async function shutdownAll"), "quit and restart must share one shutdown path");
+assert.ok(main.includes("void shutdownAll().finally(() => { allowQuit = true; app.relaunch(); app.quit(); })"), "restart must clean up before relaunching");
+
 console.log("PASS: secure shell protocol/static contract");

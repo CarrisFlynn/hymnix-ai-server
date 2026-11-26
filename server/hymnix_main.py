@@ -7232,6 +7232,13 @@ class HuimengAIClient:
             self.queue_message("system", T("🌐 公网隧道未分配（需要时点上方「启动隧道」按钮，避免频繁申请被限流）", "🌐 Public tunnel not allocated (click Start tunnel when needed)."))
 
     def _download_cloudflared(self):
+        """Download cloudflared only when its SHA-256 is pinned."""
+        expected = str(self.config.get("cloudflared_sha256") or os.environ.get("HYMNIX_CLOUDFLARED_SHA256") or "").strip().lower()
+        if len(expected) != 64:
+            # A magic-number check proves the file is an executable, not that it
+            # is the cloudflared we meant to ship.
+            self.queue_message("system", "未配置 cloudflared 的 SHA-256，已拒绝下载（设置 cloudflared_sha256 后重试）")
+            return None
         """Download a verified cloudflared binary for the current platform."""
         part = None
         try:
@@ -7265,6 +7272,10 @@ class HuimengAIClient:
                 raise ValueError("下载文件过小，可能不是 cloudflared")
             with open(part, "rb") as fh:
                 head = fh.read(4096)
+            digest = hashlib.sha256(head).hexdigest()
+            if digest.lower() != expected:
+                self.queue_message("system", "cloudflared 校验失败：SHA-256 与配置不符，已放弃")
+                return None
             if not _hxarch.looks_like_binary(head, asset.get("platform")):
                 raise ValueError("下载内容不是有效的 cloudflared 可执行文件")
             os.replace(part, dest)
