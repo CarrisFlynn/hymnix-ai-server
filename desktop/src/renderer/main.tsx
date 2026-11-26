@@ -20,7 +20,7 @@ declare global { interface Window { hymnix: DesktopApi } }
 
 type Message = ChatMessage;
 type Entry = { time: string; tag: "sys" | "out" | "err" | "warn"; text: string };
-type LocalChatSession = { id: string; name: string; createdAt: string; updatedAt: string; count: number; model: string; draft: string; messages: Message[]; pinned: boolean };
+type LocalChatSession = { id: string; name: string; createdAt: string; updatedAt: string; movedAt?: string; count: number; model: string; draft: string; messages: Message[]; pinned: boolean };
 type ModelInfo = { name: string; loaded?: boolean };
 type ToolInfo = ToolDescriptor;
 type ToolArgs = Record<string, unknown>;
@@ -259,7 +259,7 @@ function conversationTitle(messages: Message[], fallback: string): string {
 
 function writeChatSessions(sessions: LocalChatSession[]): void {
   try {
-    const ordered = [...sessions].sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt.localeCompare(a.updatedAt)).slice(0, 200);
+    const ordered = [...sessions].sort((a, b) => Number(b.pinned) - Number(a.pinned) || String(b.movedAt || b.createdAt).localeCompare(String(a.movedAt || a.createdAt))).slice(0, 200);
     localStorage.setItem("hymnix.chat.sessions.v2", JSON.stringify(ordered));
     localStorage.setItem("hymnix.chat.history", JSON.stringify(ordered.map(({ id, name, updatedAt, count, model }) => ({ id, name, at: updatedAt, count, model }))));
     const latest = ordered[0];
@@ -299,6 +299,16 @@ function App() {
   const [monitorAutoRefresh, setMonitorAutoRefresh] = useState(false);
   const [toast, setToast] = useState<{ message: string; action?: string; undo?: () => void } | null>(null);
   const [conversationMenuOpen, setConversationMenuOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteQuery, setPaletteQuery] = useState("");
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") { event.preventDefault(); setPaletteOpen((value) => !value); setPaletteQuery(""); }
+      else if (event.key === "Escape") setPaletteOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   const [renamingSession, setRenamingSession] = useState(false);
   const [renameDraft, setRenameDraft] = useState("");
   const [clearAllConfirm, setClearAllConfirm] = useState(false);
@@ -394,7 +404,7 @@ function App() {
   const [providerMaxTokens, setProviderMaxTokens] = useState(0);
   const [providerModels, setProviderModels] = useState<string[]>([]);
   const [providerBusy, setProviderBusy] = useState(false);
-  const sessions = savedSessions.map(({ id, name, updatedAt, count, model, pinned }) => ({ id, name, at: updatedAt, count, model, pinned }));
+  const sessions = savedSessions.map(({ id, name, updatedAt, createdAt, movedAt, count, model, pinned }) => ({ id, name, at: updatedAt, orderAt: movedAt || createdAt, count, model, pinned }));
   const todayKey = new Date().toDateString();
   const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
   const yesterdayKey = yesterday.toDateString();
@@ -940,8 +950,10 @@ function App() {
     const current = savedSessions.find((item) => item.id === currentSessionId);
     const now = new Date().toISOString();
     const title = sessionName === "New chat" || sessionName === "Untitled session" ? conversationTitle(messages, t("New chat")) : sessionName;
-    const record: LocalChatSession = { id: currentSessionId, name: title, createdAt: current?.createdAt || now, updatedAt: now, count: messages.length, model, draft, messages, pinned: current?.pinned || false };
-    const next = [record, ...savedSessions.filter((item) => item.id !== currentSessionId)].slice(0, 200);
+    const record: LocalChatSession = { id: currentSessionId, name: title, createdAt: current?.createdAt || now, updatedAt: now, movedAt: current ? (messages.length > (current.count || 0) ? now : (current.movedAt || current.createdAt)) : now, count: messages.length, model, draft, messages, pinned: current?.pinned || false };
+    const next = savedSessions.some((item) => item.id === currentSessionId)
+      ? savedSessions.map((item) => (item.id === currentSessionId ? record : item))
+      : [record, ...savedSessions].slice(0, 200);
     if (title !== sessionName) setSessionName(title);
     setSavedSessions(next); writeChatSessions(next);
   }
@@ -998,24 +1010,35 @@ function App() {
     if (!name) { setRenamingSession(false); return; }
     const previous = savedSessions.find((item) => item.id === currentSessionId);
     const now = new Date().toISOString();
-    const record: LocalChatSession = { id: currentSessionId, name, createdAt: previous?.createdAt || now, updatedAt: now, count: messages.length, model, draft, messages, pinned: previous?.pinned || false };
-    const next = [record, ...savedSessions.filter((item) => item.id !== currentSessionId)];
+    const record: LocalChatSession = { id: currentSessionId, name, createdAt: previous?.createdAt || now, updatedAt: now, movedAt: previous?.movedAt || previous?.updatedAt || now, count: messages.length, model, draft, messages, pinned: previous?.pinned || false };
+    const next = savedSessions.some((item) => item.id === currentSessionId)
+      ? savedSessions.map((item) => (item.id === currentSessionId ? record : item))
+      : [record, ...savedSessions];
     setSessionName(name); setSavedSessions(next); writeChatSessions(next); setRenamingSession(false);
   }
   function toggleCurrentPin(): void {
     const previous = savedSessions.find((item) => item.id === currentSessionId);
     const now = new Date().toISOString();
     const record: LocalChatSession = { id: currentSessionId, name: sessionName, createdAt: previous?.createdAt || now, updatedAt: now, count: messages.length, model, draft, messages, pinned: !previous?.pinned };
-    const next = [record, ...savedSessions.filter((item) => item.id !== currentSessionId)];
+    const next = savedSessions.some((item) => item.id === currentSessionId)
+      ? savedSessions.map((item) => (item.id === currentSessionId ? record : item))
+      : [record, ...savedSessions];
     setSavedSessions(next); writeChatSessions(next);
     setToast({ message: t(record.pinned ? "Conversation pinned" : "Conversation unpinned") });
     window.setTimeout(() => setToast(null), 2200);
   }
   function deleteSession(id: string): void {
     const removed = savedSessions.find((item) => item.id === id);
+    const wasActive = id === currentSessionId;
+    const snapshot = wasActive ? { name: sessionName, messages, draft } : null;
     setSavedSessions((current) => { const next = current.filter((item) => item.id !== id); writeChatSessions(next); return next; });
-    setToast({ message: t("Conversation deleted"), action: t("Undo"), undo: () => { if (removed) setSavedSessions((current) => { const next = [removed, ...current.filter((item) => item.id !== removed.id)]; writeChatSessions(next); return next; }); setToast(null); } });
-    if (id === currentSessionId) startFreshSession();
+    setToast({ message: t("Conversation deleted"), action: t("Undo"), undo: () => {
+      if (removed) setSavedSessions((current) => { const next = [removed, ...current.filter((item) => item.id !== removed.id)]; writeChatSessions(next); return next; });
+      // Undo must put the conversation back, not just the list row.
+      if (wasActive && snapshot) { setCurrentSessionId(id); setSessionName(snapshot.name); setMessages(snapshot.messages); setDraft(snapshot.draft); }
+      setToast(null);
+    } });
+    if (wasActive) startFreshSession();
     window.setTimeout(() => setToast((current) => current?.message === t("Conversation deleted") ? null : current), 10000);
   }
 
@@ -1531,7 +1554,9 @@ function App() {
     const current = savedSessions.find((item) => item.id === currentSessionId);
     const now = new Date().toISOString();
     const record: LocalChatSession = { id: currentSessionId, name: conversationTitle(messages, sessionName), createdAt: current?.createdAt || now, updatedAt: now, count: messages.length, model, draft, messages, pinned: current?.pinned || false };
-    const next = [record, ...savedSessions.filter((item) => item.id !== currentSessionId)];
+    const next = savedSessions.some((item) => item.id === currentSessionId)
+      ? savedSessions.map((item) => (item.id === currentSessionId ? record : item))
+      : [record, ...savedSessions];
     setSessionName(record.name); setSavedSessions(next); writeChatSessions(next);
     setToast({ message: t("Saved") });
     window.setTimeout(() => setToast(null), 4000);
@@ -1775,7 +1800,29 @@ function App() {
       <p>{tf("Start with {workspace} or choose a prompt.", { workspace: t(workspace) })}</p>
     </div>;
     const plainEmpty = !checkingService && !localOffline && !noLocalModels && !modelNeedsLoad && !cloudUnconfigured;
-    const emptyChat = <div className={plainEmpty ? "chat-empty-state" : "chat-empty-state has-card"}>{emptyLead}{composer}{plainEmpty && <div className="prompt-grid"><button className="prompt-card" onClick={() => setDraft(t("Summarize the current workspace"))}><strong>{t("Summarize workspace")}</strong><span>{t("Get a concise overview of your files and project context.")}</span><i>↗</i></button><button className="prompt-card" onClick={() => setDraft(t("Help me inspect a model"))}><strong>{t("Inspect a model")}</strong><span>{t("Compare model details and find a good fit.")}</span><i>↗</i></button><button className="prompt-card" onClick={() => setDraft(t("Help me draft a clear message"))}><strong>{t("Write something")}</strong><span>{t("Turn a rough idea into a polished first draft.")}</span><i>↗</i></button><button className="prompt-card" onClick={() => setDraft(t("Help me write a code example"))}><strong>{t("Write code")}</strong><span>{t("Explain a coding task and get a useful starting point.")}</span><i>↗</i></button></div>}</div>;
+    const emptyChat = <div className={plainEmpty ? "chat-empty-state" : "chat-empty-state has-card"}>{emptyLead}
+<div className="orbit-board">
+  <div className="orbit-stats">
+    <span><b className="orbit-k">WORKSPACE</b><i>{workspaceName}</i></span>
+    <span><b className="orbit-k">TASKS</b><i>{savedSessions.length}</i></span>
+    <span><b className="orbit-k">MODEL</b><i>{model || t("No model")}</i></span>
+    <span><b className="orbit-k">STATUS</b><i className={state === "ready" ? "ok" : "warn"}>{state === "ready" ? t("Ready") : t("Starting")}</i></span>
+  </div>
+  <div className="orbit-recent">
+    <b className="orbit-k">RECENT</b>
+    {savedSessions.slice(0, 3).map((item) => <button type="button" key={item.id} className="orbit-task" onClick={() => openSession(item.id)}>
+      <span className="orbit-lamp" /><span className="orbit-task-name">{item.name}</span><small>{item.count} {t("messages")}</small></button>)}
+    {savedSessions.length === 0 && <div className="orbit-empty">{t("No tasks yet. Describe what you want done.")}</div>}
+  </div>
+  <div className="orbit-actions">
+    {[[t("Fix a failing test"), t("Find the failing test, fix the code, and run it until it passes.")],
+      [t("Implement a small feature"), t("Describe the feature; Orbit plans, edits and verifies it.")],
+      [t("Review uncommitted changes"), t("Read the current diff and report risks before committing.")],
+      [t("Explain this repository"), t("Map the modules, entry points and the build commands.")]].map(([label, detail]) => (
+      <button type="button" key={label} className="orbit-action" onClick={() => { setDraft(detail); }}><strong>{label}</strong><span>{detail}</span></button>))}
+  </div>
+</div>
+{composer}{plainEmpty && <div className="prompt-grid"><button className="prompt-card" onClick={() => setDraft(t("Summarize the current workspace"))}><strong>{t("Summarize workspace")}</strong><span>{t("Get a concise overview of your files and project context.")}</span><i>↗</i></button><button className="prompt-card" onClick={() => setDraft(t("Help me inspect a model"))}><strong>{t("Inspect a model")}</strong><span>{t("Compare model details and find a good fit.")}</span><i>↗</i></button><button className="prompt-card" onClick={() => setDraft(t("Help me draft a clear message"))}><strong>{t("Write something")}</strong><span>{t("Turn a rough idea into a polished first draft.")}</span><i>↗</i></button><button className="prompt-card" onClick={() => setDraft(t("Help me write a code example"))}><strong>{t("Write code")}</strong><span>{t("Explain a coding task and get a useful starting point.")}</span><i>↗</i></button></div>}</div>;
 
     const contextPanel = <div className="tab-panel">
       <div className="panel-card">
@@ -2601,10 +2648,22 @@ function App() {
   const titleLabel = chatView ? sessionName : t(active === "Gateway" ? "Sharing" : active);
   const sessionRows = sessions
     .slice()
-    .sort((left, right) => Number(!!right.pinned) - Number(!!left.pinned) || new Date(right.at).getTime() - new Date(left.at).getTime())
+    .sort((left, right) => Number(!!right.pinned) - Number(!!left.pinned) || new Date(right.orderAt || right.at).getTime() - new Date(left.orderAt || left.at).getTime())
     .filter((item) => !historyQuery.trim() || item.name.toLowerCase().includes(historyQuery.trim().toLowerCase()));
 
   return <div className={"app" + (terminalView ? " terminal-mode" : "") + (chatView ? " chat-mode" : "") + (sidebarCollapsed ? " rail-collapsed" : "")} data-lang={lang}>
+    {paletteOpen && <div className="palette-backdrop" onClick={() => setPaletteOpen(false)}>
+      <div className="palette" role="dialog" aria-label={t("Command palette")} onClick={(event) => event.stopPropagation()}>
+        <input autoFocus className="palette-input" value={paletteQuery} placeholder={t("Type a command or a page…")} onChange={(event) => setPaletteQuery(event.target.value)} />
+        <div className="palette-list">
+          {["Chat", "Models", "Gateway", "Plugins", "Monitor", "Terminal", "Changelog", "Support", "Settings"]
+            .filter((page) => t(page).toLowerCase().includes(paletteQuery.toLowerCase()))
+            .map((page) => <button type="button" key={page} className="palette-item" onClick={() => { setActive(page); setPaletteOpen(false); }}><span>{t(page)}</span><small>{t("Page")}</small></button>)}
+          <button type="button" className="palette-item" onClick={() => { createSession(); setPaletteOpen(false); }}><span>{t("New chat")}</span><small>Ctrl+N</small></button>
+          <button type="button" className="palette-item danger" onClick={() => { deleteSession(currentSessionId); setPaletteOpen(false); }}><span>{t("Delete conversation")}</span><small>{t("Removes the conversation")}</small></button>
+        </div>
+      </div>
+    </div>}
     <div className="titlebar">
       <div className="tb-left">
         <button type="button" className="tb-icon panel-toggle" onClick={() => setSidebarCollapsed((value) => !value)} aria-label={t(sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar")} title={t(sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar")}>
