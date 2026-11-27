@@ -181,4 +181,8 @@ assert.ok(renderer.includes('"skill.load"'), "skills need a load tool");
 assert.ok(preload.includes("skills: {"), "the shell must expose skill discovery");
 assert.ok(main.includes("skills:list"), "skill discovery lives in the main process");
 assert.ok(main.includes('"gateway:complete"'), "subagents need one non-streaming completion");
+// --- persistent terminal -----------------------------------------------------
+assert.ok(read("../../server/hxcore/tools.py").includes('register("term.start"'), "the agent needs a persistent shell");
+assert.ok(renderer.includes('"term.write"'), "term tools must be advertised to the model");
+assert.ok(read("../../server/gateway_core.py").includes('"term.start", "term.write", "term.stop"'), "terminal mutations must be approval-gated");
 console.log("PASS: secure shell protocol/static contract");

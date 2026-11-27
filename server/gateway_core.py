@@ -44,7 +44,7 @@ _TOOL_APPROVAL_LOCK = threading.RLock()
 _TOOL_APPROVAL_ARGS = {}
 _TOOL_APPROVAL_TTL = 60.0
 _TOOL_APPROVAL_MAX = 256
-_SAFE_REMOTE_TOOLS = {"time.now", "calc", "fs.list", "fs.read", "fs.stat", "sysinfo", "repo.tree", "repo.search", "repo.read"}
+_SAFE_REMOTE_TOOLS = {"time.now", "calc", "fs.list", "fs.read", "fs.stat", "sysinfo", "repo.tree", "repo.search", "repo.read", "term.list", "term.read"}
 
 # Tool classes for the three-level policy. Unknown tools count as exec: the most
 # restrictive class below "full".
@@ -52,7 +52,7 @@ _TOOL_READ = {"time.now", "calc", "sysinfo", "fs.list", "fs.read", "fs.stat", "r
 # "write" means "changes this machine", so the workspace policy allows it and the
 # approval queue decides. shell.run belongs here: refusing it under the default
 # policy would make an agent-side command unusable without full access.
-_TOOL_WRITE = {"fs.write", "fs.edit", "shell.run", "fs.mkdir", "fs.move", "fs.remove", "diff.apply", "diff.rollback"}
+_TOOL_WRITE = {"fs.write", "fs.edit", "shell.run", "term.start", "term.write", "term.stop", "fs.mkdir", "fs.move", "fs.remove", "diff.apply", "diff.rollback"}
 
 
 def _tool_class(name):

@@ -82,7 +82,7 @@ const APPROVAL_ARCHIVE_KEY = "hymnix.approvals.archive.v1";
 const SHORTCUT_KEY = "hymnix.shortcuts.v1";
 
 /** Read-only tools the model is allowed to call mid-turn. */
-const ADVERTISED_TOOLS = new Set(["time.now", "calc", "sysinfo", "fs.list", "fs.read", "fs.stat", "fs.write", "fs.edit", "shell.run", "repo.tree", "repo.search", "repo.read", "web.fetch"]);
+const ADVERTISED_TOOLS = new Set(["time.now", "calc", "sysinfo", "fs.list", "fs.read", "fs.stat", "fs.write", "fs.edit", "shell.run", "term.start", "term.write", "term.read", "term.stop", "term.list", "repo.tree", "repo.search", "repo.read", "web.fetch"]);
 
 /**
  * The model's own plan channel. It is handled in this process — no IPC, no

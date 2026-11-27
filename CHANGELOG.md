@@ -2,6 +2,19 @@
 
 Only user-visible changes are listed. Internal refactors, test scaffolding and machine-specific paths are intentionally omitted.
 
+## Unreleased — persistent terminal (2026-11-27)
+
+One shell that survives across tool calls, so a multi-step command sequence keeps its state.
+
+### Added
+
+- **`term.start` / `term.write` / `term.read` / `term.stop` / `term.list`** — a persistent session (cmd on Windows, sh elsewhere) with a bounded transcript. Reads return only new output since the last read; stopping kills the process tree and hands back what was left. Up to four sessions at once.
+- Mutating calls are approval-gated; reads and the session list are read-only.
+
+### Verified
+
+- Through the real gateway: start → approve → write `echo term-approved` → read → stop; the marker came back in the transcript (`SAW True`), and the session list was empty afterwards.
+
 ## Unreleased — subagents, goals and skills (2026-11-27)
 
 The rest of the DSH capability slice, all local: delegation, a durable objective, and on-demand domain knowledge.

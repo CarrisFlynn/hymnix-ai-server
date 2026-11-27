@@ -2,6 +2,7 @@
 """Schema-checked built-in tools for Hymnix."""
 from __future__ import annotations
 import tempfile
+import threading
 import ast, datetime, hashlib, ipaddress, json, math, os, platform, socket, stat, time, urllib.error, urllib.parse, urllib.request
 from typing import Any
 import http.client
@@ -82,6 +83,112 @@ def _fs_read(args):
     p=_fs_path(args)
     if not os.path.isfile(p): raise ToolError("not_a_file")
     with open(p,"r",encoding="utf-8",errors="replace") as f: return f.read(256*1024)
+
+
+
+# ---------- persistent terminal sessions ----------
+# A command that spans several tool calls needs its shell to stay alive. Each
+# session keeps its process and a bounded transcript; reads return new output.
+_TERM_SESSIONS: dict[str, dict] = {}
+_TERM_LOCK = threading.Lock()
+_TERM_MAX = 4
+_TERM_BUFFER = 200_000
+
+
+def _term_session(sid):
+    with _TERM_LOCK:
+        return _TERM_SESSIONS.get(str(sid or ""))
+
+
+def _term_start(args):
+    import subprocess, threading, uuid
+    if len(_TERM_SESSIONS) >= _TERM_MAX:
+        raise ToolError("too_many_sessions")
+    cwd = _fs_path({"path": args.get("cwd") or "."})
+    if not os.path.isdir(cwd):
+        raise ToolError("not_a_directory")
+    shell = str(args.get("shell") or "").strip()
+    if not shell:
+        shell = "cmd.exe /d /q" if os.name == "nt" else "/bin/sh"
+    flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    proc = subprocess.Popen(shell, cwd=cwd, shell=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
+                            bufsize=1, creationflags=flags)
+    sid = uuid.uuid4().hex[:8]
+    session = {"id": sid, "proc": proc, "buffer": "", "lock": threading.Lock(), "cwd": cwd}
+    def pump():
+        try:
+            for line in proc.stdout:
+                with session["lock"]:
+                    session["buffer"] = (session["buffer"] + line)[-_TERM_BUFFER:]
+        except Exception:
+            pass
+    threading.Thread(target=pump, daemon=True).start()
+    with _TERM_LOCK:
+        _TERM_SESSIONS[sid] = session
+    return {"id": sid, "shell": shell, "cwd": os.path.relpath(cwd, root_dir())}
+
+
+def _term_write(args):
+    session = _term_session(args.get("id"))
+    if not session:
+        raise ToolError("no_session")
+    text = str(args.get("input") or "")
+    if args.get("enter", True):
+        text += "\r\n"
+    if len(text) > 4000:
+        raise ToolError("input_too_long")
+    try:
+        session["proc"].stdin.write(text)
+        session["proc"].stdin.flush()
+    except Exception:
+        raise ToolError("write_failed")
+    return {"id": session["id"], "bytes": len(text)}
+
+
+def _term_read(args):
+    session = _term_session(args.get("id"))
+    if not session:
+        raise ToolError("no_session")
+    try:
+        wait = float(args.get("timeout_s") if args.get("timeout_s") is not None else 0.5)
+    except (TypeError, ValueError):
+        wait = 0.5
+    wait = max(0.0, min(wait, 10.0))
+    time.sleep(wait)
+    with session["lock"]:
+        output = session["buffer"]
+        session["buffer"] = ""
+    return {"id": session["id"], "output": output,
+            "running": session["proc"].poll() is None,
+            "exit_code": session["proc"].returncode}
+
+
+def _term_stop(args):
+    import subprocess
+    session = _term_session(args.get("id"))
+    if not session:
+        raise ToolError("no_session")
+    proc = session["proc"]
+    try:
+        if proc.poll() is None:
+            subprocess.run(["taskkill", "/pid", str(proc.pid), "/t", "/f"], capture_output=True, timeout=10)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+    with session["lock"]:
+        output = session["buffer"]
+    with _TERM_LOCK:
+        _TERM_SESSIONS.pop(session["id"], None)
+    return {"id": session["id"], "stopped": True, "output": output[-4000:], "exit_code": proc.returncode}
+
+
+def _term_list(args):
+    with _TERM_LOCK:
+        return {"sessions": [{"id": item["id"], "running": item["proc"].poll() is None,
+                              "cwd": os.path.relpath(item["cwd"], root_dir())} for item in _TERM_SESSIONS.values()]}
 
 
 def _shell_run(args):
@@ -336,6 +443,11 @@ def builtin_tools() -> list[str]:
     register("fs.read","Read root-scoped UTF-8 text",{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]},_fs_read)
     register("fs.stat","Inspect root-scoped path",{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]},_fs_stat)
     register("fs.write", "Write one UTF-8 text file inside the workspace (max 256 KB). Content is replaced atomically; parent folders are created. Every call needs approval.",{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"],"additionalProperties":False},_fs_write,danger=True)
+    register("term.start","Start a persistent shell session that survives across tool calls. Needs approval.",{"type":"object","properties":{"cwd":{"type":"string"},"shell":{"type":"string"}},"additionalProperties":False},_term_start,danger=True)
+    register("term.write","Write input to a terminal session (enter by default). Needs approval.",{"type":"object","properties":{"id":{"type":"string"},"input":{"type":"string"},"enter":{"type":"boolean"}},"required":["id","input"],"additionalProperties":False},_term_write,danger=True)
+    register("term.read","Read new output from a terminal session.",{"type":"object","properties":{"id":{"type":"string"},"timeout_s":{"type":"number"}},"required":["id"],"additionalProperties":False},_term_read)
+    register("term.stop","Stop a terminal session and collect the remaining output. Needs approval.",{"type":"object","properties":{"id":{"type":"string"}},"required":["id"],"additionalProperties":False},_term_stop,danger=True)
+    register("term.list","List live terminal sessions.",{"type":"object","properties":{},"additionalProperties":False},_term_list)
     register("shell.run","Run one command inside the workspace. Needs approval.",{"type":"object","properties":{"command":{"type":"string"},"cwd":{"type":"string"},"timeout_s":{"type":"number"}},"required":["command"],"additionalProperties":False},_shell_run,danger=True)
     register("fs.edit","Replace an exact string inside a workspace file. Needs approval.",{"type":"object","properties":{"path":{"type":"string"},"find":{"type":"string"},"replace":{"type":"string"},"all":{"type":"boolean"}},"required":["path","find","replace"],"additionalProperties":False},_fs_edit,danger=True)
     register("sysinfo","Basic system information",{"type":"object","properties":{}},_sysinfo)
