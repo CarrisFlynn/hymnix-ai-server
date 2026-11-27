@@ -728,7 +728,7 @@ export type TerminalProfile = { id: string; label: string; available: boolean; d
 
 export type PtyApi = {
   profiles: () => Promise<{ ok: boolean; profiles: TerminalProfile[]; cwd: string }>;
-  open: (input: { id: string; profile: string; cwd?: string; cols: number; rows: number }) => Promise<{ ok: boolean; id?: string; pid?: number; error?: string }>;
+  open: (input: { id: string; profile: string; cwd?: string; cols: number; rows: number; lang?: "zh" | "en" }) => Promise<{ ok: boolean; id?: string; pid?: number; error?: string }>;
   write: (id: string, data: string) => void;
   resize: (id: string, cols: number, rows: number) => void;
   close: (id: string) => void;

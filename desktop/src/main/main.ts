@@ -934,6 +934,7 @@ function registerPtyIpc(): void {
       agentArgv = [nodeExe, cliPath];
       agentEnv.HYMNIX_AGENT_PORT = String(address.port);
       agentEnv.HYMNIX_AGENT_TOKEN = address.token;
+      agentEnv.HYMNIX_AGENT_LANG = v.lang === "zh" ? "zh" : "en";
     }
     const opened = openSession({
       id,

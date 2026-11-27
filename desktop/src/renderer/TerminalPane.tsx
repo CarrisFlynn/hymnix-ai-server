@@ -9,7 +9,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
-import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 import { t } from "./i18n";
 
@@ -34,13 +33,17 @@ function readTheme() {
   };
 }
 
-export function TerminalPane({ cwd, onSessionChange }: { cwd: string; onSessionChange?: (sessionId: string | null) => void }) {
+export function TerminalPane({ cwd, lang, onSessionChange }: { cwd: string; lang?: "zh" | "en"; onSessionChange?: (sessionId: string | null) => void }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const sessionRef = useRef<string>("");
-  /** While a session is starting, a resize repaints the shell's prompt in the middle of a fresh screen. */
-  const suppressResizeRef = useRef(0);
+  /**
+   * A resize makes ConPTY clear and repaint, which drops the prompt in the middle of
+   * a fresh screen. The pane is still settling for a moment after it opens, so
+   * resizes are ignored until it has stopped moving.
+   */
+  const settleUntilRef = useRef(0);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [profile, setProfile] = useState("pwsh");
   const [running, setRunning] = useState(false);
@@ -53,6 +56,9 @@ export function TerminalPane({ cwd, onSessionChange }: { cwd: string; onSessionC
     const term = new Terminal({
       fontFamily: "var(--font-mono, Consolas, monospace)",
       fontSize: 13,
+      lineHeight: 1.25,
+      letterSpacing: 0,
+      fontWeight: 400,
       cursorBlink: true,
       allowProposedApi: true,
       scrollback: 50_000,
@@ -62,7 +68,6 @@ export function TerminalPane({ cwd, onSessionChange }: { cwd: string; onSessionC
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(host);
-    try { term.loadAddon(new WebglAddon()); } catch { /* software renderer is fine */ }
     fit.fit();
     termRef.current = term;
     // Probe hook: xterm 6 has no DOM text layer, so tests read the buffer.
@@ -70,8 +75,11 @@ export function TerminalPane({ cwd, onSessionChange }: { cwd: string; onSessionC
     fitRef.current = fit;
 
     const sendResize = () => {
-      if (!sessionRef.current || suppressResizeRef.current > 0) return;
-      try { fit.fit(); window.hymnix.pty.resize(sessionRef.current, term.cols, term.rows); } catch { /* pane hidden */ }
+      if (!sessionRef.current || Date.now() < settleUntilRef.current) return;
+      const before = { cols: term.cols, rows: term.rows };
+      try { fit.fit(); } catch { return; }
+      if (term.cols === before.cols && term.rows === before.rows) return;
+      try { window.hymnix.pty.resize(sessionRef.current, term.cols, term.rows); } catch { /* pane hidden */ }
     };
     const observer = new ResizeObserver(() => sendResize());
     observer.observe(host);
@@ -124,12 +132,12 @@ export function TerminalPane({ cwd, onSessionChange }: { cwd: string; onSessionC
     if (sessionRef.current) { stop(); }
     fit.fit();
     const id = "pty-" + Math.random().toString(36).slice(2, 10);
-    suppressResizeRef.current += 1;
-    void window.hymnix.pty.open({ id, profile, cwd, cols: term.cols, rows: term.rows }).then((result) => {
+    settleUntilRef.current = Date.now() + 1500;
+    void window.hymnix.pty.open({ id, profile, cwd, cols: term.cols, rows: term.rows , lang }).then((result) => {
       if (!result.ok) { setNote(t("Could not start this program") + ": " + (result.error || "")); return; }
       sessionRef.current = id;
       term.reset();
-      suppressResizeRef.current = 0;
+
       setRunning(true);
       setNote("");
       onSessionChange?.(id);

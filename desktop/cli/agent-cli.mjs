@@ -14,6 +14,29 @@ import { createInterface } from "node:readline";
 import { stdin, stdout } from "node:process";
 
 const PORT = process.env.HYMNIX_AGENT_PORT || "";
+
+// The terminal speaks the interface language. English is the fallback because the
+// shipped README and the default UI are English.
+const ZH = process.env.HYMNIX_AGENT_LANG === "zh";
+const T = {
+  hint: ZH ? "/model 切换模型   /models 列出   /new 清空   /tool 手动调工具   /help 帮助   /exit 退出"
+           : "/model switch   /models list   /new clear   /tool call a tool   /help help   /exit quit",
+  choose: ZH ? "选择模型 (回车用第一个): " : "Pick a model (Enter for the first): ",
+  chosen: ZH ? "已选择 " : "Selected ",
+  noModel: ZH ? "没有可用模型。先启动 Ollama，或在设置里配一个云端 provider。" : "No model yet. Start Ollama, or add a cloud provider in Settings.",
+  model: ZH ? "模型: " : "Model: ",
+  none: ZH ? "没有可用模型" : "No model available",
+  switched: ZH ? "已切换 " : "Switched to ",
+  unknown: ZH ? "没有这个模型" : "No such model",
+  cleared: ZH ? "已清空" : "Cleared",
+  allow: ZH ? "允许 " : "Allow ",
+  denied: ZH ? "已拒绝" : "Denied",
+  badJson: ZH ? "参数不是合法 JSON" : "Arguments are not valid JSON",
+  noTool: ZH ? "没有这个工具" : "No such tool",
+  bye: ZH ? "再见。" : "Goodbye.",
+  help: ZH ? ["/model 切换模型   /models 列出模型   /new 清空对话   /exit 退出", "  /tool 名字 {json} 手动调用一个工具（危险工具有 y/N）", "  危险工具会问 y/N；只读工具直接执行。"]
+            : ["/model switch model   /models list models   /new clear the conversation   /exit quit", "  /tool <name> {json} call one tool by hand (dangerous ones ask y/N)", "  Dangerous tools ask y/N; read-only tools just run."],
+};
 const TOKEN = process.env.HYMNIX_AGENT_TOKEN || "";
 const BASE = "http://127.0.0.1:" + PORT;
 
@@ -58,10 +81,10 @@ function printBanner() {
   console.log(C.bold("  Hymnix Agent") + C.dim("  ·  terminal"));
   console.log(C.dim("  " + state.cwd));
   console.log(C.dim("  " + local + " local · " + cloud + " cloud · " + state.tools.length + " tools"));
-  console.log(C.dim("  /model 切换模型   /models 列出   /new 清空   /tool 手动调工具   /help 帮助   /exit 退出"));
+  console.log(C.dim("  " + T.hint));
   console.log("");
-  if (!state.models.length) console.log(C.yellow("  没有可用模型。先启动 Ollama，或在设置里配一个云端 provider。"));
-  else if (model) console.log(C.dim("  模型: ") + C.cyan(model.label));
+  if (!state.models.length) console.log(C.yellow("  " + T.noModel));
+  else if (model) console.log(C.dim("  " + T.model) + C.cyan(model.label));
   console.log("");
 }
 
@@ -69,10 +92,10 @@ async function chooseModel() {
   const rows = state.models;
   if (!rows.length) { model = null; return; }
   rows.forEach((row, index) => console.log("  " + C.bold(String(index + 1)) + ") " + row.label));
-  const answer = await ask("  选择模型 (回车用第一个): ");
+  const answer = await ask("  " + T.choose);
   const index = Number(answer) - 1;
   model = Number.isInteger(index) && rows[index] ? rows[index] : rows[0];
-  console.log(C.dim("  已选择 ") + C.cyan(model.label) + "\n");
+  console.log(C.dim("  " + T.chosen) + C.cyan(model.label) + "\n");
 }
 
 /** Run one assistant turn, including the tool loop. */
@@ -84,7 +107,7 @@ async function turn(text) {
       headers: { "X-Agent-Token": TOKEN, "Content-Type": "application/json" },
       body: JSON.stringify({ modelId: model.id, messages, tools: spec(state.tools) }),
     });
-    if (!response.ok || !response.body) { console.log(C.red("  请求失败: " + response.status)); return; }
+    if (!response.ok || !response.body) { console.log(C.red("  " + (ZH ? "请求失败: " : "Request failed: ") + response.status)); return; }
 
     let content = "";
     const calls = [];
@@ -139,11 +162,11 @@ async function turn(text) {
       console.log(C.dim("  ┌ ") + C.bold(call.name) + C.dim("  " + JSON.stringify(args).slice(0, 120)));
       let allowed = true;
       if (def && def.danger) {
-        const answer = await ask(C.yellow("  └ 允许这次调用？(y/N) "));
+        const answer = await ask(C.yellow("  └ " + (ZH ? "允许这次调用？(y/N) " : "Allow this call? (y/N) ")));
         allowed = /^y(es)?$/i.test(answer);
       }
       if (!allowed) {
-        console.log(C.red("  └ 已拒绝"));
+        console.log(C.red("  └ " + T.denied));
         messages.push({ role: "tool", tool_call_id: call.id || "", content: "denied_by_user" });
         continue;
       }
@@ -170,9 +193,9 @@ async function main() {
     if (!input) { readline.prompt(); return; }
     if (input === "/exit" || input === "/quit") { readline.close(); return; }
     if (input === "/help") {
-      console.log("  /model 切换模型   /models 列出模型   /new 清空对话   /exit 退出");
-      console.log("  /tool 名字 {json} 手动调用一个工具（危险工具有 y/N）");
-      console.log("  危险工具会问 y/N；只读工具直接执行。");
+      for (const line of T.help) console.log("  " + line);
+
+
       readline.prompt(); return;
     }
     if (input === "/models") {
@@ -184,36 +207,36 @@ async function main() {
       const space = rest.indexOf(" ");
       const name = space < 0 ? rest : rest.slice(0, space);
       let args = {};
-      try { args = space < 0 ? {} : JSON.parse(rest.slice(space + 1)); } catch { console.log(C.red("  参数不是合法 JSON")); readline.prompt(); return; }
+      try { args = space < 0 ? {} : JSON.parse(rest.slice(space + 1)); } catch { console.log(C.red("  " + T.badJson)); readline.prompt(); return; }
       const def = state.tools.find((tool) => tool.name === name);
-      if (!def) { console.log(C.red("  没有这个工具")); readline.prompt(); return; }
+      if (!def) { console.log(C.red("  " + T.noTool)); readline.prompt(); return; }
       readline.pause();
       let allowed = true;
-      if (def.danger) allowed = /^y(es)?$/i.test(await ask(C.yellow("  允许 " + name + " ？(y/N) ")));
-      if (!allowed) console.log(C.red("  已拒绝"));
+      if (def.danger) allowed = /^y(es)?$/i.test(await ask(C.yellow("  " + T.allow + name + (ZH ? " ？(y/N) " : "? (y/N) "))));
+      if (!allowed) console.log(C.red("  " + T.denied));
       else {
         const result = await api("/tool", { name, args });
         console.log(C.dim("  → ") + JSON.stringify(result).slice(0, 400));
       }
       readline.resume(); readline.prompt(); return;
     }
-    if (input === "/new") { messages = []; console.log(C.dim("  已清空")); readline.prompt(); return; }
+    if (input === "/new") { messages = []; console.log(C.dim("  " + T.cleared)); readline.prompt(); return; }
     if (input === "/model" || input.startsWith("/model ")) {
       const wanted = input.slice(6).trim();
       if (!wanted) { await chooseModel(); readline.prompt(); return; }
       const found = state.models.find((row) => row.id === wanted || row.model === wanted || row.label.startsWith(wanted));
-      if (found) { model = found; console.log(C.dim("  已切换到 ") + C.cyan(found.label)); }
-      else console.log(C.red("  没有这个模型"));
+      if (found) { model = found; console.log(C.dim("  " + T.switched) + C.cyan(found.label)); }
+      else console.log(C.red("  " + T.unknown));
       readline.prompt(); return;
     }
-    if (!model) { console.log(C.yellow("  没有可用模型")); readline.prompt(); return; }
+    if (!model) { console.log(C.yellow("  " + T.none)); readline.prompt(); return; }
     readline.pause();
     try { await turn(input); } catch (error) { console.log(C.red("  " + String(error && error.message ? error.message : error))); }
     readline.resume();
     readline.prompt();
   });
 
-  readline.on("close", () => { console.log(C.dim("\n  再见。")); process.exit(0); });
+  readline.on("close", () => { console.log(C.dim("\n  " + T.bye)); process.exit(0); });
 }
 
 main().catch((error) => { console.error(String(error && error.stack ? error.stack : error)); process.exit(1); });

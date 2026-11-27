@@ -29,6 +29,7 @@ A shared session switches to Orbit at once and cannot switch back; disconnecting
 ### Fixed
 
 - A self-referencing CSS custom property made the terminal's foreground token invalid, so the selected tab's label was invisible.
+- The terminal's WebGL renderer drew cells at half scale and offset from the top at some window sizes; the built-in renderer is used instead, and the PTY is only resized when its size actually changed, so a fresh session no longer paints its prompt halfway down the screen.
 - The gateway version allow-list did not include 1.5, which would have made the app refuse its own backend.
 - node-pty prebuilds ship unpacked, and the bundled language server ships as an archive that is unpacked on first use, because the packager drops every `node_modules` directory it finds.
 - PTY sessions and the agent bridge are closed on quit; a failed atomic write no longer leaves a copy of the file behind.

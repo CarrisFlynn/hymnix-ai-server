@@ -2183,8 +2183,9 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 .pty-bar { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--term-bg) 82%, var(--surface)); color: var(--term-fg); }
 .pty-bar select { max-width: 220px; padding: 3px 6px; border: 1px solid var(--border-strong); border-radius: var(--r-sm, 6px); background: var(--term-bg); color: var(--term-fg); font-family: var(--font-mono); font-size: calc(11px * var(--text-scale, 1)); }
 .pty-bar .term-dim { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--term-fg); opacity: .62; }
-.pty-screen { flex: 1; min-height: 240px; padding: 6px 8px; }
+.pty-screen { flex: 1; min-height: 240px; padding: 10px 12px; }
 .pty-screen .xterm { height: 100%; }
+.pty-screen .xterm-rows, .pty-screen .xterm-screen { line-height: 1.25; }
 
 /* A shared session is Orbit only: the AI entry stays visible but cannot be chosen. */
 .product-menu button.locked { opacity: .45; cursor: not-allowed; }

@@ -133,7 +133,7 @@ const api: DesktopApi & { adminHistory: (adminKey: string, query?: AdminHistoryQ
   },
   pty: {
     profiles: () => ipcRenderer.invoke("pty:profiles"),
-    open: (input: { id: string; profile: string; cwd?: string; cols: number; rows: number }) => ipcRenderer.invoke("pty:open", input),
+    open: (input: { id: string; profile: string; cwd?: string; cols: number; rows: number; lang?: "zh" | "en" }) => ipcRenderer.invoke("pty:open", input),
     write: (id: string, data: string) => { ipcRenderer.send("pty:write", { id, data }); },
     resize: (id: string, cols: number, rows: number) => { ipcRenderer.send("pty:resize", { id, cols, rows }); },
     close: (id: string) => { ipcRenderer.send("pty:close", id); },
