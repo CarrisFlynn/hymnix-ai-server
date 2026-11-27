@@ -90,7 +90,7 @@ const APPROVAL_ARCHIVE_KEY = "hymnix.approvals.archive.v1";
 const SHORTCUT_KEY = "hymnix.shortcuts.v1";
 
 /** Read-only tools the model is allowed to call mid-turn. */
-const ADVERTISED_TOOLS = new Set(["time.now", "calc", "sysinfo", "fs.list", "fs.read", "fs.stat", "fs.write", "fs.edit", "shell.run", "term.start", "term.write", "term.read", "term.stop", "term.list", "repo.tree", "repo.search", "repo.read", "web.fetch"]);
+const ADVERTISED_TOOLS = new Set(["time.now", "calc", "sysinfo", "fs.list", "fs.read", "fs.stat", "fs.write", "fs.edit", "patch.apply", "shell.run", "term.start", "term.write", "term.read", "term.stop", "term.list", "repo.tree", "repo.search", "repo.read", "web.fetch"]);
 
 /**
  * The model's own plan channel. It is handled in this process — no IPC, no
@@ -178,7 +178,7 @@ function Icon({ name }: { name: string }) { return <svg viewBox="0 0 24 24" aria
 
 const navGroups = [
   { title: "WORKSPACE", items: ["Chat", "Models", "Gateway", "Plugins", "Changelog", "Support"] },
-  { title: "DEVELOPER", items: ["Terminal", "Jobs", "Automation"] }
+  { title: "DEVELOPER", items: ["Terminal", "Jobs", "Automation", "Agents", "Code"] }
 ];
 
 /** The two product surfaces, mirroring ChatGPT / Codex: same history, different agent. */
@@ -526,6 +526,10 @@ function App() {
   const [policyConfirm, setPolicyConfirm] = useState<null | { next: "read" | "workspace" | "full" }>(null);
   const [alwaysAllowConfirm, setAlwaysAllowConfirm] = useState<null | { tool: string; id: string }>(null);
   const [answering, setAnswering] = useState<string[]>([]);
+  const [codeSymbol, setCodeSymbol] = useState("");
+  const [codePath, setCodePath] = useState("");
+  const [codeResult, setCodeResult] = useState<null | { kind: "definition" | "references" | "outline"; root?: string; rows: { label: string; preview: string }[]; error?: string }>(null);
+  const [codeBusy, setCodeBusy] = useState(false);
   const answeringRef = useRef<Set<string>>(new Set());
   const [riskAcknowledged, setRiskAcknowledged] = useState(false);
   const [effortDrag, setEffortDrag] = useState<number | null>(null);
@@ -3528,6 +3532,70 @@ function App() {
       </div>
     </section>;
   }
+  // ---- agents and code pages ------------------------------------------------
+  async function runCode(kind: "definition" | "references" | "outline"): Promise<void> {
+    const symbol = codeSymbol.trim();
+    const path = codePath.trim();
+    if (kind !== "outline" && !symbol) return;
+    if (kind === "outline" && !path) return;
+    setCodeBusy(true);
+    try {
+      if (kind === "outline") {
+        const result = await window.hymnix.code.outline(path);
+        setCodeResult({ kind, root: result.root, error: result.error, rows: (result.symbols || []).map((hit) => ({ label: hit.kind + " · " + hit.name + " · " + hit.file + ":" + hit.line, preview: hit.preview })) });
+      } else {
+        const result = kind === "definition" ? await window.hymnix.code.definition(symbol) : await window.hymnix.code.references(symbol);
+        setCodeResult({ kind, root: result.root, error: result.error, rows: (result.hits || []).map((hit) => ({ label: hit.file + ":" + hit.line, preview: hit.preview })) });
+      }
+    } catch (reason) {
+      setCodeResult({ kind, rows: [], error: reason instanceof Error ? reason.message : String(reason) });
+    } finally {
+      setCodeBusy(false);
+    }
+  }
+
+  function renderAgents() {
+    const rows = listAgents(agents);
+    return <section className="view-page agents-page">
+      <div className="page-head"><div><label>{t("DEVELOPER")}</label><h2>{t("Agents")}</h2><p>{t("Named agents keep their own transcript so a delegated task can run over several messages.")}</p></div></div>
+      {rows.length === 0
+        ? <div className="card automation-empty"><strong>{t("No agents yet.")}</strong><span>{t("The model creates them with agent.spawn; they survive a restart.")}</span></div>
+        : <ul className="automation-list">{rows.map((row) => <li key={row.name} className="automation-row">
+            <div className="automation-main">
+              <strong>{row.name}</strong>
+              <small>{tf("{count} messages", { count: String(row.messages) })} · {new Date(row.updatedAt).toLocaleString(lang === "zh" ? "zh-CN" : "en-US", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}</small>
+              {row.lastError && <p className="error">{row.lastError}</p>}
+            </div>
+            <div className="automation-actions">
+              <button type="button" className="btn danger" onClick={() => { const closed = closeAgent(agentsRef.current, row.name); if (closed.agents) { agentsRef.current = closed.agents; setAgents(closed.agents); } }}>{t("Close")}</button>
+            </div>
+          </li>)}</ul>}
+    </section>;
+  }
+
+  function renderCode() {
+    return <section className="view-page code-page">
+      <div className="page-head"><div><label>{t("DEVELOPER")}</label><h2>{t("Code")}</h2><p>{t("Symbol navigation by scanning the workspace: outline a file, find a definition, list references.")}</p></div></div>
+      <div className="card code-controls">
+        <label className="automation-field"><span>{t("Symbol")}</span><input value={codeSymbol} onChange={(event) => setCodeSymbol(event.target.value)} placeholder="streamTurn" /></label>
+        <div className="automation-actions">
+          <button type="button" className="btn primary" disabled={codeBusy || !codeSymbol.trim()} onClick={() => void runCode("definition")}>{t("Find definition")}</button>
+          <button type="button" className="btn" disabled={codeBusy || !codeSymbol.trim()} onClick={() => void runCode("references")}>{t("Find references")}</button>
+        </div>
+        <label className="automation-field"><span>{t("File")}</span><input value={codePath} onChange={(event) => setCodePath(event.target.value)} placeholder="src/main/code-nav.ts" /></label>
+        <div className="automation-actions">
+          <button type="button" className="btn" disabled={codeBusy || !codePath.trim()} onClick={() => void runCode("outline")}>{t("Outline file")}</button>
+        </div>
+      </div>
+      {codeResult && <div className="card code-results">
+        <h3 className="card-title">{t(codeResult.kind === "definition" ? "Definitions" : codeResult.kind === "references" ? "References" : "Outline")}</h3>
+        {codeResult.root && <p className="drawer-note">{tf("Workspace root: {root}", { root: codeResult.root })}</p>}
+        {codeResult.error && <p className="error">{codeResult.error}</p>}
+        {codeResult.rows.length === 0 && !codeResult.error ? <p className="drawer-note">{t("Nothing found.")}</p> : <ul className="code-list">{codeResult.rows.map((row, index) => <li key={index}><code>{row.label}</code><span>{row.preview}</span></li>)}</ul>}
+      </div>}
+    </section>;
+  }
+
   function renderAutomation() {
     const form = automationForm;
     return <section className="view-page automation-page">
@@ -3580,6 +3648,8 @@ function App() {
     if (active === "Terminal") return renderTerminal();
     if (active === "Jobs") return renderJobs();
     if (active === "Automation") return renderAutomation();
+    if (active === "Agents") return renderAgents();
+    if (active === "Code") return renderCode();
     if (active === "History") return renderHistory();
     if (active === "Gateway") return renderGateway();
     if (active === "Monitor") return renderMonitor();
@@ -3612,7 +3682,7 @@ function App() {
       <div className="palette" role="dialog" aria-label={t("Command palette")} onClick={(event) => event.stopPropagation()}>
         <input autoFocus className="palette-input" value={paletteQuery} placeholder={t("Type a command or a page…")} onChange={(event) => setPaletteQuery(event.target.value)} />
         <div className="palette-list">
-          {["Chat", "Models", "Gateway", "Plugins", "Terminal", "Jobs", "Automation", "Changelog", "Support", "Settings"]
+          {["Chat", "Models", "Gateway", "Plugins", "Terminal", "Jobs", "Automation", "Agents", "Code", "Changelog", "Support", "Settings"]
             .filter((page) => t(page).toLowerCase().includes(paletteQuery.toLowerCase()))
             .map((page) => <button type="button" key={page} className="palette-item" onClick={() => { setActive(page); setPaletteOpen(false); }}><span>{t(page)}</span><small>{t("Page")}</small></button>)}
           <button type="button" className="palette-item" onClick={() => { createSession(); setPaletteOpen(false); }}><span>{t("New chat")}</span><small>Ctrl+N</small></button>

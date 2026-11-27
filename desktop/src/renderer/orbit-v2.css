@@ -1905,6 +1905,15 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 .automation-days button { width: 30px; height: 28px; border: 1px solid var(--border); border-radius: var(--r-sm); background: transparent; color: var(--muted); font-size: calc(11.5px * var(--text-scale, 1)); }
 .automation-days button.active { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-text); }
 
+.code-controls { display: flex; flex-direction: column; gap: 10px; padding: 16px; }
+.code-controls .automation-field { margin-bottom: 0; }
+.code-results { padding: 16px; }
+.code-list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.code-list li { display: flex; gap: 10px; align-items: baseline; min-width: 0; padding: 4px 0; border-bottom: 1px solid var(--border); }
+.code-list li:last-child { border-bottom: 0; }
+.code-list code { flex: 0 0 auto; color: var(--accent-text); font-size: calc(11.5px * var(--text-scale, 1)); }
+.code-list span { overflow: hidden; color: var(--muted); font-size: calc(11.5px * var(--text-scale, 1)); text-overflow: ellipsis; white-space: nowrap; }
+
 /* ---- tab badges ---------------------------------------------------------- */
 .chat-tabs button { position: relative; }
 .tab-badge { margin-left: 6px; padding: 0 5px; border-radius: 999px; background: var(--highlight); color: var(--muted); font-family: var(--font-mono); font-size: calc(10px * var(--text-scale, 1)); line-height: 16px; }

@@ -1,6 +1,22 @@
 export type Lang = "en" | "zh";
 
 export const zh: Record<string, string> = {
+  "Agents": "代理",
+  "Named agents keep their own transcript so a delegated task can run over several messages.": "命名代理各自保留对话记录，委派出去的任务可以跨多轮继续。",
+  "No agents yet.": "还没有代理。",
+  "The model creates them with agent.spawn; they survive a restart.": "模型通过 agent.spawn 创建，重启应用后仍在。",
+  "{count} messages": "{count} 条消息",
+  "Symbol navigation by scanning the workspace: outline a file, find a definition, list references.": "扫描工作区做符号导航：列出一个文件的结构、找定义、列引用。",
+  "Symbol": "符号",
+  "Find definition": "查找定义",
+  "Find references": "查找引用",
+  "File": "文件",
+  "Outline file": "列出结构",
+  "Definitions": "定义",
+  "References": "引用",
+  "Outline": "结构",
+  "Workspace root: {root}": "工作区根：{root}",
+  "Nothing found.": "没有找到。",
   "Goal updated": "目标已更新",
   "Revoke always-allow": "撤销总是允许",
   "Every future call to {tool} is approved automatically, whatever arguments it carries. This request is approved now as well.": "之后对 {tool} 的每一次调用都会自动放行，不管带什么参数；当前这条请求也会同时被批准。",

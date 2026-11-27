@@ -143,7 +143,7 @@ assert.ok(main.includes("async function shutdownAll"), "quit and restart must sh
 assert.ok(main.includes("void shutdownAll().finally(() => { allowQuit = true; app.relaunch(); app.quit(); })"), "restart must clean up before relaunching");
 
 // --- automation (scheduled tasks) -------------------------------------------
-assert.ok(renderer.includes('["Terminal", "Jobs", "Automation"]'), "automation is a page in the rail");
+assert.ok(renderer.includes('["Terminal", "Jobs", "Automation", "Agents", "Code"]'), "automation, agents and code are pages in the rail");
 assert.ok(renderer.includes('if (active === "Automation") return renderAutomation();'), "the automation page must be reachable");
 assert.ok(renderer.includes("window.hymnix.automation.onFire"), "the renderer must react to fired tasks");
 assert.ok(main.includes('ipcMain.handle("automation:create"'), "automation IPC must exist");

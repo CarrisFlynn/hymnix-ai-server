@@ -232,6 +232,61 @@ def _shell_run(args):
             "duration_ms": int((time.perf_counter() - started) * 1000)}
 
 
+
+def _patch_apply(args):
+    """Apply several exact-string edits as one transaction.
+
+    Every edit is validated before anything is written: a patch that names a
+    missing file or an ambiguous search string changes nothing at all.
+    """
+    edits = args.get("edits")
+    if not isinstance(edits, list) or not edits:
+        raise ToolError("edits_required")
+    if len(edits) > 20:
+        raise ToolError("too_many_edits")
+    prepared = []
+    seen = set()
+    for edit in edits:
+        if not isinstance(edit, dict):
+            raise ToolError("invalid_edit")
+        target = _fs_path({"path": edit.get("path")})
+        if target in seen:
+            raise ToolError("duplicate_path")
+        seen.add(target)
+        if not os.path.isfile(target):
+            raise ToolError("not_a_file")
+        find = edit.get("find")
+        replace = edit.get("replace")
+        if not isinstance(find, str) or not find:
+            raise ToolError("find_required")
+        if not isinstance(replace, str):
+            raise ToolError("replace_required")
+        with open(target, "r", encoding="utf-8", errors="replace") as handle:
+            original = handle.read(256 * 1024)
+        count = original.count(find)
+        if count == 0:
+            raise ToolError("find_not_present")
+        if count > 1 and not edit.get("all"):
+            raise ToolError("find_not_unique")
+        updated = original.replace(find, replace) if edit.get("all") else original.replace(find, replace, 1)
+        prepared.append((target, updated))
+    written = []
+    for target, updated in prepared:
+        fd, tmp = tempfile.mkstemp(prefix=".hymnix-", dir=os.path.dirname(target) or None)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(updated)
+            os.replace(tmp, target)
+        except Exception:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+        written.append({"path": os.path.relpath(target, root_dir()), "bytes": len(updated.encode("utf-8"))})
+    return {"applied": written}
+
+
 def _fs_edit(args):
     """Replace an exact piece of a file, so a small change is not a full rewrite."""
     p = _fs_path(args)
@@ -449,6 +504,7 @@ def builtin_tools() -> list[str]:
     register("term.stop","Stop a terminal session and collect the remaining output. Needs approval.",{"type":"object","properties":{"id":{"type":"string"}},"required":["id"],"additionalProperties":False},_term_stop,danger=True)
     register("term.list","List live terminal sessions.",{"type":"object","properties":{},"additionalProperties":False},_term_list)
     register("shell.run","Run one command inside the workspace. Needs approval.",{"type":"object","properties":{"command":{"type":"string"},"cwd":{"type":"string"},"timeout_s":{"type":"number"}},"required":["command"],"additionalProperties":False},_shell_run,danger=True)
+    register("patch.apply","Apply several exact-string edits across files as one transaction. Needs approval.",{"type":"object","properties":{"edits":{"type":"array","items":{"type":"object","properties":{"path":{"type":"string"},"find":{"type":"string"},"replace":{"type":"string"},"all":{"type":"boolean"}},"required":["path","find","replace"]}}},"required":["edits"],"additionalProperties":False},_patch_apply,danger=True)
     register("fs.edit","Replace an exact string inside a workspace file. Needs approval.",{"type":"object","properties":{"path":{"type":"string"},"find":{"type":"string"},"replace":{"type":"string"},"all":{"type":"boolean"}},"required":["path","find","replace"],"additionalProperties":False},_fs_edit,danger=True)
     register("sysinfo","Basic system information",{"type":"object","properties":{}},_sysinfo)
     register("web.fetch","Fetch HTTP(S) resource",{"type":"object","properties":{"url":{"type":"string"}},"required":["url"]},_web_fetch)

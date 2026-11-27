@@ -2,6 +2,19 @@
 
 Only user-visible changes are listed. Internal refactors, test scaffolding and machine-specific paths are intentionally omitted.
 
+## Unreleased — patches and panels (2026-11-27)
+
+### Added
+
+- **`patch.apply`** — several exact-string edits across files as one transaction: every edit is validated before anything is written, so a patch that names a missing file or an ambiguous string changes nothing. Approval-gated.
+- **Agents page** — the named agents with their turn counts, last error and a close button; a delegation survives a restart because the state is persisted.
+- **Code page** — symbol input with Find definition / Find references, and a file path with Outline; results show file:line and the matching source line, under the workspace root that was scanned.
+
+### Verified
+
+- `patch.apply`: two files changed atomically; a second edit that could not match left the first file untouched.
+- Code page: `streamTurn` resolved to `src/renderer/main.tsx:931` in the real UI; the agents page rendered a persisted reviewer with two messages.
+
 ## Unreleased — named agents and symbol navigation (2026-11-27)
 
 Two more capabilities from the DSH comparison: several agents with their own history, and code navigation without a language server.
