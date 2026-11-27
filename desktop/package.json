@@ -10,7 +10,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && vite build && node scripts/fix-renderer-html.mjs dist/renderer/index.html",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node tests/protocol.test.mjs && node --test --test-concurrency=1 tests/gateway-lifecycle.test.mjs tests/model-download.test.mjs tests/model-catalog.test.mjs tests/pull-stream.test.mjs tests/terminal-bridge.test.mjs tests/providers.test.mjs tests/components.test.mjs tests/schedule.test.mjs tests/automation.test.mjs tests/goals.test.mjs tests/skills.test.mjs tests/agents.test.mjs tests/code-nav.test.mjs tests/agent-ops.test.mjs tests/web-search.test.mjs tests/ask-present.test.mjs tests/agent-control.test.mjs tests/multimodal.test.mjs",
+    "test": "node tests/protocol.test.mjs && node --test --test-concurrency=1 tests/gateway-lifecycle.test.mjs tests/model-download.test.mjs tests/model-catalog.test.mjs tests/pull-stream.test.mjs tests/terminal-bridge.test.mjs tests/providers.test.mjs tests/components.test.mjs tests/schedule.test.mjs tests/automation.test.mjs tests/goals.test.mjs tests/skills.test.mjs tests/agents.test.mjs tests/code-nav.test.mjs tests/agent-ops.test.mjs tests/web-search.test.mjs tests/ask-present.test.mjs tests/agent-control.test.mjs tests/multimodal.test.mjs tests/lsp.test.mjs",
     "check:css": "node ../tools/check-css-tokens.mjs",
     "check:contrast": "node ../tools/check-contrast.mjs",
     "check:design": "pnpm check:css && pnpm check:contrast",

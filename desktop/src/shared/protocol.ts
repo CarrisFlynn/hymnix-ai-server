@@ -723,6 +723,9 @@ export type WorktreeApi = {
   remove: (input: { path: string }) => Promise<{ ok: boolean; error?: string }>;
 };
 export type DesktopApi = {
+  lsp: {
+    query: (input: { operation: "definition" | "references" | "symbols"; file: string; line?: number; character?: number }) => Promise<{ ok: boolean; operation?: string; server?: string; results?: Array<{ file: string; line: number; character: number }>; error?: string; hint?: string }>;
+  };
   code: CodeNavApi;
   skills: SkillsApi;
   automation: AutomationApi;

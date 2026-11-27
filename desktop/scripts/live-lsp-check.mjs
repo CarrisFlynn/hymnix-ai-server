@@ -1,0 +1,10 @@
+process.env.HYMNIX_LSP_TYPESCRIPT = "C:\\Users\\xiaoy\\AppData\\Local\\Temp\\lsp-probe\\node_modules\\typescript-language-server\\lib\\cli.mjs";
+const { runLspQuery } = await import("../src/main/lsp.ts");
+const root = process.cwd();
+const symbols = await runLspQuery({ root, operation: "symbols", file: "src/main/web-search.ts" });
+console.log("SYMBOLS ok=" + symbols.ok + " err=" + (symbols.error || "-") + " count=" + (symbols.results || []).length);
+for (const row of (symbols.results || []).slice(0, 5)) console.log("   line " + row.line + "  " + row.file);
+const def = await runLspQuery({ root, operation: "definition", file: "src/main/main.ts", line: 40, character: 12 });
+console.log("DEFINITION ok=" + def.ok + " err=" + (def.error || "-") + " results=" + JSON.stringify((def.results || []).slice(0, 3)));
+const missing = await runLspQuery({ root, operation: "definition", file: "nope.ts", line: 1, character: 1 });
+console.log("MISSING_FILE ok=" + missing.ok + " err=" + missing.error);

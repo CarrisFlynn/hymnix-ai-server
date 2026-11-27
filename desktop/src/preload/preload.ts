@@ -122,6 +122,9 @@ const api: DesktopApi & { adminHistory: (adminKey: string, query?: AdminHistoryQ
     search: (request: FileSearchRequest): Promise<FileSearchResponse> => ipcRenderer.invoke("files:search", request),
     read: (request: FileReadRequest): Promise<FileReadResponse> => ipcRenderer.invoke("files:read", request),
   },
+  lsp: {
+    query: (input: { operation: "definition" | "references" | "symbols"; file: string; line?: number; character?: number }) => ipcRenderer.invoke("lsp:query", input),
+  },
   code: {
     outline: (path: string) => ipcRenderer.invoke("code:outline", { path }),
     definition: (symbol: string) => ipcRenderer.invoke("code:definition", { symbol }),

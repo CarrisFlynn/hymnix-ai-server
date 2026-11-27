@@ -140,6 +140,9 @@
 >
 > `web.search` 在主进程实现，**不依赖 Python 网关**。实测：DuckDuckGo 在本网络不可达；Bing 的 HTML 页对脚本请求返回无关结果，因此走 `format=rss`；Baidu 作为兜底。每个来源都要过相关性闸门，答不相关就报 `no_relevant_results`，不许把垃圾当答案。
 
+> **未完成：真 LSP（`lsp` 工具已实现但不对外广告）**
+> `src/main/lsp.ts` 已经能起 `typescript-language-server`、完成 `initialize` 握手（实测收到 `$/typescriptVersion`），帧编解码、URI 互转有 5 项单测。但 `textDocument/documentSymbol` 与 `textDocument/definition` 在**应用仓库和干净临时项目里都返回空**，所以工具**没有注册给模型**，`code.*` 仍是唯一的导航手段。
+> 服务器不随包发布：`serverCandidates()` 会找 `HYMNIX_LSP_TYPESCRIPT`、仓库与 cwd 下的 `node_modules/.bin`。要继续，先查 tsserver 就绪时序（可能需要在 `initialized` 之后等 `$/progress` 结束再发请求）。
 ## 六、架构与文件地图
 
 ```

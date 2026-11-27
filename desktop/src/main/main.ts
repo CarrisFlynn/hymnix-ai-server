@@ -1,5 +1,6 @@
 import { searchWeb } from "./web-search.ts";
 import { createWorktree, listWorktrees, removeWorktree } from "./worktree.ts";
+import { runLspQuery } from "./lsp.ts";
 import {app,BrowserWindow,Menu,Notification,Tray,WebContentsView,dialog,ipcMain,net,nativeTheme,protocol,safeStorage,screen,session,shell} from "electron";
 import {basename,extname,isAbsolute,join,relative,resolve,sep} from "node:path";
 import {pathToFileURL} from "node:url";
@@ -827,6 +828,13 @@ function codeRoot(): string {
 }
 
 function registerCodeIpc(): void {
+  ipcMain.handle("lsp:query", async (event, raw: unknown) => {
+    assertSender(event);
+    const v = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+    const operation = String(v.operation || "");
+    if (!["definition", "references", "symbols"].includes(operation)) throw new Error(JSON.stringify({ code: "invalid_request", message: "Invalid lsp operation" }));
+    return await runLspQuery({ root: codeRoot(), operation: operation as "definition" | "references" | "symbols", file: String(v.file || ""), line: Number(v.line) || 1, character: Number(v.character) || 1 });
+  });
   ipcMain.handle("code:outline", (event, raw: unknown) => {
     assertSender(event);
     const value = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
