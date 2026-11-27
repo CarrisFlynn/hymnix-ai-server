@@ -118,6 +118,9 @@ const APPROVAL_ARCHIVE_KEY = "hymnix.approvals.archive.v1";
 const SHORTCUT_KEY = "hymnix.shortcuts.v1";
 
 /** Read-only tools the model is allowed to call mid-turn. */
+/** Tools the main process executes itself and that change this machine. They ask first. */
+const DANGER_LOCAL_TOOLS = new Set(["fs.write", "fs.edit", "patch.apply", "fs.mkdir", "fs.move", "fs.remove", "shell.run", "term.start", "term.write", "term.stop"]);
+
 const ADVERTISED_TOOLS = new Set(["time.now", "calc", "sysinfo", "fs.list", "fs.read", "fs.stat", "fs.write", "fs.edit", "patch.apply", "shell.run", "term.start", "term.write", "term.read", "term.stop", "term.list", "repo.tree", "repo.search", "repo.read", "web.fetch"]);
 
 /**
@@ -1420,7 +1423,17 @@ function App() {
     }
 
     let response;
-    try { response = await window.hymnix.tools.call({ requestId: crypto.randomUUID(), tool: call.name, args }); }
+    try {
+      // A local tool runs in this app, so the gateway's approval queue cannot see it.
+      if (DANGER_LOCAL_TOOLS.has(call.name)) {
+        const approved = await requestLocalApproval(call.name, args as Record<string, unknown>, [t("Changes files or runs a command inside the workspace")]);
+        if (!approved) {
+          recordEvidence({ kind: "approval", title: call.name, detail: t("You denied this call"), status: "denied", durationMs: Math.round(performance.now() - started) });
+          return JSON.stringify({ ok: false, error: "denied_by_user" });
+        }
+      }
+      response = await window.hymnix.tools.call({ requestId: crypto.randomUUID(), tool: call.name, args });
+    }
     catch (reason) {
       const message = reason instanceof Error ? reason.message : String(reason);
       recordEvidence({ kind: "tool", title: call.name, detail: message, status: "error", durationMs: Math.round(performance.now() - started) });

@@ -2,6 +2,7 @@ import { searchWeb } from "./web-search.ts";
 import { createWorktree, listWorktrees, removeWorktree } from "./worktree.ts";
 import { runLspQuery } from "./lsp.ts";
 import { runProgram } from "./run-code.ts";
+import { callLocalTool, configureTools, hasLocalTool, listToolDefs } from "./agent-tools.ts";
 import { closeAllSessions, closeSession, defaultCwd, detectProfiles, openSession, resizeSession, sessionOf, writeSession } from "./pty-host.ts";
 import {app,BrowserWindow,Menu,Notification,Tray,WebContentsView,dialog,ipcMain,net,nativeTheme,protocol,safeStorage,screen,session,shell} from "electron";
 import {basename,extname,isAbsolute,join,relative,resolve,sep} from "node:path";
@@ -212,6 +213,11 @@ function filesError(code: string, message: string): Error { return new Error(JSO
  * Python gateway; in a packaged build its own root is resources/, so without
  * this call every fs.* and shell.run landed inside the install directory.
  */
+/** The file tools follow the same folder the user picked. */
+function publishWorkspaceToTools(): void {
+  configureTools(selectedFilesRoot || process.cwd());
+}
+
 function publishWorkspaceToGateway(): void {
   try {
     const snapshot = gateway.snapshot();
@@ -264,7 +270,7 @@ function parseFileLimit(raw: unknown, fallback: number, max: number, name: strin
 function fileEntry(real: string, root: string): {name:string;rel:string;isDir:boolean;size:number;mtime:number;ext:string} { const info=statSync(real); const name=basename(real); return {name,rel:relative(root,real).replaceAll(sep,"/"),isDir:info.isDirectory(),size:info.isFile()?info.size:0,mtime:info.mtimeMs,ext:info.isFile()?extname(name):""}; }
 function readUtf8Bounded(path: string): string { let bytes: Buffer; try { bytes=readFileSync(path); } catch { throw filesError("not_found","File does not exist"); } if (bytes.length>fileLimits.readBytes) throw filesError("too_large","File exceeds read limit"); try { return new TextDecoder("utf-8",{fatal:true}).decode(bytes); } catch { throw filesError("binary_file","File is not valid UTF-8"); } }
 function registerFilesIpc(): void {
-  ipcMain.handle("files:choose-root", async (event) => { assertSender(event); const result=await dialog.showOpenDialog(mainWindow ?? BrowserWindow.getFocusedWindow()!,{properties:["openDirectory","createDirectory"]}); if(result.canceled||!result.filePaths[0]) return {selected:Boolean(selectedFilesRoot),path:selectedFilesRoot}; try { const root=realpathSync(result.filePaths[0]); if(!statSync(root).isDirectory()) throw new Error(); selectedFilesRoot=root; publishWorkspaceToGateway(); return {selected:true,path:root}; } catch { throw filesError("invalid_root","Selected root is not a directory"); } });
+  ipcMain.handle("files:choose-root", async (event) => { assertSender(event); const result=await dialog.showOpenDialog(mainWindow ?? BrowserWindow.getFocusedWindow()!,{properties:["openDirectory","createDirectory"]}); if(result.canceled||!result.filePaths[0]) return {selected:Boolean(selectedFilesRoot),path:selectedFilesRoot}; try { const root=realpathSync(result.filePaths[0]); if(!statSync(root).isDirectory()) throw new Error(); selectedFilesRoot=root; publishWorkspaceToGateway(); publishWorkspaceToTools(); return {selected:true,path:root}; } catch { throw filesError("invalid_root","Selected root is not a directory"); } });
   ipcMain.handle("files:current", (event) => { assertSender(event); return {selected:Boolean(selectedFilesRoot),path:selectedFilesRoot}; });
   // Choosing where downloads are cached must not silently repoint the workspace,
   // which is also the file browser root and the terminal cwd.
@@ -667,9 +673,44 @@ function parseApprovalDecisionResponse(payload: unknown, id: string, decision: "
 async function toolsJson(path: string, init: RequestInit, keyHeader: "X-API-Key" | "X-Admin-Key", fallback: string): Promise<unknown> {
   const response=await fetch(gatewayUrl(gatewayBase(),path),{...init,signal:AbortSignal.timeout(5000),headers:{Accept:"application/json",...(init.headers as Record<string,string>||{}),[keyHeader]:keyHeader==="X-API-Key"?localApiKey():resolveAdminKey(undefined)}}); const body=await response.json().catch(()=>null); if(!response.ok) throw new Error(JSON.stringify(errorPayload(response.status,body,fallback+" HTTP "+response.status))); return body;
 }
+/** The gateway's tool call path, kept for shared models and for tools the app does not own. */
+async function forwardToolCall(value: Record<string, unknown>): Promise<unknown> {
+  if (typeof value.requestId !== "string" || !value.requestId.trim() || typeof value.tool !== "string" || !value.tool.trim() || !value.args || typeof value.args !== "object" || Array.isArray(value.args)) {
+    throw new Error(JSON.stringify({ code: "invalid_request", message: "Invalid tool call request" }));
+  }
+  const payload = await toolsJson("api/tools/call", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ request_id: value.requestId, tool: value.tool, args: value.args }) }, "X-API-Key", "Tool call");
+  return parseToolCallResponse(payload);
+}
+
 function registerToolsIpc(): void {
-  ipcMain.handle("tools:list", async (event): Promise<ReturnType<typeof parseToolsResponse>> => { assertSender(event); const url=gatewayUrl(gatewayBase(),"api/tools"); const response=await fetch(url,{method:"GET",signal:AbortSignal.timeout(5000),headers:{Accept:"application/json","X-API-Key":localApiKey()}}); if (!response.ok) { const body=await response.json().catch(() => null); throw new Error(JSON.stringify(errorPayload(response.status,body,"Gateway tools HTTP "+response.status))); } let payload: unknown; try { payload=await response.json(); } catch { throw new Error(JSON.stringify({code:"tools_schema_error",message:"Tools response must be valid JSON"})); } return parseToolsResponse(payload); });
-  ipcMain.handle("tools:call", async (event, raw: unknown) => { assertSender(event); if(!raw||typeof raw!=="object"||Array.isArray(raw)) throw new Error(JSON.stringify({code:"invalid_request",message:"Tool call request must be an object"})); const value=raw as Record<string,unknown>; if(typeof value.requestId!=="string"||!value.requestId.trim()||typeof value.tool!=="string"||!value.tool.trim()||!value.args||typeof value.args!=="object"||Array.isArray(value.args)) throw new Error(JSON.stringify({code:"invalid_request",message:"Invalid tool call request"})); const payload=await toolsJson("api/tools/call",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({request_id:value.requestId,tool:value.tool,args:value.args})},"X-API-Key","Tool call"); return parseToolCallResponse(payload); });
+  ipcMain.handle("tools:list", async (event) => {
+    assertSender(event);
+    // Local tools first: they answer with the gateway stopped, which is the normal case.
+    const local = listToolDefs();
+    let remote: Array<{ name: string; description: string; schema: unknown }> = [];
+    try {
+      const response = await fetch(gatewayUrl(gatewayBase(), "api/tools"), { method: "GET", signal: AbortSignal.timeout(3000), headers: { Accept: "application/json", "X-API-Key": localApiKey() } });
+      if (response.ok) {
+        const parsed = parseToolsResponse(await response.json().catch(() => null));
+        remote = ((parsed as { tools?: Array<{ name: string; description: string; schema: unknown }> }).tools || []);
+      }
+    } catch { /* the gateway is optional; the local tools still answer */ }
+    const seen = new Set(local.map((tool) => tool.name));
+    const merged = [...local, ...remote.filter((tool) => !seen.has(tool.name))];
+    return { ok: true, tools: merged, count: merged.length };
+  });
+  ipcMain.handle("tools:call", async (event, raw: unknown) => {
+    assertSender(event);
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error(JSON.stringify({ code: "invalid_request", message: "Tool call request must be an object" }));
+    const request = raw as Record<string, unknown>;
+    // A local tool never reaches the gateway: the gateway exists for sharing only.
+    const name = typeof request.tool === "string" ? request.tool : "";
+    if (name && hasLocalTool(name)) {
+      const args = request.args && typeof request.args === "object" && !Array.isArray(request.args) ? request.args as Record<string, unknown> : {};
+      return await callLocalTool(name, args);
+    }
+    return await forwardToolCall(request);
+  });
   ipcMain.handle("tools:pending", async (event) => { assertSender(event); return parseApprovalListResponse(await toolsJson("admin/approvals",{method:"GET"},"X-Admin-Key","Approval list")); });
   // The gateway decides with allow/deny and, on allow, executes the tool and
   // returns its result. The renderer keeps saying approve/deny, so the mapping
@@ -1633,7 +1674,8 @@ if (!bootSettings.gpuAcceleration) { try { app.disableHardwareAcceleration(); } 
 const userDataDir = app.getPath("userData");
 const defaultCacheDir = join(userDataDir, "Cache");
 try { const cacheDir = bootSettings.cacheDir || defaultCacheDir; mkdirSync(cacheDir, { recursive: true }); app.setPath("cache", cacheDir); } catch { /* ignore */ }
-app.whenReady().then(async()=>{if (!hasInstanceLock) return; const bootT0=Date.now();bootLog("boot start");Menu.setApplicationMenu(null);protocol.handle("app",(request)=>{ const url=new URL(request.url); const relativePath=decodeURIComponent(url.pathname).replace(/^\/+/, "")||"index.html"; const target=join(rendererRoot,relativePath); const relCheck=relative(rendererRoot,target); if(!relCheck||relCheck.startsWith(".."+sep)||relCheck===".."||isAbsolute(relCheck)) return new Response("Forbidden",{status:403}); return net.fetch(pathToFileURL(target).toString()); });session.defaultSession.webRequest.onHeadersReceived((details,callback)=>callback({responseHeaders:{...details.responseHeaders,"Content-Security-Policy":["default-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:*; img-src 'self' data:; font-src 'self'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'"]}}));bootLog("pre-window t=" + (Date.now()-bootT0)); createWindow(); bootLog("window created t=" + (Date.now()-bootT0)); void gateway.start().then(() => { publishWorkspaceToGateway(); }).catch(() => undefined);app.on("activate",()=>{if(BrowserWindow.getAllWindows().length===0)createWindow();});}).catch((error)=>{console.error(error);app.quit();});
+app.whenReady().then(async()=>{if (!hasInstanceLock) return; const bootT0=Date.now();bootLog("boot start");Menu.setApplicationMenu(null);protocol.handle("app",(request)=>{ const url=new URL(request.url); const relativePath=decodeURIComponent(url.pathname).replace(/^\/+/, "")||"index.html"; const target=join(rendererRoot,relativePath); const relCheck=relative(rendererRoot,target); if(!relCheck||relCheck.startsWith(".."+sep)||relCheck===".."||isAbsolute(relCheck)) return new Response("Forbidden",{status:403}); return net.fetch(pathToFileURL(target).toString()); });session.defaultSession.webRequest.onHeadersReceived((details,callback)=>callback({responseHeaders:{...details.responseHeaders,"Content-Security-Policy":["default-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:*; img-src 'self' data:; font-src 'self'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'"]}}));bootLog("pre-window t=" + (Date.now()-bootT0)); createWindow(); bootLog("window created t=" + (Date.now()-bootT0)); publishWorkspaceToTools();
+void gateway.start().then(() => { publishWorkspaceToGateway(); }).catch(() => undefined);app.on("activate",()=>{if(BrowserWindow.getAllWindows().length===0)createWindow();});}).catch((error)=>{console.error(error);app.quit();});
 let allowQuit = false;
 let quitCleanup: Promise<void> | undefined;
 /**
