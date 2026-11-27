@@ -15,7 +15,7 @@ const messageOf = (error: unknown) => error instanceof Error ? error.message : S
  * every 1.4.0 build reject its own backend ("Invalid headless gateway record")
  * and left the whole app without models, chat or approval state.
  */
-const SUPPORTED_GATEWAY_MINORS = new Set(["1.3", "1.4"]);
+const SUPPORTED_GATEWAY_MINORS = new Set(["1.3", "1.4", "1.5"]);
 export function compatibleVersion(value: unknown): boolean {
   if (typeof value !== "string") return false;
   const match = /^(\d+\.\d+)(?:\.|$)/.exec(value.trim());

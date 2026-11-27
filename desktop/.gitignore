@@ -4,3 +4,6 @@ certs/
 .hx-agent.txt
 .hx-escape
 .hx-probe.txt
+
+# staged language server (see stage-lsp.mjs); shipped as build/lsp-runtime.tar
+lsp-runtime/

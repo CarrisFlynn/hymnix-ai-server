@@ -21,7 +21,12 @@ const env = { ...process.env };
 delete env.ELECTRON_RUN_AS_NODE;
 let app = null;
 try {
-  app = await electron.launch({ args: ["--user-data-dir=" + profile, "."], cwd, env });
+  // Point HYMNIX_SMOKE_EXE at a built exe to smoke test the real artifact instead
+  // of the working tree; that is the check a release actually needs.
+  const executable = process.env.HYMNIX_SMOKE_EXE || "";
+  app = executable
+    ? await electron.launch({ executablePath: executable, args: ["--user-data-dir=" + profile], env })
+    : await electron.launch({ args: ["--user-data-dir=" + profile, "."], cwd, env });
   const win = await app.firstWindow();
   await win.waitForFunction(() => Boolean(window.hymnix && window.hymnix.bootstrap), null, { timeout: 60000 });
   await win.evaluate(() => {

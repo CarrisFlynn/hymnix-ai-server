@@ -43,8 +43,12 @@ export function configureAgentCli(path: string): void {
   agentCliPath = path;
 }
 
-/** The Node binary the CLI needs; the app itself ships Electron, not Node. */
+/** The Node binary the CLI needs: the copy shipped with the app, or one on PATH. */
 export function findNode(): string | null {
+  try {
+    const bundled = join(process.resourcesPath || "", "node", "node.exe");
+    if (bundled && existsSync(bundled)) return bundled;
+  } catch { /* not packaged: fall through to PATH */ }
   return which("node");
 }
 const MAX_SESSIONS = 8;
@@ -83,7 +87,7 @@ export function detectProfiles(): TerminalProfile[] {
       available: Boolean(findNode() && agentCliPath && existsSync(agentCliPath)),
       detail: findNode()
         ? "Our own agent: local, cloud or shared models, with the app\u2019s tools."
-        : "Needs Node.js on PATH (install node, then reopen this profile).",
+        : "Needs Node.js: reinstall Hymnix, or install Node and reopen this profile.",
     },
     {
       id: "command",

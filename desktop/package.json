@@ -1,6 +1,6 @@
 {
   "name": "hymnix-desktop",
-  "version": "1.4.3",
+  "version": "1.5.0",
   "private": true,
   "description": "Hymnix Orbit - Hymnix scheduler with local gateway connectivity: orchestrate local models, serve a private OpenAI-compatible endpoint, keep every session on your machine.",
   "author": {
@@ -10,20 +10,21 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && vite build && node scripts/fix-renderer-html.mjs dist/renderer/index.html",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node tests/protocol.test.mjs && node --test --test-concurrency=1 tests/gateway-lifecycle.test.mjs tests/model-download.test.mjs tests/model-catalog.test.mjs tests/pull-stream.test.mjs tests/terminal-bridge.test.mjs tests/providers.test.mjs tests/components.test.mjs tests/schedule.test.mjs tests/automation.test.mjs tests/goals.test.mjs tests/skills.test.mjs tests/agents.test.mjs tests/code-nav.test.mjs tests/agent-ops.test.mjs tests/web-search.test.mjs tests/ask-present.test.mjs tests/agent-control.test.mjs tests/multimodal.test.mjs tests/lsp.test.mjs tests/run-code.test.mjs tests/agent-gates.test.mjs tests/sandbox.test.mjs",
+    "test": "node tests/protocol.test.mjs && node --test --test-concurrency=1 tests/gateway-lifecycle.test.mjs tests/model-download.test.mjs tests/model-catalog.test.mjs tests/pull-stream.test.mjs tests/terminal-bridge.test.mjs tests/providers.test.mjs tests/components.test.mjs tests/schedule.test.mjs tests/automation.test.mjs tests/goals.test.mjs tests/skills.test.mjs tests/agents.test.mjs tests/code-nav.test.mjs tests/agent-ops.test.mjs tests/web-search.test.mjs tests/ask-present.test.mjs tests/agent-control.test.mjs tests/multimodal.test.mjs tests/lsp.test.mjs tests/run-code.test.mjs tests/agent-gates.test.mjs tests/sandbox.test.mjs tests/tar.test.mjs tests/gateway-version.test.mjs",
     "check:css": "node ../tools/check-css-tokens.mjs",
     "check:contrast": "node ../tools/check-contrast.mjs",
     "check:design": "pnpm check:css && pnpm check:contrast",
     "visual": "pnpm build:dev && playwright test --project=electron",
     "check": "pnpm typecheck && pnpm test && pnpm check:design && pnpm build && pnpm test:anthropic",
     "build:backend": "python -m PyInstaller --noconfirm --clean --distpath ../build/hymnix-orbit2-backend --workpath ../build/work-hymnix-orbit2-backend ../server/hymnix-server.spec",
-    "dist": "pnpm build && pnpm build:backend && electron-builder --win --x64",
+    "dist": "pnpm build && pnpm build:backend && pnpm stage:node && electron-builder --win --x64",
     "cert:selfsigned": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/make-self-signed-cert.ps1",
     "dist:sign": "electron-builder --win --x64",
     "build:dev": "tsc -p tsconfig.json && vite build --mode development && node scripts/fix-renderer-html.mjs dist/renderer/index.html",
     "smoke:prod": "node scripts/prod-smoke.mjs",
     "stage:lsp": "node scripts/stage-lsp.mjs",
-    "test:anthropic": "cd ../server && python -m unittest tests.test_anthropic"
+    "test:anthropic": "cd ../server && python -m unittest tests.test_anthropic",
+    "stage:node": "node scripts/stage-node.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
@@ -46,7 +47,6 @@
     "files": [
       "dist/**/*",
       "package.json",
-      "lsp-server/**/*",
       "node_modules/node-pty/**/*"
     ],
     "extraResources": [
@@ -71,12 +71,20 @@
         "to": "engine-java/build/hymnix-engine.jar"
       },
       {
-        "from": "../build/hymnix-orbit2-backend/hymnix-server-1.4.3-x64.exe",
+        "from": "../build/hymnix-orbit2-backend/hymnix-server-1.5.0-x64.exe",
         "to": "backend-gateway-headless.exe"
       },
       {
         "from": "cli",
         "to": "cli"
+      },
+      {
+        "from": "build/node",
+        "to": "node"
+      },
+      {
+        "from": "build/lsp-runtime.tar",
+        "to": "lsp-runtime.tar"
       }
     ],
     "win": {
@@ -117,9 +125,10 @@
       "artifactName": "Hymnix-Orbit-${version}-Portable.${ext}"
     },
     "asarUnpack": [
-      "lsp-server/**",
       "node_modules/node-pty/**/*"
-    ]
+    ],
+    "npmRebuild": false,
+    "buildDependenciesFromSource": false
   },
   "devDependencies": {
     "@playwright/test": "^1.65.1",

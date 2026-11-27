@@ -1,0 +1,25 @@
+import { _electron as electron } from "@playwright/test";
+import { resolve } from "node:path";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+const exe = process.env.HYMNIX_EXE;
+const profile = mkdtempSync(resolve(tmpdir(), "hx-pack-"));
+const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE;
+const app = await electron.launch({ executablePath: exe, args: ["--user-data-dir=" + profile], env });
+const win = await app.firstWindow();
+await win.waitForFunction(() => Boolean(window.hymnix && window.hymnix.pty), null, { timeout: 90000 });
+const profiles = await win.evaluate(() => window.hymnix.pty.profiles());
+console.log("PROFILES " + JSON.stringify((profiles.profiles || []).map((p) => p.id + ":" + p.available)));
+const out = await win.evaluate(async () => {
+  const chunks = [];
+  const off = window.hymnix.pty.onData((e) => { if (e.id === "pack") chunks.push(e.data); });
+  const opened = await window.hymnix.pty.open({ id: "pack", profile: "agent", cwd: "", cols: 110, rows: 32 });
+  await new Promise((r) => setTimeout(r, 12000));
+  off();
+  window.hymnix.pty.close("pack");
+  return { opened, text: chunks.join("") };
+});
+console.log("OPEN " + JSON.stringify(out.opened));
+const clean = out.text.replace(/\x1b\][^\u0007]*\u0007/g, "").replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "");
+console.log("SCREEN " + JSON.stringify(clean.slice(0, 400)));
+await app.close();

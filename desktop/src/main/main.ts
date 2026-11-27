@@ -2,6 +2,7 @@ import { searchWeb } from "./web-search.ts";
 import { createWorktree, listWorktrees, removeWorktree } from "./worktree.ts";
 import { runLspQuery } from "./lsp.ts";
 import { runProgram } from "./run-code.ts";
+import { extractTar } from "./tar.ts";
 import { callLocalTool, configureTools, hasLocalTool, isDangerousTool, listToolDefs } from "./agent-tools.ts";
 // Registers shell.run, term.* and web.fetch alongside the file tools.
 import "./agent-shell.ts";
@@ -818,15 +819,23 @@ function skillDirectories(): string[] {
  */
 function locateBundledLsp(): string {
   const cli = join("node_modules", "typescript-language-server", "lib", "cli.mjs");
-  const candidates = [
-    join(process.resourcesPath || "", "app.asar.unpacked", "lsp-server", cli),
-    join(process.resourcesPath || "", "lsp-server", cli),
-    join(app.getAppPath(), "..", "lsp-server", cli),
-  ];
-  for (const candidate of candidates) {
-    try { if (existsSync(candidate)) return candidate; } catch { /* unreadable path */ }
+  const home = join(app.getPath("userData"), "lsp-runtime");
+  const extracted = join(home, cli);
+  if (existsSync(extracted)) return extracted;
+  const inPlace = join(app.getAppPath(), "lsp-runtime", cli);
+  if (existsSync(inPlace)) return inPlace;
+  // Packaged builds carry the runtime as one archive, because electron-builder
+  // drops every node_modules directory it finds. Unpack it once, then reuse it.
+  const archive = join(process.resourcesPath || "", "lsp-runtime.tar");
+  if (!archive || !existsSync(archive)) return "";
+  try {
+    const result = extractTar(archive, app.getPath("userData"));
+    bootLog("language server unpacked: " + result.files + " files");
+  } catch (error) {
+    bootLog("language server unpack failed: " + String(error));
+    return "";
   }
-  return "";
+  return existsSync(extracted) ? extracted : "";
 }
 
 /**
@@ -1726,7 +1735,13 @@ if (!bootSettings.gpuAcceleration) { try { app.disableHardwareAcceleration(); } 
 const userDataDir = app.getPath("userData");
 const defaultCacheDir = join(userDataDir, "Cache");
 try { const cacheDir = bootSettings.cacheDir || defaultCacheDir; mkdirSync(cacheDir, { recursive: true }); app.setPath("cache", cacheDir); } catch { /* ignore */ }
-app.whenReady().then(async()=>{if (!hasInstanceLock) return; const bootT0=Date.now();bootLog("boot start");Menu.setApplicationMenu(null);protocol.handle("app",(request)=>{ const url=new URL(request.url); const relativePath=decodeURIComponent(url.pathname).replace(/^\/+/, "")||"index.html"; const target=join(rendererRoot,relativePath); const relCheck=relative(rendererRoot,target); if(!relCheck||relCheck.startsWith(".."+sep)||relCheck===".."||isAbsolute(relCheck)) return new Response("Forbidden",{status:403}); return net.fetch(pathToFileURL(target).toString()); });session.defaultSession.webRequest.onHeadersReceived((details,callback)=>callback({responseHeaders:{...details.responseHeaders,"Content-Security-Policy":["default-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:*; img-src 'self' data:; font-src 'self'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'"]}}));bootLog("pre-window t=" + (Date.now()-bootT0)); createWindow(); bootLog("window created t=" + (Date.now()-bootT0)); publishWorkspaceToTools();
+app.whenReady().then(async()=>{if (!hasInstanceLock) return; const bootT0=Date.now();bootLog("boot start");
+  // The picker asks which launchers exist before anything is opened, so the path
+  // has to be known from the start rather than on the first launch.
+  try {
+    configureAgentCli(app.isPackaged ? join(process.resourcesPath, "cli", "agent-cli.mjs") : join(app.getAppPath(), "cli", "agent-cli.mjs"));
+    bootLog("agent CLI registered");
+  } catch (error) { bootLog("agent CLI path failed: " + String(error)); }Menu.setApplicationMenu(null);protocol.handle("app",(request)=>{ const url=new URL(request.url); const relativePath=decodeURIComponent(url.pathname).replace(/^\/+/, "")||"index.html"; const target=join(rendererRoot,relativePath); const relCheck=relative(rendererRoot,target); if(!relCheck||relCheck.startsWith(".."+sep)||relCheck===".."||isAbsolute(relCheck)) return new Response("Forbidden",{status:403}); return net.fetch(pathToFileURL(target).toString()); });session.defaultSession.webRequest.onHeadersReceived((details,callback)=>callback({responseHeaders:{...details.responseHeaders,"Content-Security-Policy":["default-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:*; img-src 'self' data:; font-src 'self'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'"]}}));bootLog("pre-window t=" + (Date.now()-bootT0)); createWindow(); bootLog("window created t=" + (Date.now()-bootT0)); publishWorkspaceToTools();
 void gateway.start().then(() => { publishWorkspaceToGateway(); }).catch(() => undefined);app.on("activate",()=>{if(BrowserWindow.getAllWindows().length===0)createWindow();});}).catch((error)=>{console.error(error);app.quit();});
 let allowQuit = false;
 let quitCleanup: Promise<void> | undefined;

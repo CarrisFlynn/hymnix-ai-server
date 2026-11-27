@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {once} from "node:events";
 import {createServer} from "node:http";
 import {fileURLToPath} from "node:url";
@@ -24,12 +26,15 @@ function lifecycle(t, defaultPort, mode, options = {}) {
   return {gateway, logs};
 }
 
-test("the readiness gate accepts this release and its predecessor, nothing else", () => {
-  // The 1.4.0 bump once broke startup: the gate matched only /^1\.3/.
-  for (const version of ["1.4.0", "1.4.1", "1.3.3", "1.3.2"]) assert.equal(compatibleVersion(version), true, version + " must be accepted");
+test("the readiness gate accepts the shipped backends and nothing else", () => {
+  // Twice now a version bump made the app refuse its own backend: the gate matched
+  // only /^1\.3/ at 1.4.0, and 1.5.0 had to be added by hand. The shipped VERSION is
+  // read here so the next bump fails this test instead of the release.
+  const shipped = readFileSync(join(process.cwd(), "..", "VERSION"), "utf8").trim();
+  for (const version of [shipped, "1.4.0", "1.4.1", "1.3.3", "1.3.2"]) assert.equal(compatibleVersion(version), true, version + " must be accepted");
   // A minor-only report means the same server family; anything else is a stranger.
   assert.equal(compatibleVersion("1.4"), true);
-  for (const version of ["2.0.0", "1.2.9", "1.5.0", "", "banana", null, undefined, 1.4]) assert.equal(compatibleVersion(version), false, String(version) + " must be rejected");
+  for (const version of ["2.0.0", "1.2.9", "1.6.0", "", "banana", null, undefined, 1.4]) assert.equal(compatibleVersion(version), false, String(version) + " must be rejected");
 });
 
 test("an owned 1.4.0 backend is adopted, not rejected", async (t) => {

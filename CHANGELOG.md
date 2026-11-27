@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.5.0
+
+A release about where the work actually happens: the model can stay anywhere, the tools now belong to the machine that owns the files, and the terminal is a real terminal.
+
+### Terminal
+- The terminal page keeps its look and gains COMMAND / TERMINAL tabs. TERMINAL is a real PTY through node-pty's ConPTY prebuilds, 147x33, with a launcher that is discovered rather than assumed: Hymnix Agent, PowerShell, Claude Code, Codex, Gemini, Ollama and Git Bash, each shown as available or not.
+- Hymnix Agent is this app's own kernel in CLI form. It holds no tools and no provider logic; a loopback bridge with a per-run token owns both, so the model can be local, cloud or shared without the CLI knowing. Dangerous tools ask y/N in the terminal.
+- node.exe is bundled with the app, because a PTY child cannot run Electron as node and asking every user to install Node first is a trap.
+
+### Tools
+- All 22 file, patch, repository, command, terminal and fetch tools moved from the Python gateway into the main process. They answer with the gateway stopped, which is the normal case: the gateway exists for sharing only.
+- Ported with their boundaries, not just their features: paths resolve through realpath before the containment test (a junction cannot escape the workspace), web.fetch refuses private destinations including IPv4-mapped addresses and pins the checked IP, timed-out commands are killed as a whole process tree, console bytes are decoded with the console code page.
+
+### Sharing
+- The model runs on the host, the hands belong to the caller. /api/tools and /api/files refuse anything that is not a naked loopback call, so a guest cannot ask the host to read the host's own disk.
+- A shared session switches to Orbit at once and cannot switch back; disconnecting restores the previous choice.
+- POST /v1/messages speaks Anthropic Messages, so Claude Code or an Anthropic SDK can use a model this machine shares. Reasoning is forwarded as a thinking block. The endpoint counts failed keys toward the ban, honours the daily quota, and answers malformed bodies with 400 instead of 500.
+
+### Fixed
+- A self-referencing CSS custom property (`.term-shell * { --term-fg: var(--term-fg) }`) invalidated the token inside the terminal and made the selected tab's label invisible.
+- PTY sessions and the agent bridge are closed on quit; a failed atomic write no longer leaves a full copy of the file behind.
+
+### Verification
+- 143 JavaScript tests and 14 Python tests, typecheck, design tokens, 279/279 contrast pairs across 9 themes, and a production build with no dev hook.
+
 Only user-visible changes are listed. Internal refactors, test scaffolding and machine-specific paths are intentionally omitted.
 
 ## [1.4.3] - 2026-11-27
@@ -35,7 +60,7 @@ The agent can finally reach the tools it was offered, and the file tools stop da
 - `pnpm check`: 138/138 tests, typecheck, design tokens, 279/279 contrast, production build.
 - `pnpm smoke:prod`: the shipped bundle boots, has no development hook and renders its shell — and the same check fails a development build.
 
-## Unreleased — continuable agents and panel accessibility (2026-11-27)
+## Shipped in 1.4.3 — continuable agents and panel accessibility (2026-11-27)
 
 ### Added
 
@@ -47,7 +72,7 @@ The agent can finally reach the tools it was offered, and the file tools stop da
 
 - Arrow keys reorder sections (order persisted), Tab stays inside the panel, Escape restores focus to the toggle, and the detail view shows the `给 lead 发消息` composer.
 
-## Unreleased — section reorder, details, tree and jobs (2026-11-27)
+## Shipped in 1.4.3 — section reorder, details, tree and jobs (2026-11-27)
 
 The remaining four gaps against DSH's session panel.
 
@@ -64,7 +89,7 @@ The remaining four gaps against DSH's session panel.
 - Job elapsed time was computed from milliseconds but formatted as seconds (a two-second job read as 17 minutes).
 - The detail view's back link said "session panel" instead of "back".
 
-## Unreleased — the session panel (2026-11-27)
+## Shipped in 1.4.3 — the session panel (2026-11-27)
 
 ### Changed
 
@@ -75,7 +100,7 @@ The remaining four gaps against DSH's session panel.
 
 - No section drag-reorder, no per-row hover details, no nested subagent tree, and no Jobs section in the panel yet.
 
-## Unreleased — subagents shown the DSH way (2026-11-27)
+## Shipped in 1.4.3 — subagents shown the DSH way (2026-11-27)
 
 ### Changed
 
@@ -86,7 +111,7 @@ The remaining four gaps against DSH's session panel.
 
 - The status dot was an `<i>` with no box model, so its width and height were ignored and a failed agent rendered as a large block; it uses `data-state` now instead of borrowing the global `error` class.
 
-## Unreleased — patches and panels (2026-11-27)
+## Shipped in 1.4.3 — patches and panels (2026-11-27)
 
 ### Added
 
@@ -99,7 +124,7 @@ The remaining four gaps against DSH's session panel.
 - `patch.apply`: two files changed atomically; a second edit that could not match left the first file untouched.
 - Code page: `streamTurn` resolved to `src/renderer/main.tsx:931` in the real UI; the agents page rendered a persisted reviewer with two messages.
 
-## Unreleased — named agents and symbol navigation (2026-11-27)
+## Shipped in 1.4.3 — named agents and symbol navigation (2026-11-27)
 
 Two more capabilities from the DSH comparison: several agents with their own history, and code navigation without a language server.
 
@@ -113,7 +138,7 @@ Two more capabilities from the DSH comparison: several agents with their own his
 - Navigation: `streamTurn` resolved to `src/renderer/main.tsx:927`; `consumeRound` had eight references; an outline of `code-nav.ts` returned its declarations with line numbers.
 - Agents: a full-history completion against local Ollama returned `代理在线`; three unit tests cover uniqueness, the cap, failed-turn retention and closing.
 
-## Unreleased — persistent terminal (2026-11-27)
+## Shipped in 1.4.3 — persistent terminal (2026-11-27)
 
 One shell that survives across tool calls, so a multi-step command sequence keeps its state.
 
@@ -126,7 +151,7 @@ One shell that survives across tool calls, so a multi-step command sequence keep
 
 - Through the real gateway: start → approve → write `echo term-approved` → read → stop; the marker came back in the transcript (`SAW True`), and the session list was empty afterwards.
 
-## Unreleased — subagents, goals and skills (2026-11-27)
+## Shipped in 1.4.3 — subagents, goals and skills (2026-11-27)
 
 The rest of the DSH capability slice, all local: delegation, a durable objective, and on-demand domain knowledge.
 
@@ -142,7 +167,7 @@ The rest of the DSH capability slice, all local: delegation, a durable objective
 - Subagent: `gateway.complete` against local Ollama returned `收到`.
 - Goals: four unit tests cover creation, validation, round consumption and the stop condition.
 
-## Unreleased — agent-side tools (2026-11-27)
+## Shipped in 1.4.3 — agent-side tools (2026-11-27)
 
 First capability slice from the DSH comparison: the agent can change the machine, not only read it.
 
