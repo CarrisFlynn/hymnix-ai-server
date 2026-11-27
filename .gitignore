@@ -44,3 +44,7 @@ logs/
 
 # vendored DeepSeek Harness checkout used as a reference while building 1.4.0
 DSH/
+
+# probe artefacts (written by the audit scripts, never part of the app)
+*-probe.txt
+agent-edit.txt

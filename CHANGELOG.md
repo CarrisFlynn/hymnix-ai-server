@@ -2,6 +2,20 @@
 
 Only user-visible changes are listed. Internal refactors, test scaffolding and machine-specific paths are intentionally omitted.
 
+## Unreleased — agent-side tools (2026-11-27)
+
+First capability slice from the DSH comparison: the agent can change the machine, not only read it.
+
+### Added
+
+- **`shell.run`** — one command inside the workspace, with a timeout, capped output, exit code and a process-tree kill on timeout. Danger tool: the gateway asks for approval and the read-only policy refuses it.
+- **`fs.edit`** — replaces one exact string (or every occurrence with `all`), so a small change no longer rewrites the whole file. Approval-gated too.
+- Both are advertised to the model in the tool loop, so a code-mode turn can build something.
+
+### Verified
+
+- Through the real gateway: `shell.run {"command":"echo agent-ok"}` → approval → `exit_code 0, stdout "agent-ok"`; `fs.edit` turned `before value` into `after value`.
+
 ## 1.4.2 — 2026-11-27
 
 The regression 1.4.1 introduced, plus two boundary issues the fifth review found.

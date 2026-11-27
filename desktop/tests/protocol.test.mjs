@@ -168,4 +168,10 @@ assert.ok(toolsFinal.includes("args = normalize_args(name, args)"), "aliases mus
 assert.ok(read("../../server/gateway_core.py").includes("tool_registry.normalize_args(name, args)"), "the gateway must hash the same normalised args it approves");
 assert.ok(read("../../server/gateway_core.py").includes('key != "trust_proxy_headers"'), "proxy trust must never be persisted");
 assert.ok(read("../../server/gateway_core.py").includes("not value.isdigit()"), "a malformed Content-Length must be rejected");
+// --- agent-side tools --------------------------------------------------------
+const agentCatalog = read("../../server/hxcore/tools.py");
+assert.ok(agentCatalog.includes('register("shell.run"'), "the agent needs a command tool");
+assert.ok(agentCatalog.includes('register("fs.edit"'), "the agent needs a structured edit tool");
+assert.ok(renderer.includes('"shell.run"') && renderer.includes('"fs.edit"'), "both tools must be advertised to the model");
+assert.ok(read("../../server/gateway_core.py").includes('"fs.edit", "shell.run"'), "both must be classified as machine-changing");
 console.log("PASS: secure shell protocol/static contract");

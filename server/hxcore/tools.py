@@ -83,6 +83,82 @@ def _fs_read(args):
     if not os.path.isfile(p): raise ToolError("not_a_file")
     with open(p,"r",encoding="utf-8",errors="replace") as f: return f.read(256*1024)
 
+
+def _shell_run(args):
+    """Run one command inside the workspace, with a timeout and capped output.
+
+    Dangerous by design: the gateway asks for approval before it runs and the
+    read-only policy refuses it. The process is killed as a tree on timeout.
+    """
+    import subprocess
+    command = str(args.get("command") or "").strip()
+    if not command:
+        raise ToolError("command_required")
+    if len(command) > 4000:
+        raise ToolError("command_too_long")
+    cwd = _fs_path({"path": args.get("cwd") or "."})
+    if not os.path.isdir(cwd):
+        raise ToolError("not_a_directory")
+    try:
+        timeout = float(args.get("timeout_s") or 30)
+    except (TypeError, ValueError):
+        timeout = 30.0
+    timeout = max(1.0, min(timeout, 120.0))
+    started = time.perf_counter()
+    creation = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    proc = subprocess.Popen(command, cwd=cwd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, encoding="utf-8", errors="replace", creationflags=creation)
+    timed_out = False
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        try:
+            subprocess.run(["taskkill", "/pid", str(proc.pid), "/t", "/f"], capture_output=True, timeout=10)
+        except Exception:
+            proc.kill()
+        out, err = proc.communicate()
+    limit = 65536
+    return {"exit_code": proc.returncode, "timed_out": timed_out,
+            "stdout": (out or "")[:limit], "stderr": (err or "")[:limit],
+            "truncated": len(out or "") > limit or len(err or "") > limit,
+            "duration_ms": int((time.perf_counter() - started) * 1000)}
+
+
+def _fs_edit(args):
+    """Replace an exact piece of a file, so a small change is not a full rewrite."""
+    p = _fs_path(args)
+    if not os.path.isfile(p):
+        raise ToolError("not_a_file")
+    find = args.get("find")
+    replace = args.get("replace")
+    if not isinstance(find, str) or not find:
+        raise ToolError("find_required")
+    if not isinstance(replace, str):
+        raise ToolError("replace_required")
+    with open(p, "r", encoding="utf-8", errors="replace") as handle:
+        original = handle.read(256 * 1024)
+    count = original.count(find)
+    if count == 0:
+        raise ToolError("find_not_present")
+    if count > 1 and not args.get("all"):
+        raise ToolError("find_not_unique")
+    updated = original.replace(find, replace) if args.get("all") else original.replace(find, replace, 1)
+    fd, tmp = tempfile.mkstemp(prefix=".hymnix-", dir=os.path.dirname(p) or None)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(updated)
+        os.replace(tmp, p)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    return {"path": os.path.relpath(p, root_dir()), "replaced": count if args.get("all") else 1,
+            "bytes": len(updated.encode("utf-8"))}
+
+
 def _fs_write(args):
     """Write one UTF-8 file inside the workspace, atomically.
 
@@ -260,6 +336,8 @@ def builtin_tools() -> list[str]:
     register("fs.read","Read root-scoped UTF-8 text",{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]},_fs_read)
     register("fs.stat","Inspect root-scoped path",{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]},_fs_stat)
     register("fs.write", "Write one UTF-8 text file inside the workspace (max 256 KB). Content is replaced atomically; parent folders are created. Every call needs approval.",{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"],"additionalProperties":False},_fs_write,danger=True)
+    register("shell.run","Run one command inside the workspace. Needs approval.",{"type":"object","properties":{"command":{"type":"string"},"cwd":{"type":"string"},"timeout_s":{"type":"number"}},"required":["command"],"additionalProperties":False},_shell_run,danger=True)
+    register("fs.edit","Replace an exact string inside a workspace file. Needs approval.",{"type":"object","properties":{"path":{"type":"string"},"find":{"type":"string"},"replace":{"type":"string"},"all":{"type":"boolean"}},"required":["path","find","replace"],"additionalProperties":False},_fs_edit,danger=True)
     register("sysinfo","Basic system information",{"type":"object","properties":{}},_sysinfo)
     register("web.fetch","Fetch HTTP(S) resource",{"type":"object","properties":{"url":{"type":"string"}},"required":["url"]},_web_fetch)
     register("repo.tree","List root-scoped repository tree",{"type":"object","properties":{"path":{"type":"string"},"depth":{"type":"integer","minimum":1,"maximum":4},"limit":{"type":"integer","minimum":1,"maximum":500}},"additionalProperties":False},_repo_tree)
