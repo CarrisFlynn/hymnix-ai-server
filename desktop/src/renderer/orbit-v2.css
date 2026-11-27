@@ -1917,7 +1917,7 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 .subagents-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .subagents-indicator { color: var(--faint); font-size: calc(11px * var(--text-scale, 1)); }
 .subagent-list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
-.subagent-row { display: flex; align-items: flex-start; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.subagent-row { display: flex; flex-wrap: nowrap; align-items: flex-start; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border); }
 .subagent-row:last-child { border-bottom: 0; }
 .subagent-dot { display: inline-block; flex: 0 0 auto; width: 7px; height: 7px; margin-top: 6px; border-radius: 50%; background: var(--faint); }
 .subagent-dot[data-state="running"] { background: var(--success, var(--accent-fill)); }
@@ -1935,6 +1935,26 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 .session-panel .panel-card { padding: 0; border: 0; border-radius: 0; background: transparent; }
 .session-panel .panel-row { padding: 4px 0; border-bottom: 1px solid var(--border); }
 .session-panel .panel-row:last-child { border-bottom: 0; }
+
+.session-section-wrap { display: flex; flex-direction: column; gap: 6px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+.session-section-wrap:last-child { border-bottom: 0; }
+.session-section-wrap.dragging { opacity: .55; }
+.section-grip { margin-right: 6px; color: var(--faint); cursor: grab; user-select: none; }
+.session-section h4 { display: flex; align-items: center; }
+.subagent-chevron { width: 14px; height: 14px; padding: 0; border: 0; background: transparent; color: var(--faint); font-size: 10px; line-height: 1; }
+.subagent-chevron.empty { display: inline-block; }
+.subagent-name { overflow: hidden; max-width: 100%; padding: 0; border: 0; background: transparent; color: var(--text); font: inherit; font-size: calc(12.5px * var(--text-scale, 1)); text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.subagent-name:hover { color: var(--accent-text); text-decoration: underline; }
+.subagent-facts { display: none; margin: 2px 0 0; color: var(--faint); font-size: calc(10.5px * var(--text-scale, 1)); }
+.subagent-row:hover .subagent-facts { display: block; }
+.subagent-breadcrumb { display: flex; align-items: center; gap: 10px; margin: 2px 0 8px; color: var(--muted); font-size: calc(11px * var(--text-scale, 1)); }
+.subagent-breadcrumb .link-button { flex: 0 0 auto; }
+.subagent-breadcrumb span { overflow: hidden; color: var(--faint); text-overflow: ellipsis; white-space: nowrap; }
+.subagent-transcript { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.subagent-transcript li { display: flex; flex-direction: column; gap: 2px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.subagent-transcript li:last-child { border-bottom: 0; }
+.subagent-transcript strong { color: var(--muted); font-size: calc(10.5px * var(--text-scale, 1)); }
+.subagent-transcript span { color: var(--text); font-size: calc(11.5px * var(--text-scale, 1)); white-space: pre-wrap; }
 
 /* ---- tab badges ---------------------------------------------------------- */
 .chat-tabs button { position: relative; }

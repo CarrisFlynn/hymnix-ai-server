@@ -187,7 +187,7 @@ assert.ok(renderer.includes('"term.write"'), "term tools must be advertised to t
 assert.ok(read("../../server/gateway_core.py").includes('"term.start", "term.write", "term.stop"'), "terminal mutations must be approval-gated");
 // --- named agents and code navigation ----------------------------------------
 assert.ok(renderer.includes('"agent.spawn"') && renderer.includes('"agent.send"'), "named agents must be offered to the model");
-assert.ok(renderer.includes("subagents-section"), "the subagent panel lives in the conversation, the way DSH shows it");
+assert.ok(renderer.includes("session-panel") && renderer.includes("renderSubagentsSection()"), "subagents live in the floating session panel, the way DSH shows them");
 assert.ok(renderer.includes('"code.definition"'), "symbol navigation must be offered");
 assert.ok(main.includes("code:outline"), "navigation lives in the main process");
 assert.ok(preload.includes("code: {"), "the shell must expose navigation");

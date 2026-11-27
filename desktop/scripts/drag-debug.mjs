@@ -1,0 +1,22 @@
+import { _electron as electron } from "@playwright/test";
+import { resolve } from "node:path";
+const cwd = resolve(process.cwd()); const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE;
+const app = await electron.launch({ args: ["--user-data-dir=C:\\Users\\xiaoy\\AppData\\Local\\Temp\\hymnix-drag", "."], cwd, env });
+const win = await app.firstWindow();
+await win.waitForFunction(() => Boolean(window.__hymnixDev), null, { timeout: 60000 });
+await win.evaluate(() => { localStorage.setItem("hymnix.welcome","1"); localStorage.setItem("hymnix.whatsNew","1.4.0"); localStorage.setItem("hymnix.lang","zh"); });
+await win.reload();
+await win.waitForFunction(() => Boolean(window.__hymnixDev), null, { timeout: 60000 });
+await win.evaluate(() => window.__hymnixDev.dismissOverlays());
+for (let i = 0; i < 60; i += 1) { const boot = await win.evaluate(() => window.hymnix.bootstrap()); if (boot.ready) break; await win.waitForTimeout(500); }
+await win.evaluate(() => document.querySelector('[data-session-panel-toggle="true"]')?.click());
+await win.waitForTimeout(500);
+const before = await win.evaluate(() => ({ grips: document.querySelectorAll(".section-grip").length, wraps: document.querySelectorAll(".session-section-wrap").length }));
+await win.evaluate(() => { const grip = document.querySelectorAll(".section-grip")[2]; grip?.dispatchEvent(new DragEvent("dragstart", { bubbles: true })); });
+await win.waitForTimeout(300);
+const after = await win.evaluate(() => ({ dragging: document.querySelectorAll(".session-section-wrap.dragging").length, classes: [...document.querySelectorAll(".session-section-wrap")].map((el) => el.className) }));
+await win.evaluate(() => { const target = document.querySelectorAll(".session-section-wrap")[1]; target?.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true })); target?.dispatchEvent(new DragEvent("drop", { bubbles: true })); });
+await win.waitForTimeout(400);
+const post = await win.evaluate(() => ({ dragging: document.querySelectorAll(".session-section-wrap.dragging").length, order: [...document.querySelectorAll(".session-section h4")].map((el) => el.textContent?.trim()), stored: localStorage.getItem("hymnix.panel.order.v1") }));
+console.log("DRAG " + JSON.stringify({ before, after, post }));
+await app.close();

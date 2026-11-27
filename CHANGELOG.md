@@ -2,6 +2,23 @@
 
 Only user-visible changes are listed. Internal refactors, test scaffolding and machine-specific paths are intentionally omitted.
 
+## Unreleased — section reorder, details, tree and jobs (2026-11-27)
+
+The remaining four gaps against DSH's session panel.
+
+### Added
+
+- **Section drag-reorder** — each title carries a grip; the order persists in `hymnix.panel.order.v1`, so the panel keeps the arrangement the reader chose.
+- **Hover details per row** — updated time and the last error appear under a row on hover, the way DSH's PanelDetails shows facts without opening anything.
+- **Subagent tree and detail view** — agents take an optional `parent`, rows nest with indentation and an expand chevron, and clicking a name opens its transcript inside the panel with a DSH-style path breadcrumb (`lead/reviewer`) and a back link.
+- **Jobs section** — the panel now shows up to four jobs with status and elapsed time, alongside Environment and Subagents.
+
+### Fixed
+
+- The message count in a tree row printed `[object Object]` because it stringified the array instead of its length.
+- Job elapsed time was computed from milliseconds but formatted as seconds (a two-second job read as 17 minutes).
+- The detail view's back link said "session panel" instead of "back".
+
 ## Unreleased — the session panel (2026-11-27)
 
 ### Changed

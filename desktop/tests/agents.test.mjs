@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { appendExchange, closeAgent, emptyAgents, listAgents, spawnAgent, wireMessages } from "../src/renderer/lib/agents.js";
+import { appendExchange, agentPath, closeAgent, emptyAgents, listAgents, spawnAgent, treeRows, wireMessages } from "../src/renderer/lib/agents.js";
 
 test("agents are named, unique and capped", () => {
   let { agents } = spawnAgent(emptyAgents(), "reviewer", "You review code.");
@@ -25,4 +25,16 @@ test("listing and closing reflect the live map", () => {
   assert.equal(listAgents(agents)[0].name, "scout");
   assert.equal(closeAgent(agents, "scout").agents.scout, undefined);
   assert.equal(closeAgent(agents, "missing").error, "no_agent");
+});
+
+test("children nest under their parent and paths read like DSH names", () => {
+  let { agents } = spawnAgent(emptyAgents(), "lead");
+  agents = spawnAgent(agents, "reviewer", "", "lead").agents;
+  agents = spawnAgent(agents, "checker", "", "reviewer").agents;
+  const rows = treeRows(agents);
+  assert.deepEqual(rows.map((row) => row.name), ["lead", "reviewer", "checker"]);
+  assert.deepEqual(rows.map((row) => row.depth), [0, 1, 2]);
+  assert.equal(rows[1].children, 1);
+  assert.equal(agentPath(agents, "checker"), "lead/reviewer/checker");
+  assert.equal(agentPath(agents, "lead"), "lead");
 });

@@ -1,6 +1,12 @@
 export type Lang = "en" | "zh";
 
 export const zh: Record<string, string> = {
+  "No jobs running.": "没有正在运行的任务。",
+  "Drag to reorder": "拖动排序",
+  "Expand": "展开",
+  "Updated {time}": "更新于 {time}",
+  "No messages yet.": "还没有消息。",
+  "Not found.": "未找到。",
   "Session panel": "会话面板",
   "Show session panel": "显示会话面板",
   "Hide session panel": "隐藏会话面板",

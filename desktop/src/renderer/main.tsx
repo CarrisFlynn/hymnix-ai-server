@@ -8,7 +8,7 @@ import brandIcon from "./assets/hymnix-red-white-star.png";
 import { THEMES, readStoredTheme, readStoredMode, applyTheme, persistTheme, persistAppearanceMode, activeMode, selectedTheme, systemMode, type AppearanceMode } from "../theme/themeManager";
 import { t, tf, getLang, setLang, type Lang } from "./i18n";
 import { applyGoalPatch, consumeRound, continuationPrompt, createGoal, shouldContinue, type Goal } from "./lib/goals.js";
-import { appendExchange, closeAgent, emptyAgents, listAgents, spawnAgent, wireMessages, type AgentMap } from "./lib/agents.js";
+import { agentPath, appendExchange, closeAgent, emptyAgents, listAgents, spawnAgent, treeRows, wireMessages, type AgentMap } from "./lib/agents.js";
 import type { ChatMessage } from "./chat";
 import { ChatViewport } from "./chat-navigation";
 import { pullErrorMessage, trackDownloadProgress } from "./model-download";
@@ -535,6 +535,17 @@ function App() {
   const [subagentRunning, setSubagentRunning] = useState<string[]>([]);
   const [subagentsExpanded, setSubagentsExpanded] = useState(false);
   const [sessionPanelOpen, setSessionPanelOpen] = useState(false);
+  const [panelOrder, setPanelOrder] = useState<string[]>(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem("hymnix.panel.order.v1") || "null");
+      if (Array.isArray(saved) && saved.length) return saved.filter((key) => ["environment", "subagents", "jobs"].includes(String(key)));
+    } catch { /* fall through */ }
+    return ["environment", "subagents", "jobs"];
+  });
+  const [draggingSection, setDraggingSection] = useState<string | null>(null);
+  const draggingRef = useRef<string | null>(null);
+  const [subagentView, setSubagentView] = useState<string | null>(null);
+  const [expandedAgents, setExpandedAgents] = useState<string[]>([]);
   const sessionPanelRef = useRef<HTMLElement | null>(null);
   const answeringRef = useRef<Set<string>>(new Set());
   const [riskAcknowledged, setRiskAcknowledged] = useState(false);
@@ -1003,7 +1014,7 @@ function App() {
       return JSON.stringify({ ok: true, id: loaded.id, content: loaded.content });
     }
     if (call.name === "agent.spawn") {
-      const spawned = spawnAgent(agentsRef.current, String(args.name || ""), String(args.system || ""));
+      const spawned = spawnAgent(agentsRef.current, String(args.name || ""), String(args.system || ""), String(args.parent || ""));
       if ("error" in spawned) return JSON.stringify({ ok: false, error: spawned.error });
       agentsRef.current = spawned.agents || {};
       setAgents(agentsRef.current);
@@ -1386,6 +1397,19 @@ function App() {
     const timer = window.setInterval(() => setNowTick(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, [plan, jobs]);
+  useEffect(() => {
+    try { localStorage.setItem("hymnix.panel.order.v1", JSON.stringify(panelOrder)); } catch { /* best effort */ }
+  }, [panelOrder]);
+  function moveSection(dragged: string | null, target: string): void {
+    if (!dragged || dragged === target) return;
+    setPanelOrder((current) => {
+      const next = current.filter((key) => key !== dragged);
+      const at = next.indexOf(target);
+      next.splice(at < 0 ? next.length : at, 0, dragged);
+      return next;
+    });
+  }
+
   // The panel dismisses like DSH's: Escape or a pointer outside, but the toggle
   // itself stays a toggle, so its own press is not treated as "outside".
   useEffect(() => {
@@ -2544,38 +2568,68 @@ function App() {
 {plainEmpty && <div className="starter-row">{starters.map(([label, detail]) => <button type="button" key={label} className="starter" onClick={() => setDraft(detail)}>{label}</button>)}</div>}
 {composer}</div>;
 
-    function renderSubagentsSection() {
-    const rows = listAgents(agents).sort((left, right) => {
-      const leftRunning = subagentRunning.includes(left.name) ? 1 : 0;
-      const rightRunning = subagentRunning.includes(right.name) ? 1 : 0;
-      return rightRunning - leftRunning || right.updatedAt - left.updatedAt;
-    });
-    const visible = subagentsExpanded ? rows : rows.slice(0, 5);
-    return <div className="panel-card subagents-section">
-      <div className="subagents-head">
-        <h3>{t("Subagents")}</h3>
-        <span className="subagents-indicator">{tf("{count} running", { count: String(subagentRunning.length) })}</span>
+    function renderSubagentDetail(name: string) {
+    const agent = agents[name];
+    if (!agent) return <p className="panel-note">{t("Not found.")}</p>;
+    return <div className="subagent-detail">
+      <h4>{t("Subagents")}</h4>
+      <div className="subagent-breadcrumb">
+        <button type="button" className="link-button" onClick={() => setSubagentView(null)}>← {t("Back")}</button>
+        <span>{agentPath(agents, name)}</span>
       </div>
+      <ul className="subagent-transcript">{agent.messages.length === 0
+        ? <li className="panel-note">{t("No messages yet.")}</li>
+        : agent.messages.map((message, index) => <li key={index} data-role={message.role}><strong>{message.role === "user" ? t("You") : agent.name}</strong><span>{message.content}</span></li>)}</ul>
+    </div>;
+  }
+
+  function renderJobsSection() {
+    const active = sortJobs(jobs).slice(0, 4);
+    return <section className="session-section">
+      <h4><span className="section-grip" draggable onDragStart={() => { draggingRef.current = "jobs"; setDraggingSection("jobs"); }} onDragEnd={() => setDraggingSection(null)} title={t("Drag to reorder")}>⠿</span>{t("Jobs")}</h4>
+      {active.length === 0
+        ? <p className="panel-note">{t("No jobs running.")}</p>
+        : <ul className="subagent-list">{active.map((job) => <li key={job.id} className="subagent-row" data-state={job.status}>
+            <i className="subagent-dot" data-state={job.status === "running" ? "running" : job.status === "failed" ? "failed" : "idle"} aria-hidden="true" />
+            <div className="subagent-main">
+              <strong>{job.title || job.command || job.id}</strong>
+              <small>{t(job.status === "running" ? "Running" : job.status === "failed" ? "Failed" : "Done")} · {formatDuration(Math.max(0, ((job.finishedAt || Date.now()) - job.startedAt) / 1000))}</small>
+              {job.error && <p className="subagent-error">{job.error}</p>}
+            </div>
+          </li>)}</ul>}
+    </section>;
+  }
+
+  function renderSubagentsSection() {
+    if (subagentView) return <section className="session-section">{renderSubagentDetail(subagentView)}</section>;
+    const rows = treeRows(agents);
+    const visible = subagentsExpanded ? rows : rows.slice(0, 5);
+    return <section className="session-section">
+      <div className="subagents-head"><h4><span className="section-grip" draggable onDragStart={() => { draggingRef.current = "subagents"; setDraggingSection("subagents"); }} onDragEnd={() => setDraggingSection(null)} title={t("Drag to reorder")}>⠿</span>{t("Subagents")}</h4>
+        <span className="subagents-indicator">{tf("{count} running", { count: String(subagentRunning.length) })}</span></div>
       {rows.length === 0
         ? <p className="panel-note">{t("No subagents in this conversation.")}</p>
         : <ul className="subagent-list">{visible.map((row) => {
             const running = subagentRunning.includes(row.name);
+            const expanded = expandedAgents.includes(row.name);
             const activity = row.lastError ? t("Failed") : running ? t("Running") : t("Idle");
-            return <li key={row.name} className="subagent-row" data-state={row.lastError ? "error" : running ? "running" : "idle"}>
+            return <li key={row.name} className="subagent-row" data-state={row.lastError ? "error" : running ? "running" : "idle"} style={{ paddingLeft: row.depth * 14 }}>
+              {row.children > 0
+                ? <button type="button" className="subagent-chevron" aria-expanded={expanded} aria-label={t("Expand")} onClick={() => setExpandedAgents((current) => expanded ? current.filter((item) => item !== row.name) : current.concat([row.name]))}>{expanded ? "▾" : "▸"}</button>
+                : <span className="subagent-chevron empty" aria-hidden="true" />}
               <i className="subagent-dot" data-state={row.lastError ? "failed" : running ? "running" : "idle"} aria-hidden="true" />
               <div className="subagent-main">
-                <strong>{row.name}</strong>
-                <small>{activity} · {tf("{count} messages", { count: String(row.messages) })}</small>
-                {row.lastError && <p className="subagent-error">{row.lastError}</p>}
+                <button type="button" className="subagent-name" onClick={() => setSubagentView(row.name)}>{row.name}</button>
+                <small>{activity} · {tf("{count} messages", { count: String(row.messages.length) })}</small>
+                <p className="subagent-facts">{tf("Updated {time}", { time: subagentTime(row.updatedAt) })}{row.lastError ? " · " + row.lastError : ""}</p>
               </div>
             </li>;
           })}</ul>}
       {rows.length > 5 && <button type="button" className="link-button" onClick={() => setSubagentsExpanded((value) => !value)}>
         {subagentsExpanded ? t("Show less") : tf("Show the other {count}", { count: String(rows.length - 5) })}
       </button>}
-    </div>;
+    </section>;
   }
-
   const contextPanel = <div className="tab-panel">
       <div className="panel-card">
         <h3>{t("System prompt")}</h3>
@@ -2741,13 +2795,18 @@ function App() {
           <button type="button" className="btn ghost icon-button" aria-label={t("Close")} onClick={() => setSessionPanelOpen(false)}>×</button>
         </header>
         <div className="session-panel-body">
-          <section className="session-section">
-            <h4>{t("Environment")}</h4>
-            <div className="panel-row"><span>{t("Working folder")}</span><strong>{filesRoot || t("No workspace selected")}</strong></div>
-            <div className="panel-row"><span>{t("Model")}</span><strong>{modelTitle}</strong></div>
-            <div className="panel-row"><span>{t("Conversation mode")}</span><strong>{composerMode === "code" ? t("Code") : t("Chat")}</strong></div>
-          </section>
-          {renderSubagentsSection()}
+          {panelOrder.map((key) => <div key={key} className={"session-section-wrap" + (draggingSection === key ? " dragging" : "")}
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={() => { moveSection(draggingRef.current || draggingSection, key); draggingRef.current = null; setDraggingSection(null); }}>
+            {key === "environment" && <section className="session-section">
+              <h4><span className="section-grip" draggable onDragStart={() => { draggingRef.current = "environment"; setDraggingSection("environment"); }} onDragEnd={() => setDraggingSection(null)} title={t("Drag to reorder")}>⠿</span>{t("Environment")}</h4>
+              <div className="panel-row"><span>{t("Working folder")}</span><strong>{filesRoot || t("No workspace selected")}</strong></div>
+              <div className="panel-row"><span>{t("Model")}</span><strong>{modelTitle}</strong></div>
+              <div className="panel-row"><span>{t("Conversation mode")}</span><strong>{composerMode === "code" ? t("Code") : t("Chat")}</strong></div>
+            </section>}
+            {key === "subagents" && renderSubagentsSection()}
+            {key === "jobs" && renderJobsSection()}
+          </div>)}
         </div>
       </aside>}
     </section>;
@@ -3494,6 +3553,7 @@ function App() {
     </section>;
   }
   // ---- automation ----------------------------------------------------------
+  const subagentTime = (ms: number): string => new Date(ms).toLocaleTimeString(lang === "zh" ? "zh-CN" : "en-US", { hour: "2-digit", minute: "2-digit" });
   const automationStamp = (ms: number): string => new Date(ms).toLocaleString(lang === "zh" ? "zh-CN" : "en-US", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
   const automationText = (task: import("../shared/protocol").AutomationTask): string => {
     const rule = task.rule;
