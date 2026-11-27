@@ -159,6 +159,11 @@
 > **`Hymnix Agent` 是本应用的内核在 CLI 形态**：`cli/agent-cli.mjs` 自己不做工具与 provider 逻辑，全部通过 `src/main/agent-bridge.ts` 的**回环桥**（每次启动随机令牌）调用主进程；危险工具在终端里问 **y/N**，对标 Claude。
 > **坑（已修）**：PTY 里不能用 `electron.exe + ELECTRON_RUN_AS_NODE` 跑脚本——ConPTY 下它不生效，进程无任何输出。必须用**系统 node**；没有 node 时该启动器显示为不可用并给出提示。
 > **限制**：本地小模型（qwen3-vl:2b / qwen3:8b）不倾向发结构化 `tool_calls`，会口述方案而不调用工具；这是模型能力问题，通路已用 `/tool` 命令确定性验证（read 自动执行、write 问 y/N、答 y 后落盘）。
+> **共享端点补了 Anthropic 协议（1.4.3 之后）**
+> `POST /v1/messages`（`server/hxcore/anthropic.py` + `gateway_core.py::_anthropic_messages`）：访客可以用 Claude Code / Anthropic SDK 直接连 A 共享的模型。转换是双向的——请求侧 system/messages/tool_use/tool_result/tools 全部映射到 Ollama，响应侧输出标准 Anthropic SSE（`message_start` → `content_block_*` → `message_delta` → `message_stop`），`tool_use` 走 `input_json_delta`，**`thinking` 转成 thinking 块**（qwen3 这类先想后答的模型否则会长时间空白）。
+> **边界**：这条端点只出模型结果，**绝不执行工具**。访客收到的 `tool_use` 由访客自己跑；`/api/tools*` 另有裸本机限制（`tools_local_only`）。
+> **单测**：`server/tests/test_anthropic.py`（7 项，行为断言），已接进 `pnpm check`（`pnpm test:anthropic`）。
+> **实测**：隔离网关 49711 + 真 Ollama，`/v1/messages` 返回 200 与完整事件序列，错误 key 401；max_tokens=512 时正文正常流出（64 时全被 thinking 吃掉——这是模型行为，不是转换错误）。
 ## 六、架构与文件地图
 
 ```

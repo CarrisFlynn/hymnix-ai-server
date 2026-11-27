@@ -2066,6 +2066,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._serve_dashboard()
             if path.startswith("/admin/"):
                 return self._admin_api(path)
+            if path == "/v1/messages" and method == "POST":
+                return self._anthropic_messages()
             return self._proxy(method, path, parsed.query)
         except BrokenPipeError:
             pass
@@ -2798,6 +2800,56 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.flush()
         except Exception:
             pass
+
+    def _anthropic_messages(self):
+        """Anthropic Messages in, shared model out.
+
+        A guest that speaks this protocol — Claude Code, the Anthropic SDKs — can
+        use a model this machine shares. Tools are returned as tool_use blocks and
+        run on the guest's own machine: the host provides the model, never the hands.
+        """
+        from hxcore import anthropic
+        if not self._api_key_ok():
+            return self._json(401, {"type": "error", "error": {"type": "authentication_error", "message": "invalid api key"}})
+        try:
+            body = self._read_body()
+            payload = json.loads(body.decode("utf-8", "ignore") or "{}")
+        except Exception:
+            return self._json(400, {"type": "error", "error": {"type": "invalid_request_error", "message": "invalid json"}})
+        if not isinstance(payload, dict):
+            return self._json(400, {"type": "error", "error": {"type": "invalid_request_error", "message": "body must be an object"}})
+        model, real_model = _resolve_model(payload)
+        if not real_model:
+            return self._json(400, {"type": "error", "error": {"type": "invalid_request_error", "message": "model is required"}})
+        upstream = anthropic.anthropic_to_upstream(payload, real_model)
+        encoded = json.dumps(upstream, ensure_ascii=False).encode("utf-8")
+        try:
+            conn, resp = _open_upstream("POST", "/api/chat", body=encoded,
+                                       headers={"Content-Type": "application/json"}, timeout=1800)
+        except Exception as exc:
+            return self._json(502, {"type": "error", "error": {"type": "api_error", "message": str(exc)[:300]}})
+        try:
+            if resp.status != 200:
+                detail = resp.read()[:400].decode("utf-8", "replace")
+                return self._json(resp.status, {"type": "error", "error": {"type": "api_error", "message": detail}})
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            for event in anthropic.start_events(real_model):
+                self.wfile.write(event.encode("utf-8"))
+            for event in anthropic.stream_from_ollama(resp, real_model):
+                self.wfile.write(event.encode("utf-8"))
+                self.wfile.flush()
+            self.close_connection = True
+        except Exception:
+            traceback.print_exc()
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
     def _openai_tools(self, payload, ua):
         """同源串行化：同一客户端同时只处理一条，避免显存抖动"""
