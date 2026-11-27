@@ -32,7 +32,7 @@
 | 本地分支 | `main`，远端 `origin` = CarrisFlynn/hymnix-ai-server |
 | 本地领先远端 | **9 个提交**（见下），**未推送** |
 | 已发布到 GitHub 的版本 | v1.4.0、v1.4.1、v1.4.2（三个 Release 都有 4 个附件） |
-| 未发布的新能力 | shell.run、fs.edit、patch.apply、term.*、subagent.run、agent.*、goal.*、skill.*、code.*、job.*、schedule.*、会话面板 |
+| 未发布的新能力 | shell.run、fs.edit、patch.apply、term.*、subagent.run、agent.*、goal.*、skill.*、code.*、job.*、schedule.*、web.search、ask_user_question、present、会话面板 |
 | 测试 | `pnpm check` = **85 项全过**，typecheck 过，设计令牌过，对比度 279/279 |
 | 本地产物 | `release/` 下 1.3.3 / 1.4.0 / 1.4.1 / 1.4.2 四套 Setup+Portable |
 | gh CLI | `C:\Program Files\GitHub CLI\gh.exe`，已登录 `CarrisFlynn`（scope: repo） |
@@ -87,6 +87,10 @@
 | 会话面板 | 右侧浮层：环境 / 子智能体 / 任务 | 截图 `docs/audit-1.4.0/session-panel*.png` |
 | 后台任务工具化 | `job.list` / `job.output` / `job.kill` | 真 Electron：`echo` 任务 exit 0、输出含 marker、kill 后 `cancelled` |
 | 定时任务工具化 | `schedule.list/create/update/remove` | 真 Electron：建 → 暂停（nextAt=null）→ 恢复 → 拒非法规则 → 删 |
+| 后台启动（带审批） | `job.start` | 真 Electron：抽屉弹出 → 拒绝则 0 个任务；允许则真跑、exit 0、输出含 marker |
+| 联网检索 | `web.search` | 真 Electron：`python asyncio` → bing 3 条；空查询被拒；无关查询返回 `no_relevant_results` 而非垃圾 |
+| 结构化提问 | `ask_user_question` | 真 Electron：对话框渲染、空选时提交禁用、多选回传 `buildAnswers` |
+| 交付物 | `present` | 真 Electron：真实文件校验（相对/绝对均可）、`files:stat` 拒绝不存在的路径、composer 上显示 chip |
 
 会话面板行为：DSH 风格的 header 开关、Esc/外部点击关闭、Tab 焦点陷阱、Esc 归还焦点；分区可拖拽也可用 ↑↓ 排序（存 `hymnix.panel.order.v1`）；子代理树支持 parent/缩进/展开；点名字进详情，详情内有输入框可继续对话（走同一补全通道）。
 
@@ -101,7 +105,7 @@
 5. **插件沙箱仍是黑名单**：R10 建议改成白名单驱动的 AST 校验，属架构级重构，未做。
 6. **审批还没统一策略**：DSH 是 per-session ask/never + fail-closed；我们还是网关 TTL + 渲染层 always-allow。
 7. **会话不是事件日志**：DSH 用 append-only `SessionEvent` + 迁移链；Hymnix 是 JSONL 列表管理。
-8. **没有 LSP、worktree、附件读图、ask_user_question、OTEL 导出、MCP resources、apply_patch 的 diff 格式**。
+8. **没有 LSP、worktree、附件读图、OTEL 导出、MCP resources、apply_patch 的 diff 格式**（`ask_user_question` 已于 1.4.2 后补齐）。
 9. **面板仍缺**：分区拖拽占位提示、悬停卡片（PanelDetails 那种浮层）、任务分区的取消按钮。
 
 ---
@@ -127,6 +131,10 @@
 事件化会话、可替换 capability seam、压缩 seam、统一审批策略、插件沙箱白名单化。
 
 ---
+
+> **1.4.2 之后新增的十一个工具**（都在本机验证过，未发布）：`job.start/list/output/kill`、`schedule.list/create/update/remove`、`web.search`、`ask_user_question`、`present`。模型可见工具从 13 个增到 24 个（网关另提供 19 个）。
+>
+> `web.search` 在主进程实现，**不依赖 Python 网关**。实测：DuckDuckGo 在本网络不可达；Bing 的 HTML 页对脚本请求返回无关结果，因此走 `format=rss`；Baidu 作为兜底。每个来源都要过相关性闸门，答不相关就报 `no_relevant_results`，不许把垃圾当答案。
 
 ## 六、架构与文件地图
 

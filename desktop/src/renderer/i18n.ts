@@ -1,6 +1,12 @@
 export type Lang = "en" | "zh";
 
 export const zh: Record<string, string> = {
+  "Deliverables": "交付文件",
+  "Show in folder": "在文件夹中显示",
+  "Hide deliverables": "隐藏交付文件",
+  "The model has a question": "模型有问题要问你",
+  "Or answer in your own words": "或用你自己的话回答",
+  "Send answer": "发送回答",
   "Message {name}": "给 {name} 发消息",
   "No jobs running.": "没有正在运行的任务。",
   "Drag to reorder": "拖动排序",

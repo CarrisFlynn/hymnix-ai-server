@@ -19,69 +19,86 @@ await win.setViewportSize({ width: 1440, height: 900 });
 await win.evaluate(() => window.__hymnixDev.dismissOverlays());
 for (let i = 0; i < 60; i += 1) { const boot = await win.evaluate(() => window.hymnix.bootstrap()); if (boot.ready) break; await win.waitForTimeout(500); }
 
-// ---- 1. what the model is actually offered ------------------------------
-const names = await win.evaluate(() => window.__hymnixDev.toolNames());
-const wanted = ["job.list", "job.output", "job.kill", "schedule.list", "schedule.create", "schedule.update", "schedule.remove"];
-const missing = wanted.filter((name) => !names.includes(name));
-console.log("TOOL_COUNT " + names.length);
-console.log("TOOL_NAMES " + names.join(","));
-console.log("TOOL_NEW_PRESENT " + (missing.length === 0));
-console.log("TOOL_MISSING " + (missing.join(",") || "-"));
+// ---- 1. the exact tool list the model is offered -------------------------
+const named = await win.evaluate(() => window.__hymnixDev.toolNames());
+const wanted = ["job.start", "job.list", "job.output", "job.kill", "schedule.list", "schedule.create", "schedule.update", "schedule.remove", "web.search", "ask_user_question", "present"];
+console.log("TOOL_COUNT " + named.length);
+console.log("TOOL_NEW_PRESENT " + String(wanted.every((name) => named.includes(name))));
 
-// ---- 2. job.* against a real background command --------------------------
-const started = await win.evaluate(() => window.hymnix.jobs.start({ command: 'node -e "console.log(\'job-marker-output\')"' }));
-const jobId = started.job?.id || "";
-console.log("JOB_STARTED " + Boolean(jobId));
+// ---- 2. live web.search through the real IPC ------------------------------
+const search = await win.evaluate(() => window.hymnix.web.search({ query: "python asyncio", count: 3 }));
+console.log("SEARCH_OK " + String(search.ok) + " provider=" + (search.provider || "-") + " hits=" + (search.hits || []).length);
+const empty = await win.evaluate(() => window.hymnix.web.search({ query: "   " }));
+console.log("SEARCH_EMPTY_REFUSED " + String(empty.ok === false && empty.error === "query_required"));
 
-let read = null;
+// ---- 3. ask_user_question: dialog renders, answers come back --------------
+const askPromise = win.evaluate(() => window.__hymnixDev.runTool("ask_user_question", {
+  questions: [
+    { id: "target", header: "目标文件", question: "要改哪一个渲染入口？", options: [{ label: "main.tsx", description: "应用外壳与所有页面" }, { label: "chat.tsx" }] },
+    { id: "how", question: "改完要我做哪些验证？", multi_select: true, options: [{ label: "跑 pnpm check" }, { label: "截图自查" }] },
+  ],
+}));
+await win.waitForTimeout(600);
+const dialog = await win.evaluate(() => ({
+  open: Boolean(document.querySelector(".ask-dialog")),
+  title: document.querySelector("#ask-title")?.textContent?.trim(),
+  questions: [...document.querySelectorAll(".ask-prompt p")].map((el) => el.textContent?.trim()),
+  options: [...document.querySelectorAll(".ask-option strong")].map((el) => el.textContent?.trim()),
+  submitDisabled: Boolean(document.querySelector(".ask-dialog .btn.primary")?.disabled),
+}));
+console.log("ASK_OPEN " + dialog.open + " title=" + dialog.title);
+console.log("ASK_QUESTIONS " + JSON.stringify(dialog.questions));
+console.log("ASK_SUBMIT_DISABLED_WHEN_EMPTY " + dialog.submitDisabled);
+await win.evaluate(() => { const all = document.querySelectorAll(".ask-option"); all[0]?.click(); all[2]?.click(); all[3]?.click(); });
+await win.waitForTimeout(200);
+await win.screenshot({ path: resolve(cwd, "../docs/audit-1.4.0/ask-dialog.png") });
+await win.evaluate(() => document.querySelector(".ask-dialog .btn.primary")?.click());
+const askResult = await askPromise;
+console.log("ASK_RESULT " + askResult);
+
+// ---- 4. present: real file validation, real chips -------------------------
+const presentOk = await win.evaluate(([main, handoff]) => window.__hymnixDev.runTool("present", { files: [{ path: main, description: "tools" }, { path: handoff }] }), [resolve(cwd, "src/renderer/main.tsx"), resolve(cwd, "../HANDOFF.md")]);
+console.log("PRESENT_OK " + presentOk);
+const presentBad = await win.evaluate(([missing]) => window.__hymnixDev.runTool("present", { files: [{ path: missing }] }), [resolve(cwd, "does/not/exist.ts")]);
+console.log("PRESENT_MISSING_REFUSED " + String(presentBad.includes("files_not_found")));
+const strip = await win.evaluate(() => ({
+  visible: Boolean(document.querySelector(".deliverable-strip")),
+  label: document.querySelector(".deliverable-label")?.textContent?.trim(),
+  chips: [...document.querySelectorAll(".deliverable-open span")].map((el) => el.textContent?.trim()),
+}));
+console.log("DELIVERABLES " + JSON.stringify(strip));
+await win.screenshot({ path: resolve(cwd, "../docs/audit-1.4.0/deliverables-strip.png") });
+
+// ---- 5. job.start really sits behind the approval drawer -----------------
+const jobsBefore = (await win.evaluate(() => window.hymnix.jobs.list())).jobs.length;
+const cmd = 'node -e "console.log(\'job-start-marker\')"';
+const deniedPromise = win.evaluate((command) => window.__hymnixDev.runTool("job.start", { command, title: "denied probe" }), cmd);
+await win.waitForTimeout(700);
+const drawer = await win.evaluate(() => ({
+  open: Boolean(document.querySelector(".approvals-drawer")),
+  tools: [...document.querySelectorAll(".approval-row strong")].map((el) => el.textContent?.trim()),
+  reasons: [...document.querySelectorAll(".approval-reasons")].map((el) => el.textContent?.trim()),
+}));
+console.log("JOBSTART_APPROVAL_OPEN " + drawer.open + " tools=" + JSON.stringify(drawer.tools));
+console.log("JOBSTART_REASONS " + JSON.stringify(drawer.reasons));
+await win.evaluate(() => document.querySelector(".approval-row-actions .btn.danger")?.click());
+console.log("JOBSTART_DENIED " + (await deniedPromise));
+console.log("JOBS_AFTER_DENY " + (await win.evaluate(() => window.hymnix.jobs.list())).jobs.length + " (was " + jobsBefore + ")");
+
+const allowPromise = win.evaluate((command) => window.__hymnixDev.runTool("job.start", { command, title: "approved probe" }), cmd);
+await win.waitForTimeout(700);
+await win.evaluate(() => document.querySelector(".approval-row-actions .btn.primary")?.click());
+console.log("JOBSTART_APPROVED " + (await allowPromise));
+let found = null;
 for (let i = 0; i < 40; i += 1) {
-  read = await win.evaluate((id) => window.hymnix.jobs.read(id), jobId);
-  if (read.job && read.job.status !== "running") break;
+  const list = (await win.evaluate(() => window.hymnix.jobs.list())).jobs;
+  found = list.find((job) => job.title === "approved probe");
+  if (found && found.status !== "running") break;
   await win.waitForTimeout(250);
 }
-console.log("JOB_STATUS " + (read?.job?.status || "none"));
-console.log("JOB_EXIT " + String(read?.job?.exitCode));
-console.log("JOB_OUTPUT_HAS_MARKER " + String((read?.job?.output || "").includes("job-marker-output")));
+const read = found ? await win.evaluate((id) => window.hymnix.jobs.read(id), found.id) : null;
+console.log("JOBSTART_JOB " + (found ? found.status + " exit=" + found.exitCode : "none"));
+console.log("JOBSTART_OUTPUT " + String((read?.job?.output || "").includes("job-start-marker")));
 
-const listed = await win.evaluate(() => window.hymnix.jobs.list());
-const row = (listed.jobs || []).find((item) => item.id === jobId);
-console.log("JOB_IN_LIST " + Boolean(row) + " / rows " + (listed.jobs || []).length);
-
-const prefixRead = await win.evaluate((id) => window.hymnix.jobs.read(id.slice(0, 1)), jobId);
-console.log("JOB_UNKNOWN_ID_REFUSED " + String(!prefixRead.job));
-
-// ---- 3. a long job, then kill it (job.kill path) -------------------------
-const long = await win.evaluate(() => window.hymnix.jobs.start({ command: 'node -e "setTimeout(()=>{},60000)"' }));
-const longId = long.job?.id || "";
-await win.waitForTimeout(600);
-const runningRow = (await win.evaluate(() => window.hymnix.jobs.list())).jobs.find((item) => item.id === longId);
-console.log("JOB_RUNNING " + (runningRow?.status || "none"));
-const killed = await win.evaluate((id) => window.hymnix.jobs.stop(id), longId);
-console.log("JOB_KILL_OK " + String(killed.ok));
-await win.waitForTimeout(400);
-const killedRow = (await win.evaluate(() => window.hymnix.jobs.list())).jobs.find((item) => item.id === longId);
-console.log("JOB_AFTER_KILL " + (killedRow?.status || "gone"));
-
-// ---- 4. schedule.* against the real store -------------------------------
-const created = await win.evaluate(() => window.hymnix.automation.create({ title: "probe-task", prompt: "probe prompt", rule: { kind: "every", seconds: 600 } }));
-const taskId = created.task?.id || "";
-console.log("SCHEDULE_CREATED " + Boolean(taskId) + " nextAt=" + String(created.task?.nextAt));
-
-const tasks = await win.evaluate(() => window.hymnix.automation.list());
-console.log("SCHEDULE_LISTED " + String((tasks.tasks || []).some((item) => item.id === taskId)));
-
-const paused = await win.evaluate((id) => window.hymnix.automation.update(id, { enabled: false }), taskId);
-console.log("SCHEDULE_PAUSED " + String(paused.ok && paused.task?.enabled === false && paused.task?.nextAt === null));
-
-const resumed = await win.evaluate((id) => window.hymnix.automation.update(id, { enabled: true, title: "probe-renamed" }), taskId);
-console.log("SCHEDULE_RESUMED " + String(resumed.ok && resumed.task?.enabled === true && resumed.task?.title === "probe-renamed"));
-
-const bad = await win.evaluate((id) => window.hymnix.automation.update(id, { rule: { kind: "every", seconds: 5 } }), taskId);
-console.log("SCHEDULE_BAD_RULE_REFUSED " + String(bad.ok === false && bad.error === "frequency_too_high"));
-
-const removed = await win.evaluate((id) => window.hymnix.automation.remove(id), taskId);
-const after = await win.evaluate(() => window.hymnix.automation.list());
-console.log("SCHEDULE_REMOVED " + String(removed.ok && !(after.tasks || []).some((item) => item.id === taskId)));
-
-await win.screenshot({ path: resolve(cwd, "../docs/audit-1.4.0/agent-ops-probe.png") });
+await win.evaluate(() => document.querySelector(".approvals-drawer .btn.ghost")?.click());
 await app.close();

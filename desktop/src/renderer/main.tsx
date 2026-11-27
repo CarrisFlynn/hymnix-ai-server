@@ -21,6 +21,8 @@ import { DEFAULT_SHORTCUTS, bindingKeycaps, eventBinding, findConflicts, matches
 import { activeStep, applyTodos, attachEvidence, createPlan, formatDuration as formatPlanDuration, markStep, planPercent, planStats, type PlanState, type PlanStep, type PlanStatus } from "./lib/plan.js";
 import { activeJobCount, filterJobs, findJob, formatElapsed, jobElapsed, jobForModel, jobStatusLabel, mergeJob, sortJobs, summarizeJob, tailOutput } from "./lib/jobs.js";
 import { buildSchedulePatch, isEmptyPatch, scheduleForModel, summarizeTask } from "./lib/schedule-view.js";
+import { allSkipped, buildAnswers, normalizeQuestions, type AskQuestion } from "./lib/ask.js";
+import { leafName, normalizeDeliverables, type Deliverable } from "./lib/deliverables.js";
 import { createToolCallCollector } from "./lib/tool-stream.js";
 
 declare global { interface Window { hymnix: DesktopApi } }
@@ -71,6 +73,10 @@ const PLATFORM = typeof navigator !== "undefined" && /Mac/i.test(navigator.platf
 const SUBAGENT_TOOL_SPEC = { type: "function", function: { name: "subagent.run", description: "Delegate a self-contained task to a fresh context. The subagent cannot call tools; it reasons and returns text.", parameters: { type: "object", properties: { prompt: { type: "string" }, system: { type: "string" } }, required: ["prompt"], additionalProperties: false } } };
 const GOAL_TOOL_SPEC = { type: "function", function: { name: "goal.write", description: "Set the objective of this conversation's goal, or update its status/budget.", parameters: { type: "object", properties: { objective: { type: "string" }, status: { type: "string", enum: ["active", "paused", "complete"] }, maxRounds: { type: "number" } }, additionalProperties: false } } };
 const GOAL_READ_SPEC = { type: "function", function: { name: "goal.read", description: "Read the current goal, its status and remaining rounds.", parameters: { type: "object", properties: {}, additionalProperties: false } } };
+const ASK_USER_SPEC = { type: "function", function: { name: "ask_user_question", description: "Ask the user up to 4 questions and wait for the answer. Use it when a choice changes what you do next and you cannot decide it from the code. Each question may offer options (multi_select allows several); the user can always answer in their own words instead.", parameters: { type: "object", properties: { questions: { type: "array", items: { type: "object", properties: { id: { type: "string" }, question: { type: "string" }, header: { type: "string", description: "Short label, 1-3 words" }, options: { type: "array", items: { type: "object", properties: { label: { type: "string" }, description: { type: "string" } }, required: ["label"] } }, multi_select: { type: "boolean" } }, required: ["question"] } } }, required: ["questions"], additionalProperties: false } } };
+const PRESENT_SPEC = { type: "function", function: { name: "present", description: "Declare up to 4 files as the finished deliverables of this turn, so the user can open them. Paths may be workspace-relative or absolute and must already exist. Use it once at the end instead of listing files in prose.", parameters: { type: "object", properties: { files: { type: "array", items: { type: "object", properties: { path: { type: "string" }, description: { type: "string" } }, required: ["path"] } } }, required: ["files"], additionalProperties: false } } };
+const WEB_SEARCH_SPEC = { type: "function", function: { name: "web.search", description: "Search the web and get titles, URLs and snippets. Use it when you do not already know the address; follow up with web.fetch for a full page. Bing is tried first, Baidu second.", parameters: { type: "object", properties: { query: { type: "string" }, count: { type: "number", description: "1-20, default 8" }, provider: { type: "string", enum: ["auto", "bing", "baidu"] } }, required: ["query"], additionalProperties: false } } };
+const JOB_START_SPEC = { type: "function", function: { name: "job.start", description: "Run a shell command in the background and return a job id. The user must approve the command before it runs. Read the log with job.output and stop it with job.kill; the Jobs page shows the same rows.", parameters: { type: "object", properties: { command: { type: "string" }, title: { type: "string", description: "Short label for the Jobs page" }, cwd: { type: "string" } }, required: ["command"], additionalProperties: false } } };
 const JOB_LIST_SPEC = { type: "function", function: { name: "job.list", description: "List background jobs (shell commands, model downloads, gateway restarts) with status, elapsed time and exit code. Filter with status=running or status=finished.", parameters: { type: "object", properties: { status: { type: "string", enum: ["all", "running", "finished"] }, limit: { type: "number", description: "1-100, default 20" } }, additionalProperties: false } } };
 const JOB_OUTPUT_SPEC = { type: "function", function: { name: "job.output", description: "Read the tail of one background job\u0027s output. Use job.list first to get the id.", parameters: { type: "object", properties: { id: { type: "string" }, maxChars: { type: "number", description: "200-64000, default 8000" } }, required: ["id"], additionalProperties: false } } };
 const JOB_KILL_SPEC = { type: "function", function: { name: "job.kill", description: "Cancel a running background job and kill its process tree. Finished jobs cannot be killed.", parameters: { type: "object", properties: { id: { type: "string" } }, required: ["id"], additionalProperties: false } } };
@@ -493,6 +499,8 @@ function App() {
   const sessionAllowRef = useRef<Set<string>>(new Set());
   const [sessionAllow, setSessionAllow] = useState<string[]>([]);
   const approvalWaiters = useRef(new Map<string, (outcome: { decision: "approve" | "deny"; result?: unknown }) => void>());
+  /** Verdicts for tools that run in this process, so no gateway request exists. */
+  const localApprovalResolvers = useRef(new Map<string, (approved: boolean) => void>());
   const approvalsCount = useRef(0);
   // ---- jobs ----------------------------------------------------------------
   const [jobs, setJobs] = useState<import("../shared/protocol").JobView[]>([]);
@@ -516,6 +524,13 @@ function App() {
     time: string; weekdays: number[]; minutes: number; atLocal: string;
   }>(null);
   const [automationError, setAutomationError] = useState("");
+  // ask_user_question: the model blocks here until the user answers or skips.
+  const [askOpen, setAskOpen] = useState<AskQuestion[] | null>(null);
+  const [askPicked, setAskPicked] = useState<Record<string, string[]>>({});
+  const [askCustom, setAskCustom] = useState<Record<string, string>>({});
+  const askResolver = useRef<((answers: ReturnType<typeof buildAnswers>) => void) | null>(null);
+  // present: files the model declared finished, shown above the composer.
+  const [deliverables, setDeliverables] = useState<Deliverable[]>([]);
   // ---- shortcuts -----------------------------------------------------------
   const [shortcutOverrides, setShortcutOverrides] = useState<ShortcutOverrides>(readShortcuts);
   const [recordingId, setRecordingId] = useState<string | null>(null);
@@ -807,7 +822,8 @@ function App() {
     try {
       const result = await window.hymnix.tools.pending();
       const list = result.approvals || [];
-      setApprovals(list);
+      // Local approvals never reach the gateway, so a refresh must not drop them.
+      setApprovals((current) => list.concat(current.filter((row) => row.id.startsWith("local-") && !list.some((item) => item.id === row.id))));
       // A request that arrives while the window is in the background is the one
       // case where an OS notification beats the badge.
       if (list.length > approvalsCount.current && !document.hasFocus()) {
@@ -851,6 +867,16 @@ function App() {
     setAnswering((current) => current.concat([id]));
     const record = approvals.find((item) => item.id === id);
     const waiter = approvalWaiters.current.get(id);
+      const localResolve = localApprovalResolvers.current.get(id);
+      if (localResolve) {
+        localApprovalResolvers.current.delete(id);
+        setApprovals((current) => current.filter((item) => item.id !== id));
+        setApprovalsSelected((current) => current.filter((row) => row !== id));
+        if (record) archiveApproval(record, decision === "approve" ? "approved" : "denied");
+        localResolve(decision === "approve");
+        setToolCall({ status: decision === "approve" ? "success" : "error", message: decision === "approve" ? t("Approved") : t("Denied") });
+        return { ok: true };
+      }
     setApprovalsBusy(true); setApprovalsError("");
     try {
       const result = decision === "approve" ? await window.hymnix.tools.approve(id) : await window.hymnix.tools.deny(id);
@@ -891,6 +917,43 @@ function App() {
     setApprovalsSelected([]);
   }
   /** Wait for a human verdict on one request, or an auto-allow that skips it. */
+  /**
+   * Ask the human about work that happens in this process.
+   *
+   * The gateway owns approvals for gateway tools; a job started from here has no
+   * gateway request, so the record is built locally and answered through the same
+   * drawer. Nothing is executed until this resolves true.
+   */
+  /** Close the question dialog and hand the verdict back to the waiting turn. */
+  function finishAsk(skipped: boolean): void {
+    const questions = askOpen || [];
+    const answers = skipped ? questions.map((item) => ({ id: item.id, selected: [] as string[] })) : buildAnswers(questions, askPicked, askCustom);
+    const resolve = askResolver.current;
+    askResolver.current = null;
+    setAskOpen(null); setAskPicked({}); setAskCustom({});
+    resolve?.(answers);
+  }
+
+  function requestLocalApproval(tool: string, args: Record<string, unknown>, reasons: string[]): Promise<boolean> {
+    const id = "local-" + crypto.randomUUID();
+    const record: ApprovalRecord = {
+      id, requestId: id, tool, argsRedacted: args, risk: "danger", reasons,
+      createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 300_000).toISOString(),
+    };
+    return new Promise((resolve) => {
+      const timer = window.setTimeout(() => {
+        if (!localApprovalResolvers.current.has(id)) return;
+        localApprovalResolvers.current.delete(id);
+        setApprovals((current) => current.filter((row) => row.id !== id));
+        resolve(false);
+      }, 300_000);
+      localApprovalResolvers.current.set(id, (approved) => { window.clearTimeout(timer); resolve(approved); });
+      setApprovals((current) => current.concat([record]));
+      setApprovalsOpen(true);
+      setApprovalsTab("pending");
+    });
+  }
+
   async function waitForApproval(record: ApprovalRecord): Promise<{ decision: "approve" | "deny"; result?: unknown }> {
     const auto = alwaysAllow.includes(record.tool) || sessionAllowRef.current.has(record.tool);
     if (auto) {
@@ -926,7 +989,7 @@ function App() {
   }
   const toolSpecs = useMemo(() => {
     const advertised = tools.filter((item) => ADVERTISED_TOOLS.has(item.name)).map((item) => ({ type: "function" as const, function: { name: item.name, description: item.description, parameters: item.schema } }));
-    return [TODO_TOOL_SPEC, SUBAGENT_TOOL_SPEC, AGENT_SPAWN_SPEC, AGENT_SEND_SPEC, AGENT_LIST_SPEC, AGENT_CLOSE_SPEC, CODE_OUTLINE_SPEC, CODE_DEFINITION_SPEC, CODE_REFERENCES_SPEC, GOAL_TOOL_SPEC, GOAL_READ_SPEC, SKILL_LIST_SPEC, SKILL_LOAD_SPEC, JOB_LIST_SPEC, JOB_OUTPUT_SPEC, JOB_KILL_SPEC, SCHEDULE_LIST_SPEC, SCHEDULE_CREATE_SPEC, SCHEDULE_UPDATE_SPEC, SCHEDULE_REMOVE_SPEC, ...advertised];
+    return [TODO_TOOL_SPEC, SUBAGENT_TOOL_SPEC, AGENT_SPAWN_SPEC, AGENT_SEND_SPEC, AGENT_LIST_SPEC, AGENT_CLOSE_SPEC, CODE_OUTLINE_SPEC, CODE_DEFINITION_SPEC, CODE_REFERENCES_SPEC, GOAL_TOOL_SPEC, GOAL_READ_SPEC, SKILL_LIST_SPEC, SKILL_LOAD_SPEC, ASK_USER_SPEC, PRESENT_SPEC, WEB_SEARCH_SPEC, JOB_START_SPEC, JOB_LIST_SPEC, JOB_OUTPUT_SPEC, JOB_KILL_SPEC, SCHEDULE_LIST_SPEC, SCHEDULE_CREATE_SPEC, SCHEDULE_UPDATE_SPEC, SCHEDULE_REMOVE_SPEC, ...advertised];
   }, [tools]);
   useEffect(() => { toolSpecsRef.current = toolSpecs; }, [toolSpecs]);
   /**
@@ -1026,6 +1089,59 @@ function App() {
       if (!loaded.ok) return JSON.stringify({ ok: false, error: loaded.error || "not_found" });
       recordEvidence({ kind: "tool", title: "skill.load", detail: String(loaded.id || ""), status: "ok", durationMs: Math.round(performance.now() - started) });
       return JSON.stringify({ ok: true, id: loaded.id, content: loaded.content });
+    }
+    if (call.name === "ask_user_question") {
+      const questions = normalizeQuestions(args.questions);
+      if (!questions.length) return JSON.stringify({ ok: false, error: "questions_required" });
+      setAskPicked({}); setAskCustom({});
+      const answers = await new Promise<ReturnType<typeof buildAnswers>>((resolve) => {
+        askResolver.current = resolve;
+        setAskOpen(questions);
+      });
+      recordEvidence({ kind: "tool", title: "ask_user_question", detail: questions.map((item) => item.question).join(" · ").slice(0, 140), status: "ok", durationMs: Math.round(performance.now() - started) });
+      return JSON.stringify({ ok: true, answers });
+    }
+    if (call.name === "present") {
+      const rows = normalizeDeliverables(args.files);
+      if (!rows.length) return JSON.stringify({ ok: false, error: "files_required" });
+      const checked: Array<{ path: string; description: string; ok: boolean; error?: string }> = [];
+      for (const row of rows) {
+        const stat = await window.hymnix.files.stat(row.path).catch((reason: unknown) => ({ ok: false, error: String(reason) } as { ok: boolean; error?: string }));
+        checked.push({ ...row, ok: stat.ok !== false && (stat as { isDir?: boolean }).isDir !== true, ...(stat.ok === false ? { error: (stat as { error?: string }).error || "not_found" } : {}) });
+      }
+      const good = checked.filter((row) => row.ok).map(({ path, description }) => ({ path, description }));
+      if (!good.length) return JSON.stringify({ ok: false, error: "files_not_found", files: checked.map((row) => ({ path: row.path, error: row.error })) });
+      setDeliverables((current) => good.concat(current.filter((row) => !good.some((item) => item.path === row.path))).slice(0, 4));
+      recordEvidence({ kind: "tool", title: "present", detail: good.map((row) => row.path).join(", ").slice(0, 140), status: "ok", durationMs: Math.round(performance.now() - started) });
+      return JSON.stringify({ ok: true, files: good, ...(good.length < checked.length ? { skipped: checked.filter((row) => !row.ok).map((row) => row.path) } : {}) });
+    }
+    if (call.name === "web.search") {
+      const found = await window.hymnix.web.search({
+        query: String(args.query || ""),
+        count: Number(args.count) || 8,
+        provider: (args.provider === "bing" || args.provider === "baidu" ? args.provider : "auto") as "auto" | "bing" | "baidu",
+      }).catch((reason: unknown) => ({ ok: false, provider: undefined as string | undefined, query: undefined as string | undefined, hits: [] as Array<{ title: string; url: string; snippet: string }>, error: String(reason) }));
+      if (!found.ok) {
+        recordEvidence({ kind: "tool", title: "web.search", detail: String(found.error || "failed"), status: "error", durationMs: Math.round(performance.now() - started) });
+        return JSON.stringify({ ok: false, error: found.error || "search_unavailable" });
+      }
+      recordEvidence({ kind: "tool", title: "web.search", detail: String(args.query || "").slice(0, 120), status: "ok", durationMs: Math.round(performance.now() - started) });
+      return JSON.stringify({ ok: true, provider: found.provider, query: found.query, hits: found.hits });
+    }
+    if (call.name === "job.start") {
+      const command = String(args.command || "").trim();
+      if (!command) return JSON.stringify({ ok: false, error: "command_required" });
+      if (/[\r\n]/.test(command)) return JSON.stringify({ ok: false, error: "invalid_command" });
+      const preApproved = alwaysAllow.includes("job.start") || sessionAllowRef.current.has("job.start");
+      const approved = preApproved || await requestLocalApproval("job.start", { command: command.slice(0, 600), cwd: String(args.cwd || "").slice(0, 300) }, ["Runs a shell command that outlives this turn", "The process tree can be stopped from job.kill", "Output stays visible on the Jobs page"]);
+      if (!approved) {
+        recordEvidence({ kind: "approval", title: "job.start", detail: command.slice(0, 120), status: "denied", durationMs: Math.round(performance.now() - started) });
+        return JSON.stringify({ ok: false, error: "denied_by_user" });
+      }
+      const launched = await window.hymnix.jobs.start({ command, ...(args.title ? { title: String(args.title).slice(0, 120) } : {}), ...(args.cwd ? { cwd: String(args.cwd) } : {}) }).catch((reason: unknown) => ({ ok: false, error: String(reason) } as { ok: boolean; job?: JobView; error?: string }));
+      if (!launched.ok || !launched.job) return JSON.stringify({ ok: false, error: launched.error || "start_failed" });
+      recordEvidence({ kind: "tool", title: "job.start", detail: command.slice(0, 120), status: "ok", durationMs: Math.round(performance.now() - started) });
+      return JSON.stringify({ ok: true, id: launched.job.id, status: launched.job.status });
     }
     if (call.name === "job.list") {
       const listing = await window.hymnix.jobs.list().catch((reason: unknown) => ({ ok: false, jobs: [] as JobView[], error: String(reason) }));
@@ -1405,6 +1521,7 @@ function App() {
     };
   }, [modelPopover]);
   useEffect(() => { setModelPopover("closed"); setConversationMenuOpen(false); }, [active]);
+  useEffect(() => { setDeliverables([]); }, [currentSessionId]);
   // Sidebar footer: what this machine did today, straight from the saved sessions.
   useEffect(() => {
     const today = new Date().toDateString();
@@ -1437,6 +1554,11 @@ function App() {
       // pending gateway call would have produced, without pretending it is real.
       seedPlan: (todos: unknown) => updatePlan(applyTodos(planRef.current || createPlan(currentSessionId), todos)),
       seedApprovals: (rows: ApprovalRecord[]) => setApprovals(rows),
+      seedAsk: (questions: unknown) => { const normalized = normalizeQuestions(questions); if (normalized.length) { setAskPicked({}); setAskCustom({}); setAskOpen(normalized); } },
+      closeAsk: () => finishAsk(true),
+      seedDeliverables: (files: unknown) => setDeliverables(normalizeDeliverables(files)),
+      // Run one tool exactly as the model's tool loop would, for behaviour probes.
+      runTool: (name: string, args: unknown) => runToolCall({ id: "dev-" + name, name, arguments: JSON.stringify(args ?? {}) }, 0),
       setChatTab: (tab: "chat" | "context" | "plan" | "trace") => { setActive("Chat"); setChatTab(tab); },
       openApprovals: () => { setApprovalsOpen(true); setApprovalsTab("pending"); },
       openShortcuts: () => setShortcutsOpen(true),
@@ -2487,6 +2609,16 @@ function App() {
         onDragLeave={() => setDropActive(false)}
         onDrop={(event) => { event.preventDefault(); setDropActive(false); if (event.dataTransfer?.files.length) void addFiles(event.dataTransfer.files); }}>
         {editingMessageIndex !== null && <div className="editing-banner"><span>{t("Editing prompt")}</span><button type="button" onClick={() => { setEditingMessageIndex(null); setDraft(""); }}>{t("Cancel edit")}</button></div>}
+        {deliverables.length > 0 && <div className="deliverable-strip" aria-label={t("Deliverables")}>
+          <span className="deliverable-label">{t("Deliverables")}</span>
+          {deliverables.map((item) => <span className="deliverable-chip" key={item.path}>
+            <button type="button" className="deliverable-open" onClick={() => { void window.hymnix.preview.open(item.path); }} title={item.path}>
+              <Icon name="Files" /><span>{leafName(item.path)}</span>
+            </button>
+            <button type="button" className="deliverable-reveal" onClick={() => { void window.hymnix.system.reveal(item.path); }} aria-label={t("Show in folder")} data-tip={t("Show in folder")}>⋯</button>
+          </span>)}
+          <button type="button" className="deliverable-clear" onClick={() => setDeliverables([])} aria-label={t("Hide deliverables")} data-tip={t("Hide deliverables")}>×</button>
+        </div>}
         {attachments.length > 0 && <div className="attachment-strip" aria-label={t("Attachments")}>{attachments.map((item) => <span className="attachment-chip" key={item.id}><span aria-hidden="true">{item.kind === "image" ? "▣" : "▤"}</span><span className="attachment-name">{item.name}</span><small>{Math.max(1, Math.round(item.size / 1024))} KB</small><button type="button" aria-label={tf("Remove {name}", { name: item.name })} onClick={() => setAttachments((current) => current.filter((entry) => entry.id !== item.id))}>×</button></span>)}</div>}
         {slashMatches.length > 0 && <div className="slash-menu" role="listbox" aria-label={t("Slash commands")}>
           {slashMatches.map((item, index) => <button type="button" role="option" aria-selected={index === slashIndex} key={item.name} className={index === slashIndex ? "active" : ""}
@@ -4109,6 +4241,32 @@ function App() {
     {download && <ModelDownloadFooter download={download} lang={lang} remote={remoteActive()}
       onPause={() => stopModelDownload("pause")} onResume={resumeModelDownload}
       onCancel={() => stopModelDownload("cancel")} onDismiss={() => setDownload(null)} />}
+    {askOpen && <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) finishAsk(true); }}>
+      <section className="confirm-dialog ask-dialog" role="dialog" aria-modal="true" aria-labelledby="ask-title">
+        <h2 id="ask-title">{t("The model has a question")}</h2>
+        {askOpen.map((item) => <div className="ask-item" key={item.id}>
+          <div className="ask-prompt">{item.header && <span className="ask-tag">{item.header}</span>}<p>{item.question}</p></div>
+          {item.options.length > 0 && <div className="ask-options">
+            {item.options.map((option) => {
+              const picked = (askPicked[item.id] || []).includes(option.label);
+              return <button type="button" key={option.label} className={"ask-option" + (picked ? " on" : "")} aria-pressed={picked}
+                onClick={() => setAskPicked((current) => {
+                  const list = current[item.id] || [];
+                  const next = picked ? list.filter((label) => label !== option.label) : item.multiSelect ? list.concat([option.label]) : [option.label];
+                  return { ...current, [item.id]: next };
+                })}>
+                <strong>{option.label}</strong>{option.description && <small>{option.description}</small>}
+              </button>;
+            })}
+          </div>}
+          <input className="ask-custom" value={askCustom[item.id] || ""} onChange={(event) => setAskCustom((current) => ({ ...current, [item.id]: event.target.value }))} placeholder={t("Or answer in your own words")} aria-label={t("Or answer in your own words")} />
+        </div>)}
+        <div className="dialog-actions">
+          <button type="button" className="btn" onClick={() => finishAsk(true)}>{t("Skip")}</button>
+          <button type="button" className="btn primary" disabled={allSkipped(buildAnswers(askOpen, askPicked, askCustom))} onClick={() => finishAsk(false)}>{t("Send answer")}</button>
+        </div>
+      </section>
+    </div>}
     {whatsNewOpen && <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) { setWhatsNewOpen(false); try { localStorage.setItem("hymnix.whatsNew", __APP_VERSION__); } catch { /* private mode */ } } }}>
       <section className="confirm-dialog whats-new" role="dialog" aria-modal="true" aria-labelledby="whats-new-title">
         <div className="dialog-icon">✦</div>

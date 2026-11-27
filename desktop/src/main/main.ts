@@ -1,3 +1,4 @@
+import { searchWeb } from "./web-search.ts";
 import {app,BrowserWindow,Menu,Notification,Tray,WebContentsView,dialog,ipcMain,net,nativeTheme,protocol,safeStorage,screen,session,shell} from "electron";
 import {basename,extname,isAbsolute,join,relative,resolve,sep} from "node:path";
 import {pathToFileURL} from "node:url";
@@ -201,6 +202,18 @@ function parseAdminStatus(payload: unknown): AdminStatus {
 }
 function filesError(code: string, message: string): Error { return new Error(JSON.stringify({code,message})); }
 function filesRootOrThrow(): string { if (!selectedFilesRoot) throw filesError("root_not_selected","Choose a workspace root first"); return selectedFilesRoot; }
+/**
+ * Resolve a path a deliverable may name: workspace-relative when a root is set,
+ * or absolute. Reading a file is root-scoped on purpose; naming a finished
+ * artefact is not, because installers and exports live outside the workspace.
+ */
+function resolveStatPath(raw: unknown): { real: string; rel: string | null } {
+  const value = typeof raw === "string" ? raw.trim() : "";
+  if (!value || value.includes("\0") || value.length > 1000) throw filesError("invalid_path", "Path must be a non-empty string");
+  const absolute = /^[A-Za-z]:[\\/]/.test(value) || value.startsWith("\\\\") || value.startsWith("/");
+  if (absolute) { let real: string; try { real = realpathSync(value); } catch { throw filesError("not_found", "Path does not exist"); } return { real, rel: null }; }
+  return { real: validateFilePath(value), rel: value.replaceAll("\\", "/") };
+}
 function validateFilePath(raw: unknown): string { if (typeof raw !== "string" || !raw.trim()) throw filesError("invalid_path","Path must be a non-empty relative path"); if (raw.includes("\0") || raw.includes("\\") || /^[A-Za-z]:[\\/]/.test(raw) || raw.startsWith("/") || raw.startsWith("\\")) throw filesError("invalid_path","Absolute, UNC, and NUL paths are not allowed"); const root=filesRootOrThrow(); const candidate=resolve(root,raw); const rel=relative(root,candidate); if (rel.startsWith(".."+sep) || rel===".." || rel.includes(".."+sep)) throw filesError("out_of_scope","Path is outside the selected root"); let real:string; try { real=realpathSync(candidate); } catch { throw filesError("not_found","Path does not exist"); } const rr=realpathSync(root); const rrel=relative(rr,real); if (rrel.startsWith(".."+sep) || rrel===".." || /^[A-Za-z]:/.test(rrel)) throw filesError("out_of_scope","Path is outside the selected root"); return real; }
 function parseFileLimit(raw: unknown, fallback: number, max: number, name: string, minimum=1): number { if (raw===undefined) return fallback; if(typeof raw!=="number"||!Number.isInteger(raw)||raw<minimum||raw>max) throw filesError("invalid_parameter",name+" is outside the allowed range"); return raw; }
 function fileEntry(real: string, root: string): {name:string;rel:string;isDir:boolean;size:number;mtime:number;ext:string} { const info=statSync(real); const name=basename(real); return {name,rel:relative(root,real).replaceAll(sep,"/"),isDir:info.isDirectory(),size:info.isFile()?info.size:0,mtime:info.mtimeMs,ext:info.isFile()?extname(name):""}; }
@@ -223,6 +236,7 @@ function registerFilesIpc(): void {
   ipcMain.handle("files:tree", (event, raw: unknown) => { assertSender(event); const v=raw&&typeof raw==="object"?raw as Record<string,unknown>:{}; if(v.path!==undefined && (typeof v.path!=="string" || v.path!=="." && !v.path.trim())) throw filesError("invalid_path","Path must be relative"); const start=v.path===undefined||v.path==="."?filesRootOrThrow():validateFilePath(v.path); const depth=parseFileLimit(v.depth,1,fileLimits.treeDepth,"depth",0); const limit=parseFileLimit(v.limit,100,fileLimits.treeLimit,"limit"); const results:{name:string;rel:string;isDir:boolean;size:number;mtime:number;ext:string}[]=[]; const walk=(dir:string,d:number) => { if(results.length>=limit||d>depth)return; let entries; try{entries=readdirSync(dir,{withFileTypes:true});}catch{throw filesError("read_failed","Unable to read directory");} for(const e of entries){if(results.length>=limit)break; const full=join(dir,e.name); let real:string; try{real=realpathSync(full);}catch{continue;} try{const root=filesRootOrThrow(); const rr=relative(root,real); if(rr.startsWith(".."+sep)||rr==="..")continue; const rel=rr.replaceAll(sep,"/"); results.push(fileEntry(real,root)); if(e.isDirectory())walk(real,d+1);}catch{} } }; walk(start,0); return {ok:true,results,count:results.length}; });
   ipcMain.handle("files:search", (event, raw: unknown) => { assertSender(event); if(!raw||typeof raw!=="object")throw filesError("invalid_request","Search request must be an object"); const v=raw as Record<string,unknown>; if(typeof v.query!=="string"||!v.query)throw filesError("missing_required","query is required"); if(v.query.length>200)throw filesError("query_too_long","query exceeds 200 characters"); const limit=parseFileLimit(v.limit,50,fileLimits.searchLimit,"limit"); if(v.path!==undefined && (typeof v.path!=="string" || v.path!=="." && !v.path.trim())) throw filesError("invalid_path","Path must be relative"); const start=v.path===undefined||v.path==="."?filesRootOrThrow():validateFilePath(v.path); const include=typeof v.include==="string"?v.include:null; const results:{rel:string;line:number;text:string}[]=[]; const walk=(dir:string) => {if(results.length>=limit)return; let entries;try{entries=readdirSync(dir,{withFileTypes:true});}catch{return;}for(const e of entries){if(results.length>=limit)break;const full=join(dir,e.name);let real;try{real=realpathSync(full);}catch{continue;}const rootReal=filesRootOrThrow();const guard=relative(rootReal,real);if(guard.startsWith(".."+sep)||guard===".."||isAbsolute(guard))continue;const rel=guard.replaceAll(sep,"/");if(e.isDirectory())walk(real);else if((!include||rel.includes(include))){let text;try{text=readUtf8Bounded(real);}catch(error){if(error instanceof Error && error.message.includes("too_large")) continue; continue;}const index=text.indexOf(v.query as string); if(index>=0){const line=text.slice(0,index).split(/\r?\n/).length; results.push({rel,line,text:text.split(/\r?\n/)[line-1]??""});}}}};walk(start);return {ok:true,count:results.length,results}; });
   ipcMain.handle("files:read", (event, raw: unknown) => { assertSender(event); if(!raw||typeof raw!=="object")throw filesError("invalid_request","Read request must be an object"); const v=raw as Record<string,unknown>; const path=validateFilePath(v.path); const start=parseFileLimit(v.start,1,Number.MAX_SAFE_INTEGER,"start"); const lines=parseFileLimit(v.lines,100,fileLimits.readLines,"lines"); const text=readUtf8Bounded(path); const all=text.split(/\r?\n/); const end=Math.min(all.length,start+lines-1); return {ok:true,path:relative(filesRootOrThrow(),path).replaceAll(sep,"/"),start,end,total:all.length,text:all.slice(start-1,end).join("\n")}; });
+  ipcMain.handle("files:stat", (event, raw: unknown) => { assertSender(event); const v=raw&&typeof raw==="object"?raw as Record<string,unknown>:{}; const {real,rel}=resolveStatPath(v.path); const info=statSync(real); return {ok:true,path:rel||real,absolute:real,isDir:info.isDirectory(),size:info.size,mtime:Math.round(info.mtimeMs)}; });
 }
 function registerGatewayIpc(): void {
   // Health answers for the app itself: Ollama reachable? How many models?
@@ -625,6 +639,15 @@ function registerToolsIpc(): void {
  * own start path because it needs an output stream keyed by its own id; this
  * one exists so a job can outlive whatever page opened it.
  */
+/** Web search runs here, not in the gateway, so it works with the gateway stopped. */
+function registerWebIpc(): void {
+  ipcMain.handle("web:search", async (event, raw: unknown) => {
+    assertSender(event);
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error(JSON.stringify({ code: "invalid_request", message: "Invalid search request" }));
+    return await searchWeb(raw as { query?: unknown; count?: unknown; provider?: unknown });
+  });
+}
+
 function registerJobsIpc(): void {
   ipcMain.handle("jobs:list", (event) => { assertSender(event); return { ok: true, jobs: jobCenter.list() }; });
   ipcMain.handle("jobs:start", (event, raw: unknown) => {
@@ -1366,6 +1389,7 @@ registerAutomationIpc();
 registerSkillsIpc();
 registerCodeIpc();
 registerCompleteIpc();
+registerWebIpc();
 registerPluginsIpc();
 
 registerGatewayIpc();

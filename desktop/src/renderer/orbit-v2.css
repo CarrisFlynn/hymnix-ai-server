@@ -2136,3 +2136,34 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
   .jobs-layout { grid-template-columns: minmax(0, 1fr); }
   .job-output { min-height: 120px; }
 }
+
+/* ---------------------------------------------------------------------------
+ * 1.4.2 additions: ask_user_question dialog + present deliverables strip.
+ * Same tokens as the other cards; nothing here hard-codes a colour.
+ * ------------------------------------------------------------------------- */
+.deliverable-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 10px 0; }
+.deliverable-label { margin-right: 2px; color: var(--faint); font-size: calc(10.5px * var(--text-scale, 1)); letter-spacing: .04em; text-transform: uppercase; }
+.deliverable-chip { display: inline-flex; align-items: center; border: 1px solid var(--border); border-radius: 999px; overflow: hidden; background: var(--sunken); }
+.deliverable-open { display: inline-flex; align-items: center; gap: 6px; max-width: 220px; padding: 4px 10px; border: 0; background: transparent; color: var(--fg); font-size: calc(12px * var(--text-scale, 1)); cursor: pointer; }
+.deliverable-open:hover { background: var(--surface-2, var(--surface)); }
+.deliverable-open svg { width: 13px; height: 13px; flex: 0 0 auto; fill: currentColor; opacity: .65; }
+.deliverable-open span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.deliverable-reveal, .deliverable-clear { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; border: 0; background: transparent; color: var(--faint); font-size: calc(12px * var(--text-scale, 1)); cursor: pointer; }
+.deliverable-reveal { border-left: 1px solid var(--border); }
+.deliverable-reveal:hover, .deliverable-clear:hover { color: var(--fg); background: var(--surface-2, var(--surface)); }
+.deliverable-clear { margin-left: 2px; border-radius: 999px; }
+
+.ask-dialog { max-width: 560px; }
+.ask-item { display: flex; flex-direction: column; gap: 8px; padding: 12px 0; border-top: 1px solid var(--border); }
+.ask-item:first-of-type { border-top: 0; }
+.ask-prompt { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.ask-prompt p { margin: 0; color: var(--fg); font-size: calc(13px * var(--text-scale, 1)); line-height: 1.5; }
+.ask-tag { padding: 1px 7px; border-radius: 999px; background: var(--surface-2, var(--surface)); color: var(--muted); font-size: calc(10.5px * var(--text-scale, 1)); letter-spacing: .03em; }
+.ask-options { display: flex; flex-direction: column; gap: 6px; }
+.ask-option { display: flex; flex-direction: column; gap: 2px; align-items: flex-start; padding: 8px 11px; border: 1px solid var(--border); border-radius: var(--r-sm, 8px); background: var(--surface); color: var(--fg); text-align: left; cursor: pointer; }
+.ask-option:hover { border-color: var(--accent); }
+.ask-option.on { border-color: var(--accent); background: var(--surface-2, var(--surface)); box-shadow: inset 2px 0 0 var(--accent); }
+.ask-option strong { font-size: calc(12.5px * var(--text-scale, 1)); font-weight: 600; }
+.ask-option small { color: var(--muted); font-size: calc(11.5px * var(--text-scale, 1)); line-height: 1.45; }
+.ask-custom { width: 100%; padding: 8px 11px; border: 1px solid var(--border); border-radius: var(--r-sm, 8px); background: var(--surface); color: var(--fg); font-size: calc(12.5px * var(--text-scale, 1)); }
+.ask-custom::placeholder { color: var(--faint); }

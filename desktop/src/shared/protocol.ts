@@ -353,7 +353,10 @@ export type WorkspaceApi = {
   chooseCacheDir: () => Promise<{ selected: boolean; path: string }>;
 };
 
+export type FileStatResponse = { ok: boolean; path: string; absolute: string; isDir: boolean; size: number; mtime: number };
+
 export type FilesApi = {
+  stat: (path: string) => Promise<FileStatResponse>;
   tree: (request: FileTreeRequest) => Promise<FileTreeResponse>;
   search: (request: FileSearchRequest) => Promise<FileSearchResponse>;
   read: (request: FileReadRequest) => Promise<FileReadResponse>;
@@ -700,11 +703,19 @@ export type CodeNavApi = {
   references: (symbol: string) => Promise<{ ok: boolean; root?: string; hits?: SymbolHit[]; error?: string }>;
 };
 
+/** One organic search result. */
+export type WebSearchHit = { title: string; url: string; snippet: string };
+
+export type WebSearchApi = {
+  search: (input: { query: string; count?: number; provider?: "auto" | "bing" | "baidu" }) => Promise<{ ok: boolean; provider?: string; query?: string; hits?: WebSearchHit[]; error?: string }>;
+};
+
 export type DesktopApi = {
   code: CodeNavApi;
   skills: SkillsApi;
   automation: AutomationApi;
   jobs: JobsApi;
+  web: WebSearchApi;
   gateway: GatewayApi;
   workspace: WorkspaceApi;
   files: FilesApi;
