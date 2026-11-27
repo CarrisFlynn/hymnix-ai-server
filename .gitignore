@@ -78,3 +78,6 @@ lsp-server/node_modules/
 lsp-server/pnpm-lock.yaml
 
 desktop/lsp-server/
+
+# gh CLI writes its device id relative to the repo when HOME is redirected
+.local/
