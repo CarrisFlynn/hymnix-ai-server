@@ -185,4 +185,9 @@ assert.ok(main.includes('"gateway:complete"'), "subagents need one non-streaming
 assert.ok(read("../../server/hxcore/tools.py").includes('register("term.start"'), "the agent needs a persistent shell");
 assert.ok(renderer.includes('"term.write"'), "term tools must be advertised to the model");
 assert.ok(read("../../server/gateway_core.py").includes('"term.start", "term.write", "term.stop"'), "terminal mutations must be approval-gated");
+// --- named agents and code navigation ----------------------------------------
+assert.ok(renderer.includes('"agent.spawn"') && renderer.includes('"agent.send"'), "named agents must be offered to the model");
+assert.ok(renderer.includes('"code.definition"'), "symbol navigation must be offered");
+assert.ok(main.includes("code:outline"), "navigation lives in the main process");
+assert.ok(preload.includes("code: {"), "the shell must expose navigation");
 console.log("PASS: secure shell protocol/static contract");

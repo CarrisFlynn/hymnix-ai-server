@@ -7,6 +7,20 @@
 
 [English](CHANGELOG.md) | **简体中文**
 
+## [未发布] - 命名代理与符号导航（2026-11-27）
+
+对照 DSH 又补了两块：多个各有历史的代理，以及不依赖语言服务器的代码导航。
+
+### 新增
+
+- **`agent.spawn` / `agent.send` / `agent.list` / `agent.close`** —— 命名代理各自保留对话历史（最多 6 个、每个 40 条），随应用持久化。回复失败时保留用户那一轮并记录错误，下一轮仍有上下文。传输复用 `subagent.run` 的非流式通道，现在可以传整段历史。
+- **`code.outline` / `code.definition` / `code.references`** —— 对 Python、TypeScript、JavaScript 做符号扫描：文件里声明了什么、某个名字在树里哪里定义、哪些行提到它。工作区外的路径会被拒绝；返回扫描根，模型据此拼正确路径。这是扫描而非语言服务器：没有类型信息，也不解析 import。
+
+### 已验证
+
+- 导航：`streamTurn` 定位到 `src/renderer/main.tsx:927`；`consumeRound` 有 8 处引用；`code-nav.ts` 的 outline 返回了带行号的声明。
+- 代理：带完整历史的补全对本地 Ollama 返回 `代理在线`；3 项单测覆盖命名唯一、上限、失败保留与关闭。
+
 ## [未发布] - 持久终端（2026-11-27）
 
 一个能跨工具调用存活的 shell，多步命令序列不再丢状态。

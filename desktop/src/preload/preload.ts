@@ -120,6 +120,11 @@ const api: DesktopApi & { adminHistory: (adminKey: string, query?: AdminHistoryQ
     search: (request: FileSearchRequest): Promise<FileSearchResponse> => ipcRenderer.invoke("files:search", request),
     read: (request: FileReadRequest): Promise<FileReadResponse> => ipcRenderer.invoke("files:read", request),
   },
+  code: {
+    outline: (path: string) => ipcRenderer.invoke("code:outline", { path }),
+    definition: (symbol: string) => ipcRenderer.invoke("code:definition", { symbol }),
+    references: (symbol: string) => ipcRenderer.invoke("code:references", { symbol }),
+  },
   skills: {
     list: () => ipcRenderer.invoke("skills:list"),
     read: (id: string) => ipcRenderer.invoke("skills:read", id),

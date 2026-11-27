@@ -11,6 +11,7 @@ import {TerminalBridge} from "./terminal-bridge";
 import {JobCenter} from "./job-center";
 import {AutomationCenter} from "./automation";
 import {scanSkills, readSkill} from "./skills";
+import {outlineFile, findDefinition, findReferences} from "./code-nav";
 import type {AdminClientsResponse,AdminErrorRecord,AdminHistoryQuery,AdminHistoryResponse,AdminStatus,ChatDelta,GatewayHealth,GatewayMessage,GatewayModelsResponse,OllamaControlResult} from "../shared/protocol";
 
 // ---------- persistent app settings ----------
@@ -694,9 +695,21 @@ function registerCompleteIpc(): void {
     const value = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
     const prompt = typeof value.prompt === "string" ? value.prompt.trim() : "";
     const system = typeof value.system === "string" ? value.system : "";
+    // A named agent sends its whole transcript; a one-shot subagent sends a prompt.
+    const history = Array.isArray(value.messages)
+      ? (value.messages as unknown[]).flatMap((row) => {
+          if (!row || typeof row !== "object") return [];
+          const item = row as Record<string, unknown>;
+          const role = String(item.role || "");
+          const content = typeof item.content === "string" ? item.content.slice(0, 8000) : "";
+          return ["system", "user", "assistant"].includes(role) && content ? [{ role, content }] : [];
+        }).slice(-40)
+      : [];
+    if (!prompt && !history.length) throw new Error(JSON.stringify({ code: "invalid_request", message: "prompt or messages are required" }));
+    if (!history.length && !prompt) throw new Error(JSON.stringify({ code: "invalid_request", message: "prompt is required" }));
     const model = typeof value.model === "string" ? value.model : "";
     const baseUrl = typeof value.baseUrl === "string" ? value.baseUrl : "";
-    if (!prompt || !model || !baseUrl) throw new Error(JSON.stringify({ code: "invalid_request", message: "prompt, model and baseUrl are required" }));
+    if (!model || !baseUrl) throw new Error(JSON.stringify({ code: "invalid_request", message: "model and baseUrl are required" }));
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 180_000);
     let text = "";
@@ -708,10 +721,10 @@ function registerCompleteIpc(): void {
         model,
         agentId: typeof value.agentId === "string" ? value.agentId : "",
         maxTokens: typeof value.maxTokens === "number" ? value.maxTokens : 0,
-      }, [
+      }, (history.length ? history : [
         { role: "system", content: system || "You are a focused subagent. Complete only the task you are given, then reply with the result." },
         { role: "user", content: prompt.slice(0, 8000) },
-      ] as GatewayMessage[], controller.signal, (delta: ChatDelta) => {
+      ]) as GatewayMessage[], controller.signal, (delta: ChatDelta) => {
         const choice = (delta as unknown as { choices?: { delta?: { content?: string } }[] }).choices?.[0];
         if (typeof choice?.delta?.content === "string") text += choice.delta.content;
       });
@@ -721,6 +734,29 @@ function registerCompleteIpc(): void {
     } finally {
       clearTimeout(timer);
     }
+  });
+}
+
+/** Symbol navigation root: the files panel root when set, else the app folder. */
+function codeRoot(): string {
+  return (selectedFilesRoot && existsSync(selectedFilesRoot)) ? selectedFilesRoot : app.getAppPath();
+}
+
+function registerCodeIpc(): void {
+  ipcMain.handle("code:outline", (event, raw: unknown) => {
+    assertSender(event);
+    const value = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+    return outlineFile(codeRoot(), String(value.path || ""));
+  });
+  ipcMain.handle("code:definition", (event, raw: unknown) => {
+    assertSender(event);
+    const value = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+    return findDefinition(codeRoot(), String(value.symbol || ""));
+  });
+  ipcMain.handle("code:references", (event, raw: unknown) => {
+    assertSender(event);
+    const value = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+    return findReferences(codeRoot(), String(value.symbol || ""));
   });
 }
 
@@ -1323,6 +1359,7 @@ registerToolsIpc();
 registerJobsIpc();
 registerAutomationIpc();
 registerSkillsIpc();
+registerCodeIpc();
 registerCompleteIpc();
 registerPluginsIpc();
 

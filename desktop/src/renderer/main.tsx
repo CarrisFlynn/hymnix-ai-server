@@ -8,6 +8,7 @@ import brandIcon from "./assets/hymnix-red-white-star.png";
 import { THEMES, readStoredTheme, readStoredMode, applyTheme, persistTheme, persistAppearanceMode, activeMode, selectedTheme, systemMode, type AppearanceMode } from "../theme/themeManager";
 import { t, tf, getLang, setLang, type Lang } from "./i18n";
 import { applyGoalPatch, consumeRound, continuationPrompt, createGoal, shouldContinue, type Goal } from "./lib/goals.js";
+import { appendExchange, closeAgent, emptyAgents, listAgents, spawnAgent, wireMessages, type AgentMap } from "./lib/agents.js";
 import type { ChatMessage } from "./chat";
 import { ChatViewport } from "./chat-navigation";
 import { pullErrorMessage, trackDownloadProgress } from "./model-download";
@@ -71,6 +72,13 @@ const GOAL_TOOL_SPEC = { type: "function", function: { name: "goal.write", descr
 const GOAL_READ_SPEC = { type: "function", function: { name: "goal.read", description: "Read the current goal, its status and remaining rounds.", parameters: { type: "object", properties: {}, additionalProperties: false } } };
 const SKILL_LIST_SPEC = { type: "function", function: { name: "skill.list", description: "List installed skills (id, name, one-line description).", parameters: { type: "object", properties: {}, additionalProperties: false } } };
 const SKILL_LOAD_SPEC = { type: "function", function: { name: "skill.load", description: "Load one skill's full instructions by id before doing a task it covers.", parameters: { type: "object", properties: { id: { type: "string" } }, required: ["id"], additionalProperties: false } } };
+const AGENT_SPAWN_SPEC = { type: "function", function: { name: "agent.spawn", description: "Create a named agent with its own conversation history.", parameters: { type: "object", properties: { name: { type: "string" }, system: { type: "string" } }, required: ["name"], additionalProperties: false } } };
+const AGENT_SEND_SPEC = { type: "function", function: { name: "agent.send", description: "Send one message to a named agent and get its reply. The agent keeps the transcript.", parameters: { type: "object", properties: { name: { type: "string" }, message: { type: "string" } }, required: ["name", "message"], additionalProperties: false } } };
+const AGENT_LIST_SPEC = { type: "function", function: { name: "agent.list", description: "List named agents and how many turns each has.", parameters: { type: "object", properties: {}, additionalProperties: false } } };
+const AGENT_CLOSE_SPEC = { type: "function", function: { name: "agent.close", description: "Drop a named agent and its history.", parameters: { type: "object", properties: { name: { type: "string" } }, required: ["name"], additionalProperties: false } } };
+const CODE_OUTLINE_SPEC = { type: "function", function: { name: "code.outline", description: "List the declarations in one source file with line numbers.", parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"], additionalProperties: false } } };
+const CODE_DEFINITION_SPEC = { type: "function", function: { name: "code.definition", description: "Find where a symbol is declared in the workspace.", parameters: { type: "object", properties: { symbol: { type: "string" } }, required: ["symbol"], additionalProperties: false } } };
+const CODE_REFERENCES_SPEC = { type: "function", function: { name: "code.references", description: "Find every line that mentions a symbol.", parameters: { type: "object", properties: { symbol: { type: "string" } }, required: ["symbol"], additionalProperties: false } } };
 const TOOL_ROUND_LIMIT = 6;
 
 /** Evidence kept per conversation: enough to explain a turn, not a transcript. */
@@ -483,6 +491,9 @@ function App() {
   const [jobCommand, setJobCommand] = useState("");
   const [jobBusy, setJobBusy] = useState(false);
   // ---- goal (persistent objective for this conversation) --------------------
+  const [agents, setAgents] = useState<AgentMap>(emptyAgents());
+  const agentsRef = useRef<AgentMap>({});
+  agentsRef.current = agents;
   const [goal, setGoal] = useState<Goal | null>(null);
   const goalRef = useRef<Goal | null>(null);
   goalRef.current = goal;
@@ -881,7 +892,7 @@ function App() {
   }
   const toolSpecs = useMemo(() => {
     const advertised = tools.filter((item) => ADVERTISED_TOOLS.has(item.name)).map((item) => ({ type: "function" as const, function: { name: item.name, description: item.description, parameters: item.schema } }));
-    return [TODO_TOOL_SPEC, SUBAGENT_TOOL_SPEC, GOAL_TOOL_SPEC, GOAL_READ_SPEC, SKILL_LIST_SPEC, SKILL_LOAD_SPEC, ...advertised];
+    return [TODO_TOOL_SPEC, SUBAGENT_TOOL_SPEC, AGENT_SPAWN_SPEC, AGENT_SEND_SPEC, AGENT_LIST_SPEC, AGENT_CLOSE_SPEC, CODE_OUTLINE_SPEC, CODE_DEFINITION_SPEC, CODE_REFERENCES_SPEC, GOAL_TOOL_SPEC, GOAL_READ_SPEC, SKILL_LIST_SPEC, SKILL_LOAD_SPEC, ...advertised];
   }, [tools]);
   /**
    * Some local models cannot emit structured tool_calls and answer with the call
@@ -980,6 +991,56 @@ function App() {
       if (!loaded.ok) return JSON.stringify({ ok: false, error: loaded.error || "not_found" });
       recordEvidence({ kind: "tool", title: "skill.load", detail: String(loaded.id || ""), status: "ok", durationMs: Math.round(performance.now() - started) });
       return JSON.stringify({ ok: true, id: loaded.id, content: loaded.content });
+    }
+    if (call.name === "agent.spawn") {
+      const spawned = spawnAgent(agentsRef.current, String(args.name || ""), String(args.system || ""));
+      if ("error" in spawned) return JSON.stringify({ ok: false, error: spawned.error });
+      agentsRef.current = spawned.agents || {};
+      setAgents(agentsRef.current);
+      return JSON.stringify({ ok: true, name: String(args.name || "").trim() });
+    }
+    if (call.name === "agent.send") {
+      const name = String(args.name || "").trim();
+      const agent = agentsRef.current[name];
+      if (!agent) return JSON.stringify({ ok: false, error: "no_agent" });
+      const cloudTurn = source === "cloud";
+      const base = cloudTurn ? cloudBase.trim() : (remoteActive() ? serverBase.trim() : gatewayBase);
+      const key = cloudTurn ? cloudKey.trim() : (remoteActive() ? apiKey.trim() : "");
+      const turnModel = cloudTurn ? (cloudModel.trim() || model) : model;
+      const history = wireMessages(agent).concat([{ role: "user", content: String(args.message || "").slice(0, 8000) }]);
+      const reply: { ok: boolean; text?: string; error?: string } = await window.hymnix.gateway.complete({
+        baseUrl: base, apiKey: key, model: turnModel,
+        kind: cloudTurn ? providerKind : "openai",
+        agentId: cloudTurn ? agentId.trim() : "",
+        maxTokens: cloudTurn ? providerMaxTokens : 0,
+        messages: history,
+      }).catch((reason: unknown) => ({ ok: false, error: String(reason) } as { ok: boolean; text?: string; error?: string }));
+      const updated = appendExchange(agentsRef.current, name, String(args.message || ""), reply);
+      if ("error" in updated) return JSON.stringify({ ok: false, error: updated.error });
+      agentsRef.current = updated.agents || {};
+      setAgents(agentsRef.current);
+      recordEvidence({ kind: "tool", title: "agent.send " + name, detail: (reply.text || reply.error || "").slice(0, 140), status: reply.ok ? "ok" : "error", durationMs: Math.round(performance.now() - started) });
+      return JSON.stringify(reply.ok ? { ok: true, name, text: reply.text } : { ok: false, name, error: reply.error });
+    }
+    if (call.name === "agent.list") return JSON.stringify({ ok: true, agents: listAgents(agentsRef.current) });
+    if (call.name === "agent.close") {
+      const closed = closeAgent(agentsRef.current, String(args.name || "").trim());
+      if ("error" in closed) return JSON.stringify({ ok: false, error: closed.error });
+      agentsRef.current = closed.agents || {};
+      setAgents(agentsRef.current);
+      return JSON.stringify({ ok: true });
+    }
+    if (call.name === "code.outline") {
+      const result = await window.hymnix.code.outline(String(args.path || "")).catch((reason: unknown) => ({ ok: false, error: String(reason) }));
+      return JSON.stringify(result).slice(0, 20000);
+    }
+    if (call.name === "code.definition") {
+      const result = await window.hymnix.code.definition(String(args.symbol || "")).catch((reason: unknown) => ({ ok: false, error: String(reason) }));
+      return JSON.stringify(result).slice(0, 20000);
+    }
+    if (call.name === "code.references") {
+      const result = await window.hymnix.code.references(String(args.symbol || "")).catch((reason: unknown) => ({ ok: false, error: String(reason) }));
+      return JSON.stringify(result).slice(0, 20000);
     }
     if (call.name === "subagent.run") {
       const prompt = String(args.prompt || "").trim();
@@ -1313,6 +1374,16 @@ function App() {
     const timer = window.setInterval(() => setNowTick(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, [plan, jobs]);
+  // Named agents persist with the app so a delegation survives a restart.
+  useEffect(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem("hymnix.agents.v1") || "{}");
+      if (stored && typeof stored === "object" && !Array.isArray(stored)) { setAgents(stored); agentsRef.current = stored; }
+    } catch { /* start empty */ }
+  }, []);
+  useEffect(() => {
+    try { localStorage.setItem("hymnix.agents.v1", JSON.stringify(agents)); } catch { /* best effort */ }
+  }, [agents]);
   // Goals persist per conversation and one round is consumed per continuation.
   useEffect(() => {
     try {

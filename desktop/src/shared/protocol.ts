@@ -274,7 +274,7 @@ export type GatewayApi = {
   models: (apiKey: string) => Promise<GatewayModelsResponse>;
   streamChat: (input: StreamChatInput) => Promise<void>;
   /** One non-streaming completion, used by delegated subagents. */
-  complete: (input: { baseUrl: string; apiKey?: string; model: string; kind?: string; agentId?: string; maxTokens?: number; system?: string; prompt: string }) => Promise<{ ok: boolean; text?: string; error?: string }>;
+  complete: (input: { baseUrl: string; apiKey?: string; model: string; kind?: string; agentId?: string; maxTokens?: number; system?: string; prompt?: string; messages?: { role: string; content: string }[] }) => Promise<{ ok: boolean; text?: string; error?: string }>;
   cancelChat: (requestId: string) => void;
   adminStatus?: (adminKey: string) => Promise<AdminStatus>;
   adminErrors?: (adminKey: string, limit?: number) => Promise<AdminErrorRecord[]>;
@@ -690,7 +690,16 @@ export type SkillsApi = {
   read: (id: string) => Promise<{ ok: boolean; id?: string; content?: string; error?: string }>;
 };
 
+export type SymbolHit = { name: string; kind: string; file: string; line: number; preview: string };
+
+export type CodeNavApi = {
+  outline: (path: string) => Promise<{ ok: boolean; root?: string; symbols?: SymbolHit[]; error?: string }>;
+  definition: (symbol: string) => Promise<{ ok: boolean; root?: string; hits?: SymbolHit[]; error?: string }>;
+  references: (symbol: string) => Promise<{ ok: boolean; root?: string; hits?: SymbolHit[]; error?: string }>;
+};
+
 export type DesktopApi = {
+  code: CodeNavApi;
   skills: SkillsApi;
   automation: AutomationApi;
   jobs: JobsApi;

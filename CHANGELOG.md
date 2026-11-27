@@ -2,6 +2,20 @@
 
 Only user-visible changes are listed. Internal refactors, test scaffolding and machine-specific paths are intentionally omitted.
 
+## Unreleased — named agents and symbol navigation (2026-11-27)
+
+Two more capabilities from the DSH comparison: several agents with their own history, and code navigation without a language server.
+
+### Added
+
+- **`agent.spawn` / `agent.send` / `agent.list` / `agent.close`** — named agents keep their own transcript (up to six, forty messages each) and are persisted with the app. A failed reply keeps the user turn and records the error, so the next send still has context. The transport is the same non-streaming completion channel as `subagent.run`, now accepting a whole message history.
+- **`code.outline` / `code.definition` / `code.references`** — a symbol scan over Python, TypeScript and JavaScript: what a file declares, where a name is declared anywhere in the tree, and every line that mentions it. Paths outside the workspace are refused. It reports the root it scanned, so the model can form correct paths. This is a scan, not a language server: no types, no imports resolution.
+
+### Verified
+
+- Navigation: `streamTurn` resolved to `src/renderer/main.tsx:927`; `consumeRound` had eight references; an outline of `code-nav.ts` returned its declarations with line numbers.
+- Agents: a full-history completion against local Ollama returned `代理在线`; three unit tests cover uniqueness, the cap, failed-turn retention and closing.
+
 ## Unreleased — persistent terminal (2026-11-27)
 
 One shell that survives across tool calls, so a multi-step command sequence keeps its state.
