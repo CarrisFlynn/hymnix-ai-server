@@ -60,6 +60,7 @@ type ToolCallPart = { id: string; name: string; arguments: string };
 type WireMessage = {
   role: "system" | "user" | "assistant" | "tool";
   content: string;
+  images?: Array<{ mime: string; data: string }>;
   tool_calls?: Array<{ id: string; type: "function"; function: { name: string; arguments: string } }>;
   tool_call_id?: string;
 };
@@ -74,6 +75,7 @@ const PLATFORM = typeof navigator !== "undefined" && /Mac/i.test(navigator.platf
 const SUBAGENT_TOOL_SPEC = { type: "function", function: { name: "subagent.run", description: "Delegate a self-contained task to a fresh context. The subagent cannot call tools; it reasons and returns text.", parameters: { type: "object", properties: { prompt: { type: "string" }, system: { type: "string" } }, required: ["prompt"], additionalProperties: false } } };
 const GOAL_TOOL_SPEC = { type: "function", function: { name: "goal.write", description: "Set the objective of this conversation's goal, or update its status/budget.", parameters: { type: "object", properties: { objective: { type: "string" }, status: { type: "string", enum: ["active", "paused", "complete"] }, maxRounds: { type: "number" } }, additionalProperties: false } } };
 const GOAL_READ_SPEC = { type: "function", function: { name: "goal.read", description: "Read the current goal, its status and remaining rounds.", parameters: { type: "object", properties: {}, additionalProperties: false } } };
+const READ_IMAGE_SPEC = { type: "function", function: { name: "read_image", description: "Look at an image file (png, jpeg, gif, webp; max 4 MB). The picture is attached to your next turn, so this is how you read screenshots, diagrams and UI captures. Paths may be workspace-relative or absolute.", parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"], additionalProperties: false } } };
 const WORKTREE_LIST_SPEC = { type: "function", function: { name: "worktree.list", description: "List the git worktrees of the current repository, with their branch and head commit. The first row is the main checkout.", parameters: { type: "object", properties: {}, additionalProperties: false } } };
 const WORKTREE_CREATE_SPEC = { type: "function", function: { name: "worktree.create", description: "Create a sibling git worktree on a new branch, so an experiment can run without touching the current checkout. The name becomes both the branch and the folder.", parameters: { type: "object", properties: { name: { type: "string", description: "Lowercase letters, digits and dashes, 2-41 chars" }, from: { type: "string", description: "Commit, branch or tag to start from; default HEAD" } }, required: ["name"], additionalProperties: false } } };
 const WORKTREE_REMOVE_SPEC = { type: "function", function: { name: "worktree.remove", description: "Remove a worktree created by worktree.create. The main checkout is refused.", parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"], additionalProperties: false } } };
@@ -539,6 +541,8 @@ function App() {
   const askResolver = useRef<((answers: ReturnType<typeof buildAnswers>) => void) | null>(null);
   /** One in-flight delegated completion per agent, so wait and interrupt have a target. */
   const agentRunsRef = useRef(new Map<string, { requestId: string; said: string; run: Promise<{ ok: boolean; text?: string; error?: string }> }>());
+  /** Images a tool just produced, attached to the next round so the model can see them. */
+  const toolImagesRef = useRef<Array<{ mime: string; data: string; name: string }>>([]);
   // present: files the model declared finished, shown above the composer.
   const [deliverables, setDeliverables] = useState<Deliverable[]>([]);
   // ---- shortcuts -----------------------------------------------------------
@@ -999,7 +1003,7 @@ function App() {
   }
   const toolSpecs = useMemo(() => {
     const advertised = tools.filter((item) => ADVERTISED_TOOLS.has(item.name)).map((item) => ({ type: "function" as const, function: { name: item.name, description: item.description, parameters: item.schema } }));
-    return [TODO_TOOL_SPEC, SUBAGENT_TOOL_SPEC, AGENT_SPAWN_SPEC, AGENT_SEND_SPEC, AGENT_LIST_SPEC, AGENT_CLOSE_SPEC, CODE_OUTLINE_SPEC, CODE_DEFINITION_SPEC, CODE_REFERENCES_SPEC, GOAL_TOOL_SPEC, GOAL_READ_SPEC, SKILL_LIST_SPEC, SKILL_LOAD_SPEC, WORKTREE_LIST_SPEC, WORKTREE_CREATE_SPEC, WORKTREE_REMOVE_SPEC, LIST_SESSION_SPEC, SESSION_SEARCH_SPEC, AGENT_WAIT_SPEC, AGENT_INTERRUPT_SPEC, ASK_USER_SPEC, PRESENT_SPEC, WEB_SEARCH_SPEC, JOB_START_SPEC, JOB_LIST_SPEC, JOB_OUTPUT_SPEC, JOB_KILL_SPEC, SCHEDULE_LIST_SPEC, SCHEDULE_CREATE_SPEC, SCHEDULE_UPDATE_SPEC, SCHEDULE_REMOVE_SPEC, ...advertised];
+    return [TODO_TOOL_SPEC, SUBAGENT_TOOL_SPEC, AGENT_SPAWN_SPEC, AGENT_SEND_SPEC, AGENT_LIST_SPEC, AGENT_CLOSE_SPEC, CODE_OUTLINE_SPEC, CODE_DEFINITION_SPEC, CODE_REFERENCES_SPEC, GOAL_TOOL_SPEC, GOAL_READ_SPEC, SKILL_LIST_SPEC, SKILL_LOAD_SPEC, READ_IMAGE_SPEC, WORKTREE_LIST_SPEC, WORKTREE_CREATE_SPEC, WORKTREE_REMOVE_SPEC, LIST_SESSION_SPEC, SESSION_SEARCH_SPEC, AGENT_WAIT_SPEC, AGENT_INTERRUPT_SPEC, ASK_USER_SPEC, PRESENT_SPEC, WEB_SEARCH_SPEC, JOB_START_SPEC, JOB_LIST_SPEC, JOB_OUTPUT_SPEC, JOB_KILL_SPEC, SCHEDULE_LIST_SPEC, SCHEDULE_CREATE_SPEC, SCHEDULE_UPDATE_SPEC, SCHEDULE_REMOVE_SPEC, ...advertised];
   }, [tools]);
   useEffect(() => { toolSpecsRef.current = toolSpecs; }, [toolSpecs]);
   /**
@@ -1099,6 +1103,13 @@ function App() {
       if (!loaded.ok) return JSON.stringify({ ok: false, error: loaded.error || "not_found" });
       recordEvidence({ kind: "tool", title: "skill.load", detail: String(loaded.id || ""), status: "ok", durationMs: Math.round(performance.now() - started) });
       return JSON.stringify({ ok: true, id: loaded.id, content: loaded.content });
+    }
+    if (call.name === "read_image") {
+      const image = await window.hymnix.files.image(String(args.path || "")).catch((reason: unknown) => ({ ok: false, mime: undefined as string | undefined, data: undefined as string | undefined, bytes: undefined as number | undefined, path: undefined as string | undefined, error: String(reason) }));
+      if (!image.ok || !image.data || !image.mime) return JSON.stringify({ ok: false, error: image.error || "image_unreadable" });
+      toolImagesRef.current.push({ mime: image.mime, data: image.data, name: String(args.path || "").slice(0, 120) });
+      recordEvidence({ kind: "tool", title: "read_image", detail: String(image.path || "").slice(0, 120), status: "ok", durationMs: Math.round(performance.now() - started) });
+      return JSON.stringify({ ok: true, path: image.path, mime: image.mime, bytes: image.bytes, note: "The image is attached to your next turn." });
     }
     if (call.name === "worktree.list") {
       const listed = await window.hymnix.worktree.list().catch((reason: unknown) => ({ ok: false, worktrees: undefined as undefined | Array<{ path: string; branch: string; head: string; bare: boolean; current: boolean }>, error: String(reason) }));
@@ -2113,6 +2124,10 @@ function App() {
           wire.push({ role: "tool", tool_call_id: call.id, content: await runToolCall(call, round + 1) });
         }
         if (requestRef.current !== requestId) return;
+        if (toolImagesRef.current.length) {
+          const shots = toolImagesRef.current.splice(0, 4);
+          wire.push({ role: "user", content: shots.map((shot) => "[Image: " + shot.name + "]").join("\n"), images: shots.map(({ mime, data }) => ({ mime, data })) });
+        }
         // A fresh bubble for the next round, so the transcript reads turn by turn.
         setMessages((current) => [...current, { role: "assistant", content: "", at: stamp() }]);
         setFollowSignal((value) => value + 1);

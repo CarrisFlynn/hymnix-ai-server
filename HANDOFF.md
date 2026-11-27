@@ -32,7 +32,7 @@
 | 本地分支 | `main`，远端 `origin` = CarrisFlynn/hymnix-ai-server |
 | 本地领先远端 | **9 个提交**（见下），**未推送** |
 | 已发布到 GitHub 的版本 | v1.4.0、v1.4.1、v1.4.2（三个 Release 都有 4 个附件） |
-| 未发布的新能力 | shell.run、fs.edit、patch.apply、term.*、subagent.run、agent.*（含 wait/interrupt）、goal.*、skill.*、code.*、job.*、schedule.*、web.search、ask_user_question、present、session_search、list_session、worktree.*、会话面板 |
+| 未发布的新能力 | shell.run、fs.edit、patch.apply、term.*、subagent.run、agent.*（含 wait/interrupt）、goal.*、skill.*、code.*、job.*、schedule.*、web.search、ask_user_question、present、session_search、list_session、worktree.*、read_image（多模态）、会话面板 |
 | 测试 | `pnpm check` = **85 项全过**，typecheck 过，设计令牌过，对比度 279/279 |
 | 本地产物 | `release/` 下 1.3.3 / 1.4.0 / 1.4.1 / 1.4.2 四套 Setup+Portable |
 | gh CLI | `C:\Program Files\GitHub CLI\gh.exe`，已登录 `CarrisFlynn`（scope: repo） |
@@ -94,6 +94,7 @@
 | 多代理控制 | `agent.wait` / `agent.interrupt` | 真 Electron：无运行代理时立即返回空、非运行代理拒绝中断；`agent.send` 改为不阻塞 |
 | 会话检索 | `session_search` / `list_session` | 真 Electron：真实会话里搜到 `streamTurn` 并给出 snippet；空查询被拒 |
 | Git 工作树 | `worktree.list/create/remove` | 真 Electron：列出 `main @ 2d8303c`；非法名被拒；主检出不允许删除 |
+| 看图 | `read_image` | 真 Electron：真实 PNG 读出 120 KB base64；非图片按魔术字节拒绝；缺失文件报错 |
 
 会话面板行为：DSH 风格的 header 开关、Esc/外部点击关闭、Tab 焦点陷阱、Esc 归还焦点；分区可拖拽也可用 ↑↓ 排序（存 `hymnix.panel.order.v1`）；子代理树支持 parent/缩进/展开；点名字进详情，详情内有输入框可继续对话（走同一补全通道）。
 
@@ -108,7 +109,7 @@
 5. **插件沙箱仍是黑名单**：R10 建议改成白名单驱动的 AST 校验，属架构级重构，未做。
 6. **审批还没统一策略**：DSH 是 per-session ask/never + fail-closed；我们还是网关 TTL + 渲染层 always-allow。
 7. **会话不是事件日志**：DSH 用 append-only `SessionEvent` + 迁移链；Hymnix 是 JSONL 列表管理。
-8. **没有 LSP、worktree、附件读图、OTEL 导出、MCP resources、apply_patch 的 diff 格式**（`ask_user_question` 已于 1.4.2 后补齐）。
+8. **没有真 LSP、run_code（PTC）、OTEL 导出、MCP resources、apply_patch 的 diff 格式**（`ask_user_question`、`worktree.*`、`read_image` 已于 1.4.2 后补齐）。`code.*` 仍是正则扫描，对外只能叫「符号导航」。
 9. **面板仍缺**：分区拖拽占位提示、悬停卡片（PanelDetails 那种浮层）、任务分区的取消按钮。
 
 ---
@@ -135,7 +136,7 @@
 
 ---
 
-> **1.4.2 之后新增的十八个工具**（都在本机验证过，未发布）：`job.start/list/output/kill`、`schedule.list/create/update/remove`、`web.search`、`ask_user_question`、`present`。模型可见工具从 13 个增到 24 个（网关另提供 19 个）。
+> **1.4.2 之后新增的十九个工具**（都在本机验证过，未发布）：`job.start/list/output/kill`、`schedule.list/create/update/remove`、`web.search`、`ask_user_question`、`present`。模型可见工具从 13 个增到 24 个（网关另提供 19 个）。
 >
 > `web.search` 在主进程实现，**不依赖 Python 网关**。实测：DuckDuckGo 在本网络不可达；Bing 的 HTML 页对脚本请求返回无关结果，因此走 `format=rss`；Baidu 作为兜底。每个来源都要过相关性闸门，答不相关就报 `no_relevant_results`，不许把垃圾当答案。
 

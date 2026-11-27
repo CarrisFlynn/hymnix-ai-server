@@ -312,7 +312,9 @@ export function toOllamaMessages(messages: GatewayMessage[]): Array<Record<strin
       rows.push(row);
       continue;
     }
-    rows.push({ role: message.role, content: message.content ?? "" });
+    const row: Record<string, unknown> = { role: message.role, content: message.content ?? "" };
+    if (message.images?.length) row.images = message.images.map((image) => image.data);
+    rows.push(row);
   }
   return rows;
 }
@@ -368,6 +370,9 @@ export function toAnthropicChat(messages: GatewayMessage[]): { system: string; m
       continue;
     }
     if (message.content) push("user", { type: "text", text: message.content });
+    for (const image of message.images ?? []) {
+      push("user", { type: "image", source: { type: "base64", media_type: image.mime, data: image.data } });
+    }
   }
   // The API requires alternating turns and a user first.
   const flattened = turns.map((turn) => ({
@@ -441,8 +446,32 @@ async function streamOllama(config: ProviderConfig, messages: GatewayMessage[], 
   }
 }
 
+/**
+ * OpenAI-safe history. Text-only turns stay strings; a turn that carries
+ * images becomes the content-part array the Chat Completions API expects.
+ */
+export function toOpenAiMessages(messages: GatewayMessage[]): Array<Record<string, unknown>> {
+  return (messages ?? []).flatMap((message) => {
+    if (!message) return [];
+    const images = message.images ?? [];
+    const row: Record<string, unknown> = { role: message.role };
+    if (images.length) {
+      row.content = [
+        { type: "text", text: message.content ?? "" },
+        ...images.map((image) => ({ type: "image_url", image_url: { url: "data:" + image.mime + ";base64," + image.data } })),
+      ];
+    } else {
+      row.content = message.content ?? "";
+    }
+    if (message.tool_calls?.length) row.tool_calls = message.tool_calls;
+    if (message.tool_call_id) row.tool_call_id = message.tool_call_id;
+    if (message.name) row.name = message.name;
+    return [row];
+  });
+}
+
 async function streamOpenai(config: ProviderConfig, messages: GatewayMessage[], tools: unknown, signal: AbortSignal, emit: (delta: ChatDelta) => void): Promise<void> {
-  const body: Record<string, unknown> = { model: config.model, messages, stream: true };
+  const body: Record<string, unknown> = { model: config.model, messages: toOpenAiMessages(messages), stream: true };
   if (config.reasoningEffort) body.reasoning_effort = config.reasoningEffort;
   if (config.maxTokens > 0) body.max_tokens = config.maxTokens;
   // Tools go out verbatim; the model answers with tool_calls deltas, which the

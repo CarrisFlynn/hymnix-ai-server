@@ -208,6 +208,30 @@ function filesRootOrThrow(): string { if (!selectedFilesRoot) throw filesError("
  * or absolute. Reading a file is root-scoped on purpose; naming a finished
  * artefact is not, because installers and exports live outside the workspace.
  */
+/**
+ * One image for the model, as base64. Reads the same way a deliverable path
+ * does (workspace-relative or absolute) and refuses anything that is not a
+ * real image by magic bytes, because the extension is not evidence.
+ */
+const IMAGE_MIME: Array<{ mime: string; magic: number[] }> = [
+  { mime: "image/png", magic: [0x89, 0x50, 0x4e, 0x47] },
+  { mime: "image/jpeg", magic: [0xff, 0xd8, 0xff] },
+  { mime: "image/gif", magic: [0x47, 0x49, 0x46, 0x38] },
+  { mime: "image/webp", magic: [0x52, 0x49, 0x46, 0x46] },
+];
+const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+
+function readImageForModel(rawPath: unknown): { ok: boolean; mime?: string; data?: string; bytes?: number; path?: string; error?: string } {
+  const { real, rel } = resolveStatPath(rawPath);
+  const info = statSync(real);
+  if (info.isDirectory()) return { ok: false, error: "is_a_directory" };
+  if (info.size > MAX_IMAGE_BYTES) return { ok: false, error: "image_too_large" };
+  const bytes = readFileSync(real);
+  const match = IMAGE_MIME.find((item) => item.magic.every((byte, index) => bytes[index] === byte));
+  if (!match) return { ok: false, error: "not_an_image" };
+  return { ok: true, mime: match.mime, data: bytes.toString("base64"), bytes: info.size, path: rel || real };
+}
+
 function resolveStatPath(raw: unknown): { real: string; rel: string | null } {
   const value = typeof raw === "string" ? raw.trim() : "";
   if (!value || value.includes("\0") || value.length > 1000) throw filesError("invalid_path", "Path must be a non-empty string");
@@ -237,6 +261,7 @@ function registerFilesIpc(): void {
   ipcMain.handle("files:tree", (event, raw: unknown) => { assertSender(event); const v=raw&&typeof raw==="object"?raw as Record<string,unknown>:{}; if(v.path!==undefined && (typeof v.path!=="string" || v.path!=="." && !v.path.trim())) throw filesError("invalid_path","Path must be relative"); const start=v.path===undefined||v.path==="."?filesRootOrThrow():validateFilePath(v.path); const depth=parseFileLimit(v.depth,1,fileLimits.treeDepth,"depth",0); const limit=parseFileLimit(v.limit,100,fileLimits.treeLimit,"limit"); const results:{name:string;rel:string;isDir:boolean;size:number;mtime:number;ext:string}[]=[]; const walk=(dir:string,d:number) => { if(results.length>=limit||d>depth)return; let entries; try{entries=readdirSync(dir,{withFileTypes:true});}catch{throw filesError("read_failed","Unable to read directory");} for(const e of entries){if(results.length>=limit)break; const full=join(dir,e.name); let real:string; try{real=realpathSync(full);}catch{continue;} try{const root=filesRootOrThrow(); const rr=relative(root,real); if(rr.startsWith(".."+sep)||rr==="..")continue; const rel=rr.replaceAll(sep,"/"); results.push(fileEntry(real,root)); if(e.isDirectory())walk(real,d+1);}catch{} } }; walk(start,0); return {ok:true,results,count:results.length}; });
   ipcMain.handle("files:search", (event, raw: unknown) => { assertSender(event); if(!raw||typeof raw!=="object")throw filesError("invalid_request","Search request must be an object"); const v=raw as Record<string,unknown>; if(typeof v.query!=="string"||!v.query)throw filesError("missing_required","query is required"); if(v.query.length>200)throw filesError("query_too_long","query exceeds 200 characters"); const limit=parseFileLimit(v.limit,50,fileLimits.searchLimit,"limit"); if(v.path!==undefined && (typeof v.path!=="string" || v.path!=="." && !v.path.trim())) throw filesError("invalid_path","Path must be relative"); const start=v.path===undefined||v.path==="."?filesRootOrThrow():validateFilePath(v.path); const include=typeof v.include==="string"?v.include:null; const results:{rel:string;line:number;text:string}[]=[]; const walk=(dir:string) => {if(results.length>=limit)return; let entries;try{entries=readdirSync(dir,{withFileTypes:true});}catch{return;}for(const e of entries){if(results.length>=limit)break;const full=join(dir,e.name);let real;try{real=realpathSync(full);}catch{continue;}const rootReal=filesRootOrThrow();const guard=relative(rootReal,real);if(guard.startsWith(".."+sep)||guard===".."||isAbsolute(guard))continue;const rel=guard.replaceAll(sep,"/");if(e.isDirectory())walk(real);else if((!include||rel.includes(include))){let text;try{text=readUtf8Bounded(real);}catch(error){if(error instanceof Error && error.message.includes("too_large")) continue; continue;}const index=text.indexOf(v.query as string); if(index>=0){const line=text.slice(0,index).split(/\r?\n/).length; results.push({rel,line,text:text.split(/\r?\n/)[line-1]??""});}}}};walk(start);return {ok:true,count:results.length,results}; });
   ipcMain.handle("files:read", (event, raw: unknown) => { assertSender(event); if(!raw||typeof raw!=="object")throw filesError("invalid_request","Read request must be an object"); const v=raw as Record<string,unknown>; const path=validateFilePath(v.path); const start=parseFileLimit(v.start,1,Number.MAX_SAFE_INTEGER,"start"); const lines=parseFileLimit(v.lines,100,fileLimits.readLines,"lines"); const text=readUtf8Bounded(path); const all=text.split(/\r?\n/); const end=Math.min(all.length,start+lines-1); return {ok:true,path:relative(filesRootOrThrow(),path).replaceAll(sep,"/"),start,end,total:all.length,text:all.slice(start-1,end).join("\n")}; });
+  ipcMain.handle("files:image", (event, raw: unknown) => { assertSender(event); const v=raw&&typeof raw==="object"?raw as Record<string,unknown>:{}; return readImageForModel(v.path); });
   ipcMain.handle("files:stat", (event, raw: unknown) => { assertSender(event); const v=raw&&typeof raw==="object"?raw as Record<string,unknown>:{}; const {real,rel}=resolveStatPath(v.path); const info=statSync(real); return {ok:true,path:rel||real,absolute:real,isDir:info.isDirectory(),size:info.size,mtime:Math.round(info.mtimeMs)}; });
 }
 function registerGatewayIpc(): void {

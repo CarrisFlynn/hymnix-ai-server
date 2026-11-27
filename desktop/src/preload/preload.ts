@@ -116,6 +116,7 @@ const api: DesktopApi & { adminHistory: (adminKey: string, query?: AdminHistoryQ
     action: (request) => ipcRenderer.invoke("plugins:action", request),
   },
   files: {
+    image: (path: string): Promise<{ ok: boolean; mime?: string; data?: string; bytes?: number; path?: string; error?: string }> => ipcRenderer.invoke("files:image", { path }),
     stat: (path: string): Promise<FileStatResponse> => ipcRenderer.invoke("files:stat", { path }),
     tree: (request: FileTreeRequest): Promise<FileTreeResponse> => ipcRenderer.invoke("files:tree", request),
     search: (request: FileSearchRequest): Promise<FileSearchResponse> => ipcRenderer.invoke("files:search", request),

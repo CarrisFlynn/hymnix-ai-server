@@ -48,4 +48,15 @@ console.log("AGENT_WAIT_EMPTY " + String(waited).slice(0, 160));
 const interrupt = await win.evaluate(() => window.__hymnixDev.runTool("agent.interrupt", { name: "nobody" }));
 console.log("AGENT_INTERRUPT_NOT_RUNNING " + String(interrupt).includes("not_running"));
 
+// read_image：真实 PNG 读出 base64；非图片被拒
+const png = resolve(cwd, "../docs/audit-1.4.0/ask-dialog.png");
+const img = await win.evaluate((p) => window.hymnix.files.image(p), png);
+console.log("IMAGE_OK " + String(img.ok) + " mime=" + (img.mime || "-") + " bytes=" + String(img.bytes) + " b64len=" + String((img.data || "").length));
+const notImage = await win.evaluate((p) => window.hymnix.files.image(p), resolve(cwd, "package.json"));
+console.log("IMAGE_NON_IMAGE_REFUSED " + String(notImage.ok === false && notImage.error === "not_an_image"));
+const missingImage = await win.evaluate((p) => window.hymnix.files.image(p).catch((reason) => ({ ok: false, error: String(reason) })), resolve(cwd, "nope.png"));
+console.log("IMAGE_MISSING_REFUSED " + String(missingImage.ok === false));
+const viaTool = await win.evaluate((p) => window.__hymnixDev.runTool("read_image", { path: p }), png);
+console.log("READ_IMAGE_TOOL " + String(viaTool).slice(0, 200));
+
 await app.close();

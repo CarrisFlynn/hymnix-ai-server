@@ -38,6 +38,8 @@ export type GatewayMessage = {
   tool_calls?: GatewayToolCall[];
   /** tool turns: which call this answers. */
   tool_call_id?: string;
+  /** user turns: images the model should look at, as base64 payloads. */
+  images?: Array<{ mime: string; data: string }>;
   /** tool turns: the tool name, for dialects that match by name. */
   name?: string;
 };
@@ -358,6 +360,7 @@ export type WorkspaceApi = {
 export type FileStatResponse = { ok: boolean; path: string; absolute: string; isDir: boolean; size: number; mtime: number };
 
 export type FilesApi = {
+  image: (path: string) => Promise<{ ok: boolean; mime?: string; data?: string; bytes?: number; path?: string; error?: string }>;
   stat: (path: string) => Promise<FileStatResponse>;
   tree: (request: FileTreeRequest) => Promise<FileTreeResponse>;
   search: (request: FileSearchRequest) => Promise<FileSearchResponse>;
