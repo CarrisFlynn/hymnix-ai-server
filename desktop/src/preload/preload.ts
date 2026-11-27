@@ -131,8 +131,24 @@ const api: DesktopApi & { adminHistory: (adminKey: string, query?: AdminHistoryQ
     },
     reply: (input: { id: number; result?: unknown; error?: string }) => { ipcRenderer.send("run:reply", input); },
   },
-  lsp: {
-    query: (input: { operation: "definition" | "references" | "symbols"; file: string; line?: number; character?: number }) => ipcRenderer.invoke("lsp:query", input),
+  pty: {
+    profiles: () => ipcRenderer.invoke("pty:profiles"),
+    open: (input: { id: string; profile: string; cwd?: string; cols: number; rows: number }) => ipcRenderer.invoke("pty:open", input),
+    write: (id: string, data: string) => { ipcRenderer.send("pty:write", { id, data }); },
+    resize: (id: string, cols: number, rows: number) => { ipcRenderer.send("pty:resize", { id, cols, rows }); },
+    close: (id: string) => { ipcRenderer.send("pty:close", id); },
+    onData: (listener: (event: { id: string; data: string }) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, payload: { id: string; data: string }) => listener(payload);
+      ipcRenderer.on("pty:data", handler);
+      return () => { ipcRenderer.removeListener("pty:data", handler); };
+    },
+    onExit: (listener: (event: { id: string; exitCode: number }) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, payload: { id: string; exitCode: number }) => listener(payload);
+      ipcRenderer.on("pty:exit", handler);
+      return () => { ipcRenderer.removeListener("pty:exit", handler); };
+    },
+  },
+  lsp: {    query: (input: { operation: "definition" | "references" | "symbols"; file: string; line?: number; character?: number }) => ipcRenderer.invoke("lsp:query", input),
   },
   code: {
     outline: (path: string) => ipcRenderer.invoke("code:outline", { path }),

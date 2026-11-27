@@ -2,6 +2,7 @@ import { searchWeb } from "./web-search.ts";
 import { createWorktree, listWorktrees, removeWorktree } from "./worktree.ts";
 import { runLspQuery } from "./lsp.ts";
 import { runProgram } from "./run-code.ts";
+import { closeAllSessions, closeSession, defaultCwd, detectProfiles, openSession, resizeSession, sessionOf, writeSession } from "./pty-host.ts";
 import {app,BrowserWindow,Menu,Notification,Tray,WebContentsView,dialog,ipcMain,net,nativeTheme,protocol,safeStorage,screen,session,shell} from "electron";
 import {basename,extname,isAbsolute,join,relative,resolve,sep} from "node:path";
 import {pathToFileURL} from "node:url";
@@ -821,6 +822,58 @@ function registerRunCodeIpc(): void {
   });
 }
 
+/**
+ * The terminal page's real terminals. A session outlives tab switches; the app
+ * closes them all on quit so no orphan shell stays behind.
+ */
+function registerPtyIpc(): void {
+  ipcMain.handle("pty:profiles", (event) => { assertSender(event); return { ok: true, profiles: detectProfiles(), cwd: defaultCwd(selectedFilesRoot) }; });
+
+  ipcMain.handle("pty:open", (event, raw: unknown) => {
+    assertSender(event);
+    const v = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+    const id = String(v.id || "").slice(0, 64);
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) throw new Error(JSON.stringify({ code: "invalid_request", message: "Invalid session id" }));
+    const requested = typeof v.cwd === "string" && v.cwd.trim() ? v.cwd : defaultCwd(selectedFilesRoot);
+    const cwd = workspaceCwd(requested);
+    const opened = openSession({
+      id,
+      profile: String(v.profile || "command"),
+      cwd,
+      cols: Number(v.cols) || 80,
+      rows: Number(v.rows) || 24,
+    });
+    if (!opened.ok) return opened;
+    const session = sessionOf(id);
+    const sender = event.sender;
+    session?.term.onData((data: string) => {
+      if (!sender.isDestroyed()) sender.send("pty:data", { id, data });
+    });
+    session?.term.onExit(({ exitCode }: { exitCode: number }) => {
+      closeSession(id);
+      if (!sender.isDestroyed()) sender.send("pty:exit", { id, exitCode });
+    });
+    return opened;
+  });
+
+  ipcMain.on("pty:write", (event, raw: unknown) => {
+    try { assertSender(event); } catch { return; }
+    const v = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+    if (typeof v.data === "string") writeSession(String(v.id || ""), v.data.slice(0, 100_000));
+  });
+
+  ipcMain.on("pty:resize", (event, raw: unknown) => {
+    try { assertSender(event); } catch { return; }
+    const v = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+    resizeSession(String(v.id || ""), Number(v.cols) || 80, Number(v.rows) || 24);
+  });
+
+  ipcMain.on("pty:close", (event, rawId: unknown) => {
+    try { assertSender(event); } catch { return; }
+    if (typeof rawId === "string") closeSession(rawId);
+  });
+}
+
 /** Git worktrees live beside the checkout; the root is the one the app already uses. */
 function registerWorktreeIpc(): void {
   ipcMain.handle("worktree:list", async (event) => { assertSender(event); return await listWorktrees(workspaceCwd(undefined)); });
@@ -1550,6 +1603,7 @@ registerCompleteIpc();
 registerCompleteCancelIpc();
 registerWebIpc();
 registerWorktreeIpc();
+registerPtyIpc();
 registerRunCodeIpc();
 registerPluginsIpc();
 

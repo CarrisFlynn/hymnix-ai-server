@@ -25,6 +25,7 @@ import { allSkipped, buildAnswers, normalizeQuestions, type AskQuestion } from "
 import { leafName, normalizeDeliverables, type Deliverable } from "./lib/deliverables.js";
 import { listSessionsView, searchSessions } from "./lib/session-view.js";
 import { createToolCallCollector } from "./lib/tool-stream.js";
+import { TerminalPane } from "./TerminalPane";
 
 declare const __DEV_BUILD__: boolean;
 declare global { interface Window { hymnix: DesktopApi } }
@@ -748,6 +749,9 @@ function App() {
 
   const [termCmd, setTermCmd] = useState("");
   const [termEntries, setTermEntries] = useState<Entry[]>([]);
+  /** "command" is the original line console; "shell" is a real PTY. The page around both is unchanged. */
+  const [termMode, setTermMode] = useState<"command" | "shell">("command");
+  const [ptySession, setPtySession] = useState<string | null>(null);
   const [bridgeConnection, setBridgeConnection] = useState<{ endpoint: string; token: string } | null>(null);
   const [bridgeReplies, setBridgeReplies] = useState<TerminalBridgeReply[]>([]);
   const bridgeBusy = useRef(false);
@@ -3434,8 +3438,13 @@ function App() {
         <label>{t("Endpoint")} <input aria-label={t("Endpoint")} readOnly value={bridgeConnection.endpoint} /></label>
         <label>{t("Bridge token")} <input aria-label={t("Bridge token")} readOnly value={bridgeConnection.token} /></label>
       </details>}
+      <div className="term-mode-switch" role="tablist" aria-label={t("Terminal mode")}>
+        <button type="button" role="tab" aria-selected={termMode === "command"} className={termMode === "command" ? "active" : ""} onClick={() => setTermMode("command")}>COMMAND</button>
+        <button type="button" role="tab" aria-selected={termMode === "shell"} className={termMode === "shell" ? "active" : ""} onClick={() => setTermMode("shell")}>TERMINAL</button>
+      </div>
+      {termMode === "shell" && <TerminalPane cwd={filesRoot} onSessionChange={setPtySession} />}
       <div className="term-logbar"><span className="term-log-title">SYS.LOG <small>{visibleTermEntries.length} {t("entries")}</small></span><div className="term-logfilters">{["All", "Info", "Warn", "Error"].map((filter) => <button className={terminalFilter === filter ? "active" : ""} key={filter} onClick={() => setTerminalFilter(filter)}>{t(filter)}</button>)}</div><input ref={terminalSearchRef} className="term-search" type="search" value={terminalSearch} onChange={(event) => setTerminalSearch(event.target.value)} placeholder={tf("Search logs · {shortcut}", { shortcut: "Ctrl+F" })} aria-label={t("Search logs")} /><span className="term-logactions"><button className="term-link" onClick={() => void navigator.clipboard?.writeText(visibleTermEntries.map((item) => item.time + "  " + item.tag.toUpperCase() + "  " + item.text).join("\n"))}>{t("Copy")}</button><button className="term-link" onClick={() => { setTermEntries([]); setBridgeReplies([]); }}>{t("Clear")}</button></span></div>
-      <div className="term-body">
+      <div className={"term-body" + (termMode === "shell" ? " pane-hidden" : "")}>
         {visibleTermEntries.length === 0 ? <div className="term-line"><span className="term-time">--:--:--.---</span><span className="term-tag sys">SYS</span><span className="term-text dim">{termEntries.length ? t("No entries match these filters") : t("No output yet")}</span></div>
           : visibleTermEntries.map((item, index) => { const level = levelOf(item); return <div className="term-line" key={index}><span className="term-time">{item.time}</span><span className={"term-tag " + level}>{level.toUpperCase()}</span><span className="term-text">{item.text}</span></div>; })}
         {bridgeReplies.length > 0 && <section className="term-bridge-replies" aria-label={t("External replies")}>
@@ -3446,7 +3455,7 @@ function App() {
           </div>)}
         </section>}
       </div>
-      <form className="term-input" onSubmit={(event) => { event.preventDefault(); void runTerm(); }}>
+      <form className={"term-input" + (termMode === "shell" ? " pane-hidden" : "")} onSubmit={(event) => { event.preventDefault(); void runTerm(); }}>
         <span className="term-caret">&gt;</span>
         <input value={termCmd} onChange={(event) => setTermCmd(event.target.value)} placeholder={t("Type a command…")}
           onKeyDown={(event) => {

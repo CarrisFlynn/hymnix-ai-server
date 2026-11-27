@@ -1,6 +1,10 @@
 export type Lang = "en" | "zh";
 
 export const zh: Record<string, string> = {
+  "Terminal mode": "终端模式",
+  "Could not start this program": "无法启动该程序",
+  "Program": "程序",
+  "not installed": "未安装",
   "It can call your tools; each call goes through the usual approval check": "它可以调用你的工具，每次调用都照常走审批",
   "Node itself can touch the filesystem, which is why this needs a decision": "Node 本身就能碰文件系统，所以需要你来决定",
   "Runs a shell command that outlives this turn": "运行一条会活过本轮的命令",

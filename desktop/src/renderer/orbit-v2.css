@@ -504,7 +504,6 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 .dialog-actions .btn.danger:hover { background: var(--danger-soft); }
 
 .term-shell { min-width: 0; min-height: 0; flex: 1; overflow: auto; background: var(--term-bg); color: var(--term-fg); font-family: var(--font-mono); }
-.term-shell *, .term-shell { --term-fg: var(--term-fg); }
 .term-head, .term-status, .term-model, .term-logbar, .term-input, .term-foot { border-color: var(--border) !important; background: color-mix(in srgb, var(--term-bg) 82%, var(--surface)) !important; }
 .term-title, .term-key, .term-clock, .term-time, .term-dim, .term-foot, .term-hint { color: var(--term-muted) !important; }
 .term-title i, .term-link { color: var(--term-prompt) !important; }
@@ -2170,3 +2169,19 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 
 /* Approval payloads are clipped to 512 chars; say so instead of implying it is all. */
 .approval-truncated { margin: 6px 0 2px; color: var(--muted); font-size: calc(11.5px * var(--text-scale, 1)); }
+
+/* ---------------------------------------------------------------------------
+ * Interactive terminal: the page chrome is unchanged, only the middle becomes a
+ * real VT screen. Colours come from the existing terminal tokens.
+ * ------------------------------------------------------------------------- */
+.term-mode-switch { display: flex; gap: 6px; padding: 6px 12px 0; }
+.term-mode-switch button { padding: 3px 12px; border: 1px solid var(--border-strong); border-radius: 999px; background: transparent; color: var(--term-fg); opacity: .55; font-family: var(--font-mono); font-size: calc(10.5px * var(--text-scale, 1)); letter-spacing: .06em; cursor: pointer; }
+.term-mode-switch button:hover { opacity: .85; }
+.term-mode-switch button.active { opacity: 1; background: var(--term-bg); border-color: var(--term-fg); color: var(--term-fg); }
+.pane-hidden { display: none !important; }
+.pty-pane { display: flex; flex-direction: column; flex: 1; min-height: 0; margin: 0 12px; border: 1px solid var(--border); border-radius: var(--r-sm, 8px); overflow: hidden; background: var(--term-bg); }
+.pty-bar { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--term-bg) 82%, var(--surface)); color: var(--term-fg); }
+.pty-bar select { max-width: 220px; padding: 3px 6px; border: 1px solid var(--border-strong); border-radius: var(--r-sm, 6px); background: var(--term-bg); color: var(--term-fg); font-family: var(--font-mono); font-size: calc(11px * var(--text-scale, 1)); }
+.pty-bar .term-dim { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--term-fg); opacity: .62; }
+.pty-screen { flex: 1; min-height: 240px; padding: 6px 8px; }
+.pty-screen .xterm { height: 100%; }

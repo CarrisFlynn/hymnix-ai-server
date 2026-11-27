@@ -724,12 +724,24 @@ export type WorktreeApi = {
   create: (input: { name?: string; from?: string }) => Promise<{ ok: boolean; path?: string; branch?: string; base?: string; error?: string }>;
   remove: (input: { path: string }) => Promise<{ ok: boolean; error?: string }>;
 };
+export type TerminalProfile = { id: string; label: string; available: boolean; detail: string };
+
+export type PtyApi = {
+  profiles: () => Promise<{ ok: boolean; profiles: TerminalProfile[]; cwd: string }>;
+  open: (input: { id: string; profile: string; cwd?: string; cols: number; rows: number }) => Promise<{ ok: boolean; id?: string; pid?: number; error?: string }>;
+  write: (id: string, data: string) => void;
+  resize: (id: string, cols: number, rows: number) => void;
+  close: (id: string) => void;
+  onData: (listener: (event: { id: string; data: string }) => void) => () => void;
+  onExit: (listener: (event: { id: string; exitCode: number }) => void) => () => void;
+};
 export type DesktopApi = {
   run: {
     program: (input: { code: string; timeoutMs?: number }) => Promise<{ ok: boolean; value?: unknown; logs?: string[]; calls?: string[]; error?: string; durationMs?: number }>;
     onCall: (listener: (call: { id: number; name: string; args: unknown }) => void) => () => void;
     reply: (input: { id: number; result?: unknown; error?: string }) => void;
   };
+  pty: PtyApi;
   lsp: {
     query: (input: { operation: "definition" | "references" | "symbols"; file: string; line?: number; character?: number }) => Promise<{ ok: boolean; operation?: string; server?: string; results?: Array<{ file: string; line: number; character: number }>; error?: string; hint?: string }>;
   };
