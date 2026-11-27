@@ -46,7 +46,15 @@ def anthropic_to_upstream(payload: dict, real_model: str) -> dict:
     if system_text:
         messages.append({"role": "system", "content": system_text})
 
-    for turn in payload.get("messages") or []:
+    turns = payload.get("messages")
+    if turns is None:
+        turns = []
+    if not isinstance(turns, list):
+        # The container itself is checked too: a scalar here used to reach the loop
+        # and raise a TypeError, which came back as a 500 instead of a 400.
+        raise BadRequest("messages must be a list")
+
+    for turn in turns:
         if not isinstance(turn, dict):
             continue
         role = str(turn.get("role") or "user")

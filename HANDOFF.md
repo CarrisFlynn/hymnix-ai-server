@@ -181,6 +181,7 @@
 > ⑤ `writeExact()` 的 `.hx-*` 临时文件在 rename 失败时 `unlinkSync` 清理（此前会留下含全文的残留）。
 > **验证**：`test_anthropic.py` 增至 13 项（新增 4 项类型校验）；门禁 = 143 JS + 13 Python。隔离网关实测：`MALFORMED 400`、`BRUTE [401×8, 429, 429]`、`FILES_LOOPBACK 200 / FILES_FORWARDED 403`。
 > **测试环境注意**：本机若有其他隔离网关正在跑，`providers.test.mjs` 的端口型用例会假失败并把测试进程吊住；单独重跑即通过。跑门禁前先确保没有别的网关进程。
+> **第十三轮审计修复**：`{"messages":123}` 这类**容器本身**类型错误仍会 500——上一批只校验了 `system`/`content`/`tools`，漏了最外层 `messages`。现 `anthropic_to_upstream()` 对 `messages` 判 `isinstance(list)`，否则 `BadRequest` → **400**。实测 `messages:123 / true / "abc"` 与 `content:123` 全部 400 `invalid_request_error`。`test_anthropic.py` 增至 **14 项**。
 ## 六、架构与文件地图
 
 ```

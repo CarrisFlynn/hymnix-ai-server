@@ -129,6 +129,11 @@ class InputValidation(unittest.TestCase):
         with self.assertRaises(anthropic.BadRequest):
             anthropic.anthropic_to_upstream({"system": 5, "messages": []}, "m")
 
+    def test_a_non_list_messages_container_is_rejected(self):
+        for bad in (123, True, "abc", {"role": "user"}):
+            with self.assertRaises(anthropic.BadRequest, msg=repr(bad)):
+                anthropic.anthropic_to_upstream({"messages": bad}, "m")
+
     def test_a_normal_body_is_still_accepted(self):
         body = anthropic.anthropic_to_upstream({"system": "s", "messages": [{"role": "user", "content": "hi"}], "tools": []}, "m")
         self.assertEqual(body["messages"][0]["role"], "system")
