@@ -48,18 +48,30 @@ _SAFE_REMOTE_TOOLS = {"time.now", "calc", "fs.list", "fs.read", "fs.stat", "sysi
 
 # Tool classes for the three-level policy. Unknown tools count as exec: the most
 # restrictive class below "full".
-_TOOL_READ = {"time.now", "calc", "sysinfo", "fs.list", "fs.read", "fs.stat", "repo.tree", "repo.search", "repo.read"}
+_TOOL_READ = {"time.now", "calc", "sysinfo", "fs.list", "fs.read", "fs.stat", "repo.tree", "repo.search", "repo.read", "web.fetch"}
 # "write" means "changes this machine", so the workspace policy allows it and the
 # approval queue decides. shell.run belongs here: refusing it under the default
 # policy would make an agent-side command unusable without full access.
-_TOOL_WRITE = {"fs.write", "fs.edit", "shell.run", "term.start", "term.write", "term.stop", "fs.mkdir", "fs.move", "fs.remove", "diff.apply", "diff.rollback"}
+_TOOL_WRITE = {"fs.write", "fs.edit", "patch.apply", "shell.run", "term.start", "term.write", "term.stop", "fs.mkdir", "fs.move", "fs.remove"}
 
 
 def _tool_class(name):
+    """read: no side effects. write: changes this machine and goes through approval.
+
+    A tool the gateway actually registered (a plugin tool, for instance) is a
+    write, not exec: it is reachable and should be judged by the approval queue
+    rather than refused outright for being unknown.
+    """
     if name in _TOOL_READ:
         return "read"
     if name in _TOOL_WRITE:
         return "write"
+    try:
+        from hxcore import tools as _tools
+        if _tools.is_registered(name):
+            return "write"
+    except Exception:
+        pass
     return "exec"
 
 
@@ -1476,6 +1488,25 @@ class Handler(BaseHTTPRequestHandler):
         models = len(_ollama_models("/api/tags", timeout=1)) if online else 0
         return self._json(200, _ollama_result(True, online, models))
 
+    def _admin_workspace(self, method):
+        """The folder the desktop picked, so file and shell tools work on the project.
+
+        Without this the gateway's root is the install directory: in a packaged build
+        that is resources/, so fs.* and shell.run could only ever touch the app itself.
+        """
+        from hxcore import paths as _paths
+        if method == "GET":
+            return self._json(200, {"ok": True, "workspace": _paths.workspace_root(), "root": _paths.root_dir()})
+        body = self._read_body()
+        try:
+            payload = json.loads(body.decode("utf-8", "ignore") or "{}")
+        except Exception:
+            return self._json(400, {"ok": False, "error": "invalid_json"})
+        value = payload.get("path") if isinstance(payload, dict) else None
+        if value is not None and not isinstance(value, str):
+            return self._json(400, {"ok": False, "error": "invalid_path"})
+        chosen = _paths.set_workspace(value or "")
+        return self._json(200, {"ok": True, "workspace": chosen, "root": _paths.root_dir()})
     def _admin_config(self, method):
         if method == "GET":
             data = {key: CFG.get(key) for key in sorted(self.CONFIG_EDITABLE)}
@@ -1997,6 +2028,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._admin_ollama(method)
             if path == "/admin/config":
                 return self._admin_config(method)
+            if path == "/admin/workspace":
+                return self._admin_workspace(method)
             if path == "/admin/cloud" and method == "GET":
                 return self._admin_cloud()
             if path == "/admin/cloud" and method == "POST":
@@ -2076,8 +2109,15 @@ class Handler(BaseHTTPRequestHandler):
                     or not isinstance(args, dict)
                     or set(raw) - {"request_id", "requestId", "tool", "args"}):
                 return self._json(400, {"ok": False, "error": "invalid_request"})
-            if len(json.dumps(args, ensure_ascii=False).encode("utf-8")) > 8192:
-                return self._json(413, {"ok": False, "error": "arguments_too_large"})
+            # fs.write promises 256 KB, so an 8 KB gate rejected what the tool
+            # advertised. Content-carrying tools get a budget that matches the
+            # tool; everything else keeps the small default.
+            _ARGS_LIMIT = 8192
+            _BIG_ARGS = {"fs.write", "patch.apply", "fs.edit"}
+            _BIG_LIMIT = 1024 * 1024
+            _limit = _BIG_LIMIT if name in _BIG_ARGS else _ARGS_LIMIT
+            if len(json.dumps(args, ensure_ascii=False).encode("utf-8")) > _limit:
+                return self._json(413, {"ok": False, "error": "arguments_too_large", "limit": _limit})
             import time as _time
             from hxcore import approvals, tools as tool_registry
             # Same normalisation the execution path applies, so the digest the
@@ -2154,6 +2194,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(202, {"ok": False, "error": "approval_required",
                                     "approval": {"id": pending["approval_id"], "request_id": request_id,
                                                  "tool": name, "args": pending.get("args_redacted", {}),
+                                                 "args_meta": approvals.truncated_args(args),
                                                  "risk": decision.get("risk", "unknown"),
                                                  "reasons": decision.get("reasons", []),
                                                  "expires_at": pending.get("expires_at")}})
@@ -2178,6 +2219,7 @@ class Handler(BaseHTTPRequestHandler):
             decision = pending.get("decision") or {}
             rows.append({"id": approval_id, "request_id": pending.get("request_id"),
                          "tool": pending.get("tool"), "args": pending.get("args_redacted", {}),
+                         "args_meta": approvals.truncated_args(cached.get("args")),
                          "risk": decision.get("risk", "unknown"), "reasons": decision.get("reasons", []),
                          "created_at": pending.get("created_at"), "expires_at": pending.get("expires_at")})
         rows.sort(key=lambda row: row.get("created_at") or 0, reverse=True)

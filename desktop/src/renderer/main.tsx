@@ -4181,7 +4181,10 @@ function App() {
                   </div>
                   {row.reasons.length > 0 && <p className="approval-reasons">{row.reasons.join(" · ")}</p>}
                   <button type="button" className="link-button" onClick={() => setApprovalsExpanded(approvalsExpanded === row.id ? null : row.id)} aria-expanded={approvalsExpanded === row.id}>{t("Arguments")}</button>
-                  {approvalsExpanded === row.id && <pre className="approval-args">{JSON.stringify(row.argsRedacted || {}, null, 2)}</pre>}
+                  {approvalsExpanded === row.id && <>
+                    {row.argsMeta?.truncated && <p className="approval-truncated">{tf("Showing the first 512 characters of {total}", { total: String(row.argsMeta.totalChars) })}</p>}
+                    <pre className="approval-args">{JSON.stringify(row.argsRedacted || {}, null, 2)}</pre>
+                  </>}
                   <div className="approval-row-actions">
                     <button type="button" className="btn primary" onClick={() => void decideApproval(row.id, "approve")} disabled={approvalsBusy || answering.includes(row.id)}>{t("Allow once")}</button>
                     <button type="button" className="btn danger" onClick={() => void decideApproval(row.id, "deny")} disabled={approvalsBusy || answering.includes(row.id)}>{t("Deny")}</button>

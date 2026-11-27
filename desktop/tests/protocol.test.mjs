@@ -173,7 +173,13 @@ const agentCatalog = read("../../server/hxcore/tools.py");
 assert.ok(agentCatalog.includes('register("shell.run"'), "the agent needs a command tool");
 assert.ok(agentCatalog.includes('register("fs.edit"'), "the agent needs a structured edit tool");
 assert.ok(renderer.includes('"shell.run"') && renderer.includes('"fs.edit"'), "both tools must be advertised to the model");
-assert.ok(read("../../server/gateway_core.py").includes('"fs.edit", "shell.run"'), "both must be classified as machine-changing");
+// Was a contiguous-string match, which any reordering of the set broke; read the
+// set itself so the assertion is about membership rather than layout.
+const writeSet = (read("../../server/gateway_core.py").match(/_TOOL_WRITE = \{([^}]*)\}/) || [])[1] || "";
+assert.ok(writeSet.includes('"fs.edit"') && writeSet.includes('"shell.run"'), "both must be classified as machine-changing");
+assert.ok(writeSet.includes('"patch.apply"'), "patch.apply must be a write, not an unknown exec that the default policy denies");
+const readSet = (read("../../server/gateway_core.py").match(/_TOOL_READ = \{([^}]*)\}/) || [])[1] || "";
+assert.ok(readSet.includes('"web.fetch"'), "web.fetch changes nothing and must not be denied as an exec tool");
 // --- DSH capability slice ----------------------------------------------------
 assert.ok(renderer.includes("SUBAGENT_TOOL_SPEC"), "the model must be offered a subagent tool");
 assert.ok(renderer.includes('"goal.write"'), "goals need a write tool");

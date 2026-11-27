@@ -99,6 +99,15 @@ def _redact(value, key=""):
         return value[:512]
     return value
 
+def truncated_args(args, limit=512):
+    """How much of the argument payload the approver is actually seeing."""
+    try:
+        raw = json.dumps(args if isinstance(args, dict) else {}, ensure_ascii=False, default=str)
+    except Exception:
+        return {"truncated": False, "total_chars": 0}
+    return {"truncated": len(raw) > limit, "total_chars": len(raw)}
+
+
 def redacted_args(args):
     return _redact(args if isinstance(args, dict) else {})
 

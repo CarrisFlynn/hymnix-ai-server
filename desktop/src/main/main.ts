@@ -204,6 +204,21 @@ function parseAdminStatus(payload: unknown): AdminStatus {
   return value as AdminStatus;
 }
 function filesError(code: string, message: string): Error { return new Error(JSON.stringify({code,message})); }
+/**
+ * Tell the gateway which folder the user actually chose.
+ *
+ * The desktop picks the workspace, but the file and shell tools run in the
+ * Python gateway; in a packaged build its own root is resources/, so without
+ * this call every fs.* and shell.run landed inside the install directory.
+ */
+function publishWorkspaceToGateway(): void {
+  try {
+    const snapshot = gateway.snapshot();
+    if (!snapshot.ready) return;
+    void adminJson("admin/workspace", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: selectedFilesRoot || "" }) }).catch(() => undefined);
+  } catch { /* the gateway may not be running; the next start reads the env */ }
+}
+
 function filesRootOrThrow(): string { if (!selectedFilesRoot) throw filesError("root_not_selected","Choose a workspace root first"); return selectedFilesRoot; }
 /**
  * Resolve a path a deliverable may name: workspace-relative when a root is set,
@@ -246,7 +261,7 @@ function parseFileLimit(raw: unknown, fallback: number, max: number, name: strin
 function fileEntry(real: string, root: string): {name:string;rel:string;isDir:boolean;size:number;mtime:number;ext:string} { const info=statSync(real); const name=basename(real); return {name,rel:relative(root,real).replaceAll(sep,"/"),isDir:info.isDirectory(),size:info.isFile()?info.size:0,mtime:info.mtimeMs,ext:info.isFile()?extname(name):""}; }
 function readUtf8Bounded(path: string): string { let bytes: Buffer; try { bytes=readFileSync(path); } catch { throw filesError("not_found","File does not exist"); } if (bytes.length>fileLimits.readBytes) throw filesError("too_large","File exceeds read limit"); try { return new TextDecoder("utf-8",{fatal:true}).decode(bytes); } catch { throw filesError("binary_file","File is not valid UTF-8"); } }
 function registerFilesIpc(): void {
-  ipcMain.handle("files:choose-root", async (event) => { assertSender(event); const result=await dialog.showOpenDialog(mainWindow ?? BrowserWindow.getFocusedWindow()!,{properties:["openDirectory","createDirectory"]}); if(result.canceled||!result.filePaths[0]) return {selected:Boolean(selectedFilesRoot),path:selectedFilesRoot}; try { const root=realpathSync(result.filePaths[0]); if(!statSync(root).isDirectory()) throw new Error(); selectedFilesRoot=root; return {selected:true,path:root}; } catch { throw filesError("invalid_root","Selected root is not a directory"); } });
+  ipcMain.handle("files:choose-root", async (event) => { assertSender(event); const result=await dialog.showOpenDialog(mainWindow ?? BrowserWindow.getFocusedWindow()!,{properties:["openDirectory","createDirectory"]}); if(result.canceled||!result.filePaths[0]) return {selected:Boolean(selectedFilesRoot),path:selectedFilesRoot}; try { const root=realpathSync(result.filePaths[0]); if(!statSync(root).isDirectory()) throw new Error(); selectedFilesRoot=root; publishWorkspaceToGateway(); return {selected:true,path:root}; } catch { throw filesError("invalid_root","Selected root is not a directory"); } });
   ipcMain.handle("files:current", (event) => { assertSender(event); return {selected:Boolean(selectedFilesRoot),path:selectedFilesRoot}; });
   // Choosing where downloads are cached must not silently repoint the workspace,
   // which is also the file browser root and the terminal cwd.
@@ -813,6 +828,19 @@ function registerWorktreeIpc(): void {
     assertSender(event);
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error(JSON.stringify({ code: "invalid_request", message: "Invalid worktree request" }));
     return await removeWorktree(workspaceCwd(undefined), raw as { path?: unknown });
+  });
+}
+
+/**
+ * Last line of defence. A tool that throws from a stream callback would otherwise
+ * take the whole main process down with no trace in the log.
+ */
+function registerCrashGuards(): void {
+  process.on("uncaughtException", (error: Error) => {
+    try { console.error("[hymnix] uncaught:", error && error.stack ? error.stack : String(error)); } catch { /* logging itself failed */ }
+  });
+  process.on("unhandledRejection", (reason: unknown) => {
+    try { console.error("[hymnix] unhandled rejection:", String(reason)); } catch { /* logging itself failed */ }
   });
 }
 
@@ -1510,6 +1538,7 @@ registerJobsIpc();
 registerAutomationIpc();
 registerSkillsIpc();
 registerCodeIpc();
+registerCrashGuards();
 registerCompleteIpc();
   const bundledLsp = locateBundledLsp();
   if (bundledLsp && !process.env.HYMNIX_LSP_TYPESCRIPT) process.env.HYMNIX_LSP_TYPESCRIPT = bundledLsp;
@@ -1545,7 +1574,7 @@ if (!bootSettings.gpuAcceleration) { try { app.disableHardwareAcceleration(); } 
 const userDataDir = app.getPath("userData");
 const defaultCacheDir = join(userDataDir, "Cache");
 try { const cacheDir = bootSettings.cacheDir || defaultCacheDir; mkdirSync(cacheDir, { recursive: true }); app.setPath("cache", cacheDir); } catch { /* ignore */ }
-app.whenReady().then(async()=>{if (!hasInstanceLock) return; const bootT0=Date.now();bootLog("boot start");Menu.setApplicationMenu(null);protocol.handle("app",(request)=>{ const url=new URL(request.url); const relativePath=decodeURIComponent(url.pathname).replace(/^\/+/, "")||"index.html"; const target=join(rendererRoot,relativePath); const relCheck=relative(rendererRoot,target); if(!relCheck||relCheck.startsWith(".."+sep)||relCheck===".."||isAbsolute(relCheck)) return new Response("Forbidden",{status:403}); return net.fetch(pathToFileURL(target).toString()); });session.defaultSession.webRequest.onHeadersReceived((details,callback)=>callback({responseHeaders:{...details.responseHeaders,"Content-Security-Policy":["default-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:*; img-src 'self' data:; font-src 'self'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'"]}}));bootLog("pre-window t=" + (Date.now()-bootT0)); createWindow(); bootLog("window created t=" + (Date.now()-bootT0)); void gateway.start();app.on("activate",()=>{if(BrowserWindow.getAllWindows().length===0)createWindow();});}).catch((error)=>{console.error(error);app.quit();});
+app.whenReady().then(async()=>{if (!hasInstanceLock) return; const bootT0=Date.now();bootLog("boot start");Menu.setApplicationMenu(null);protocol.handle("app",(request)=>{ const url=new URL(request.url); const relativePath=decodeURIComponent(url.pathname).replace(/^\/+/, "")||"index.html"; const target=join(rendererRoot,relativePath); const relCheck=relative(rendererRoot,target); if(!relCheck||relCheck.startsWith(".."+sep)||relCheck===".."||isAbsolute(relCheck)) return new Response("Forbidden",{status:403}); return net.fetch(pathToFileURL(target).toString()); });session.defaultSession.webRequest.onHeadersReceived((details,callback)=>callback({responseHeaders:{...details.responseHeaders,"Content-Security-Policy":["default-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:*; img-src 'self' data:; font-src 'self'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'"]}}));bootLog("pre-window t=" + (Date.now()-bootT0)); createWindow(); bootLog("window created t=" + (Date.now()-bootT0)); void gateway.start().then(() => { publishWorkspaceToGateway(); }).catch(() => undefined);app.on("activate",()=>{if(BrowserWindow.getAllWindows().length===0)createWindow();});}).catch((error)=>{console.error(error);app.quit();});
 let allowQuit = false;
 let quitCleanup: Promise<void> | undefined;
 /**

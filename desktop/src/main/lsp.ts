@@ -10,7 +10,7 @@
  * Nothing here ships a server: the binary is discovered, never bundled.
  */
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 
 export type LspQuery = {
@@ -100,6 +100,9 @@ export function resolveInside(root: string, file: string): string | null {
   try { rootReal = realpathSync(root); } catch { return null; }
   let real: string;
   try { real = realpathSync(resolve(rootReal, value)); } catch { return null; }
+  // A directory is a valid-looking workspace-relative path, but readFileSync on one
+  // throws EISDIR inside the LSP stream callback and takes the main process with it.
+  try { if (!statSync(real).isFile()) return null; } catch { return null; }
   const rel = relative(rootReal, real);
   if (!rel || rel.startsWith("..") || isAbsolute(rel)) return null;
   return real;
@@ -218,18 +221,22 @@ export function runLspQuery(query: LspQuery, timeoutMs = DEFAULT_TIMEOUT): Promi
     } });
 
     const beginWork = () => {
-      send({ jsonrpc: "2.0", method: "initialized", params: {} });
-      send({ jsonrpc: "2.0", method: "textDocument/didOpen", params: { textDocument: {
-        uri: pathToUri(file),
-        languageId: file.endsWith(".tsx") ? "typescriptreact" : file.endsWith(".ts") ? "typescript" : "javascript",
-        version: 1,
-        text: readFileSync(file, "utf8").slice(0, 400_000),
-      } } });
-      const position = { line: Math.max(0, (query.line ?? 1) - 1), character: Math.max(0, (query.character ?? 1) - 1) };
-      if (query.operation === "symbols") {
-        send({ jsonrpc: "2.0", id: requestedId, method: "textDocument/documentSymbol", params: { textDocument: { uri: pathToUri(file) } } });
-      } else {
-        send({ jsonrpc: "2.0", id: requestedId, method: "textDocument/" + query.operation, params: { textDocument: { uri: pathToUri(file) }, position, context: { includeDeclaration: true } } });
+      try {
+        send({ jsonrpc: "2.0", method: "initialized", params: {} });
+        send({ jsonrpc: "2.0", method: "textDocument/didOpen", params: { textDocument: {
+          uri: pathToUri(file),
+          languageId: file.endsWith(".tsx") ? "typescriptreact" : file.endsWith(".ts") ? "typescript" : "javascript",
+          version: 1,
+          text: readFileSync(file, "utf8").slice(0, 400_000),
+        } } });
+        const position = { line: Math.max(0, (query.line ?? 1) - 1), character: Math.max(0, (query.character ?? 1) - 1) };
+        if (query.operation === "symbols") {
+          send({ jsonrpc: "2.0", id: requestedId, method: "textDocument/documentSymbol", params: { textDocument: { uri: pathToUri(file) } } });
+        } else {
+          send({ jsonrpc: "2.0", id: requestedId, method: "textDocument/" + query.operation, params: { textDocument: { uri: pathToUri(file) }, position, context: { includeDeclaration: true } } });
+        }
+      } catch (error) {
+        finish({ ok: false, error: "lsp_read_failed", hint: String(error instanceof Error ? error.message : error).slice(0, 200) });
       }
     };
   });

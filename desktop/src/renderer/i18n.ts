@@ -1,6 +1,7 @@
 export type Lang = "en" | "zh";
 
 export const zh: Record<string, string> = {
+  "Showing the first 512 characters of {total}": "仅显示前 512 个字符，共 {total} 个",
   "Runs a {lines}-line Node.js program in a child process": "在子进程中运行 {lines} 行的 Node.js 程序",
   "Deliverables": "交付文件",
   "Show in folder": "在文件夹中显示",

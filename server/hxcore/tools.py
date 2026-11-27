@@ -7,7 +7,7 @@ import ast, datetime, hashlib, ipaddress, json, math, os, platform, socket, stat
 from typing import Any
 import http.client
 import ssl
-from hxcore.paths import root_dir
+from hxcore.paths import root_dir, sandbox_root
 
 _resolver = socket.getaddrinfo
 
@@ -21,6 +21,11 @@ def register(name, description, schema, handler, *, danger=False, permission=Non
     _REGISTRY[name]={"name":name,"description":str(description),"schema":schema if isinstance(schema,dict) else {"type":"object","properties":{}},"danger":bool(danger),"permission":permission,"handler":handler}
     return True
 
+def is_registered(name: str) -> bool:
+    """True when a tool with this name exists in the registry (built-in or plugin)."""
+    return name in _REGISTRY
+
+
 def all_tools() -> list[dict]:
     return [{k:v for k,v in item.items() if k!="handler"} for item in _REGISTRY.values()]
 
@@ -30,7 +35,7 @@ def get(name: str) -> dict | None:
 
 def _inside_root(path: str) -> str | None:
     try:
-        root=os.path.realpath(root_dir()); target=os.path.realpath(os.path.join(root,path) if not os.path.isabs(path) else path)
+        root=os.path.realpath(sandbox_root()); target=os.path.realpath(os.path.join(root,path) if not os.path.isabs(path) else path)
         return target if os.path.commonpath((root,target))==root else None
     except Exception: return None
 
@@ -69,6 +74,43 @@ def _calc(expression: str):
         raise ToolError("expression_rejected")
     return ev(node)
 
+MAX_EDIT_BYTES = 4 * 1024 * 1024
+
+
+def _read_text_exact(path: str) -> str:
+    """Read a whole text file without translating line endings.
+
+    The old editors read 256 KB and wrote the truncated text back, which
+    silently deleted the rest of a large file; text mode then turned every
+    \\n into \\r\\n on Windows. Reading with newline=\"\" and writing bytes
+    keeps both the tail and the original line endings.
+    """
+    if os.path.getsize(path) > MAX_EDIT_BYTES:
+        raise ToolError("file_too_large")
+    try:
+        with open(path, "r", encoding="utf-8", errors="strict", newline="") as handle:
+            return handle.read()
+    except UnicodeDecodeError:
+        raise ToolError("not_utf8")
+
+
+def _write_text_exact(path: str, text: str) -> None:
+    """Atomic write of exact bytes: no newline translation, no truncation."""
+    data = text.encode("utf-8")
+    parent = os.path.dirname(path) or "."
+    fd, tmp = tempfile.mkstemp(prefix=".hymnix-", dir=parent)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
 def _fs_path(args):
     p=_inside_root(args.get("path","."))
     if p is None: raise ToolError("out_of_scope")
@@ -82,7 +124,12 @@ def _fs_list(args):
 def _fs_read(args):
     p=_fs_path(args)
     if not os.path.isfile(p): raise ToolError("not_a_file")
-    with open(p,"r",encoding="utf-8",errors="replace") as f: return f.read(256*1024)
+    # Kept under MAX_RESULT_BYTES so the wrapper's own JSON overhead still fits.
+    limit = 200 * 1024
+    with open(p, "r", encoding="utf-8", errors="replace", newline="") as f:
+        text = f.read(limit + 1)
+    cut = len(text) > limit
+    return {"path": os.path.relpath(p, sandbox_root()).replace("\\", "/"), "text": text[:limit], "truncated": cut, "bytes": os.path.getsize(p)}
 
 
 
@@ -126,7 +173,7 @@ def _term_start(args):
     threading.Thread(target=pump, daemon=True).start()
     with _TERM_LOCK:
         _TERM_SESSIONS[sid] = session
-    return {"id": sid, "shell": shell, "cwd": os.path.relpath(cwd, root_dir())}
+    return {"id": sid, "shell": shell, "cwd": os.path.relpath(cwd, sandbox_root())}
 
 
 def _term_write(args):
@@ -188,7 +235,7 @@ def _term_stop(args):
 def _term_list(args):
     with _TERM_LOCK:
         return {"sessions": [{"id": item["id"], "running": item["proc"].poll() is None,
-                              "cwd": os.path.relpath(item["cwd"], root_dir())} for item in _TERM_SESSIONS.values()]}
+                              "cwd": os.path.relpath(item["cwd"], sandbox_root())} for item in _TERM_SESSIONS.values()]}
 
 
 def _shell_run(args):
@@ -261,8 +308,7 @@ def _patch_apply(args):
             raise ToolError("find_required")
         if not isinstance(replace, str):
             raise ToolError("replace_required")
-        with open(target, "r", encoding="utf-8", errors="replace") as handle:
-            original = handle.read(256 * 1024)
+        original = _read_text_exact(target)
         count = original.count(find)
         if count == 0:
             raise ToolError("find_not_present")
@@ -272,18 +318,9 @@ def _patch_apply(args):
         prepared.append((target, updated))
     written = []
     for target, updated in prepared:
-        fd, tmp = tempfile.mkstemp(prefix=".hymnix-", dir=os.path.dirname(target) or None)
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                handle.write(updated)
-            os.replace(tmp, target)
-        except Exception:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-            raise
-        written.append({"path": os.path.relpath(target, root_dir()), "bytes": len(updated.encode("utf-8"))})
+        size_before = os.path.getsize(target)
+        _write_text_exact(target, updated)
+        written.append({"path": os.path.relpath(target, sandbox_root()).replace("\\", "/"), "before": size_before, "after": os.path.getsize(target)})
     return {"applied": written}
 
 
@@ -298,28 +335,18 @@ def _fs_edit(args):
         raise ToolError("find_required")
     if not isinstance(replace, str):
         raise ToolError("replace_required")
-    with open(p, "r", encoding="utf-8", errors="replace") as handle:
-        original = handle.read(256 * 1024)
+    original = _read_text_exact(p)
     count = original.count(find)
     if count == 0:
         raise ToolError("find_not_present")
     if count > 1 and not args.get("all"):
         raise ToolError("find_not_unique")
     updated = original.replace(find, replace) if args.get("all") else original.replace(find, replace, 1)
-    fd, tmp = tempfile.mkstemp(prefix=".hymnix-", dir=os.path.dirname(p) or None)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(updated)
-        os.replace(tmp, p)
-    except Exception:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
-    return {"path": os.path.relpath(p, root_dir()), "replaced": count if args.get("all") else 1,
-            "bytes": len(updated.encode("utf-8"))}
-
+    before = len(original.encode("utf-8"))
+    after = len(updated.encode("utf-8"))
+    _write_text_exact(p, updated)
+    root = os.path.realpath(sandbox_root())
+    return {"path": os.path.relpath(p, sandbox_root()).replace("\\", "/"), "replaced": count if args.get("all") else 1, "before": before, "after": after, "bytes": after}
 
 def _fs_write(args):
     """Write one UTF-8 file inside the workspace, atomically.
@@ -349,8 +376,8 @@ def _fs_write(args):
         except OSError:
             pass
         raise
-    root = os.path.realpath(root_dir())
-    return {"path": os.path.relpath(p, root).replace("\\", "/"), "bytes": len(data)}
+    root = os.path.realpath(sandbox_root())
+    return {"path": os.path.relpath(p, sandbox_root()).replace("\\", "/"), "bytes": len(data)}
 
 
 def _fs_stat(args):

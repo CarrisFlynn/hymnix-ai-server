@@ -440,6 +440,8 @@ export type ApprovalRecord = {
   requestId: string;
   tool: string;
   argsRedacted: Record<string, unknown>;
+  /** Whether the drawer is showing the whole payload, and how big it really is. */
+  argsMeta?: { truncated: boolean; totalChars: number };
   risk: string;
   reasons: string[];
   createdAt: string;

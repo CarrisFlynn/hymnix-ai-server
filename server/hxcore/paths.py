@@ -47,7 +47,37 @@ def root_dir() -> str:
         return app_dir() or "."
 
 
+_WORKSPACE_OVERRIDE = ""
+
+
+def set_workspace(path: str) -> str:
+    """Set the folder the desktop picked; empty clears it."""
+    global _WORKSPACE_OVERRIDE
+    value = str(path or "").strip()
+    _WORKSPACE_OVERRIDE = os.path.realpath(value) if value and os.path.isdir(value) else ""
+    return _WORKSPACE_OVERRIDE
+
+
+def workspace_root() -> str:
+    """The user's project, when the desktop told us about one."""
+    try:
+        if _WORKSPACE_OVERRIDE:
+            return _WORKSPACE_OVERRIDE
+        value = os.environ.get("HYMNIX_WORKSPACE") or ""
+        if value and os.path.isdir(value):
+            return os.path.realpath(value)
+    except Exception:
+        pass
+    return ""
+
+
+def sandbox_root() -> str:
+    """Where the file and shell tools are allowed to work: the project, else the install."""
+    return workspace_root() or root_dir()
+
+
 def data_dir() -> str:
+
     try:
         return os.environ.get("HYMNIX_DATA_DIR") or root_dir()
     except Exception:

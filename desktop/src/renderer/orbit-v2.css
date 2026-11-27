@@ -2167,3 +2167,6 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 .ask-option small { color: var(--muted); font-size: calc(11.5px * var(--text-scale, 1)); line-height: 1.45; }
 .ask-custom { width: 100%; padding: 8px 11px; border: 1px solid var(--border); border-radius: var(--r-sm, 8px); background: var(--surface); color: var(--fg); font-size: calc(12.5px * var(--text-scale, 1)); }
 .ask-custom::placeholder { color: var(--faint); }
+
+/* Approval payloads are clipped to 512 chars; say so instead of implying it is all. */
+.approval-truncated { margin: 6px 0 2px; color: var(--muted); font-size: calc(11.5px * var(--text-scale, 1)); }
