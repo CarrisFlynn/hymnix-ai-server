@@ -174,4 +174,11 @@ assert.ok(agentCatalog.includes('register("shell.run"'), "the agent needs a comm
 assert.ok(agentCatalog.includes('register("fs.edit"'), "the agent needs a structured edit tool");
 assert.ok(renderer.includes('"shell.run"') && renderer.includes('"fs.edit"'), "both tools must be advertised to the model");
 assert.ok(read("../../server/gateway_core.py").includes('"fs.edit", "shell.run"'), "both must be classified as machine-changing");
+// --- DSH capability slice ----------------------------------------------------
+assert.ok(renderer.includes("SUBAGENT_TOOL_SPEC"), "the model must be offered a subagent tool");
+assert.ok(renderer.includes('"goal.write"'), "goals need a write tool");
+assert.ok(renderer.includes('"skill.load"'), "skills need a load tool");
+assert.ok(preload.includes("skills: {"), "the shell must expose skill discovery");
+assert.ok(main.includes("skills:list"), "skill discovery lives in the main process");
+assert.ok(main.includes('"gateway:complete"'), "subagents need one non-streaming completion");
 console.log("PASS: secure shell protocol/static contract");

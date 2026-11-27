@@ -120,6 +120,10 @@ const api: DesktopApi & { adminHistory: (adminKey: string, query?: AdminHistoryQ
     search: (request: FileSearchRequest): Promise<FileSearchResponse> => ipcRenderer.invoke("files:search", request),
     read: (request: FileReadRequest): Promise<FileReadResponse> => ipcRenderer.invoke("files:read", request),
   },
+  skills: {
+    list: () => ipcRenderer.invoke("skills:list"),
+    read: (id: string) => ipcRenderer.invoke("skills:read", id),
+  },
   automation: {
     list: () => ipcRenderer.invoke("automation:list"),
     create: (input) => ipcRenderer.invoke("automation:create", input),
@@ -169,6 +173,7 @@ const api: DesktopApi & { adminHistory: (adminKey: string, query?: AdminHistoryQ
       ipcRenderer.on(channels.delta, onDelta); ipcRenderer.on(channels.complete, onComplete);
       ipcRenderer.invoke(channels.stream, { requestId: input.requestId, baseUrl: input.baseUrl, apiKey: input.apiKey, model: input.model, messages: input.messages, kind: input.kind, agentId: input.agentId, maxTokens: input.maxTokens, reasoningEffort: input.reasoningEffort, tools: input.tools }).catch((reason: unknown) => finish(reason instanceof Error ? reason : new Error(String(reason))));
     });
-  }
+  },
+  complete: (input: unknown): Promise<{ ok: boolean; text?: string; error?: string }> => ipcRenderer.invoke("gateway:complete", input),
 } };
 contextBridge.exposeInMainWorld("hymnix", api);

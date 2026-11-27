@@ -6,10 +6,11 @@ import {existsSync,realpathSync,statfsSync,statSync,readdirSync,readFileSync,wri
 import {spawn,execFile,ChildProcess} from "node:child_process";
 import os from "node:os";
 import {readPullStream} from "./pull-stream";
-import {listProviderModels,normalizeKind,probeProvider,streamProvider} from "./providers";
+import {listProviderModels,normalizeKind,probeProvider,streamProvider,type ProviderKind} from "./providers";
 import {TerminalBridge} from "./terminal-bridge";
 import {JobCenter} from "./job-center";
 import {AutomationCenter} from "./automation";
+import {scanSkills, readSkill} from "./skills";
 import type {AdminClientsResponse,AdminErrorRecord,AdminHistoryQuery,AdminHistoryResponse,AdminStatus,ChatDelta,GatewayHealth,GatewayMessage,GatewayModelsResponse,OllamaControlResult} from "../shared/protocol";
 
 // ---------- persistent app settings ----------
@@ -681,6 +682,60 @@ function registerAutomationIpc(): void {
   });
 }
 
+/** Skill folders: user data first, then the checkout next to the app. */
+function skillDirectories(): string[] {
+  return [join(app.getPath("userData"), "skills"), join(app.getAppPath(), "skills")];
+}
+
+/** One non-streaming completion for a delegated subagent (no tools). */
+function registerCompleteIpc(): void {
+  ipcMain.handle("gateway:complete", async (event, raw: unknown) => {
+    assertSender(event);
+    const value = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+    const prompt = typeof value.prompt === "string" ? value.prompt.trim() : "";
+    const system = typeof value.system === "string" ? value.system : "";
+    const model = typeof value.model === "string" ? value.model : "";
+    const baseUrl = typeof value.baseUrl === "string" ? value.baseUrl : "";
+    if (!prompt || !model || !baseUrl) throw new Error(JSON.stringify({ code: "invalid_request", message: "prompt, model and baseUrl are required" }));
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 180_000);
+    let text = "";
+    try {
+      await streamProvider({
+        kind: (typeof value.kind === "string" ? value.kind : "openai") as ProviderKind,
+        baseUrl,
+        apiKey: typeof value.apiKey === "string" ? value.apiKey : "",
+        model,
+        agentId: typeof value.agentId === "string" ? value.agentId : "",
+        maxTokens: typeof value.maxTokens === "number" ? value.maxTokens : 0,
+      }, [
+        { role: "system", content: system || "You are a focused subagent. Complete only the task you are given, then reply with the result." },
+        { role: "user", content: prompt.slice(0, 8000) },
+      ] as GatewayMessage[], controller.signal, (delta: ChatDelta) => {
+        const choice = (delta as unknown as { choices?: { delta?: { content?: string } }[] }).choices?.[0];
+        if (typeof choice?.delta?.content === "string") text += choice.delta.content;
+      });
+      return { ok: true, text: text.slice(0, 20_000) };
+    } catch (error) {
+      return { ok: false, error: (error instanceof Error ? error.message : String(error)).slice(0, 300) };
+    } finally {
+      clearTimeout(timer);
+    }
+  });
+}
+
+function registerSkillsIpc(): void {
+  ipcMain.handle("skills:list", (event) => {
+    assertSender(event);
+    return { ok: true, skills: scanSkills(skillDirectories()) };
+  });
+  ipcMain.handle("skills:read", (event, rawId: unknown) => {
+    assertSender(event);
+    if (typeof rawId !== "string" || !rawId.trim() || rawId.length > 128) throw new Error(JSON.stringify({ code: "invalid_request", message: "Invalid skill id" }));
+    return readSkill(skillDirectories(), rawId);
+  });
+}
+
 const pluginPermissions = new Set(["fs.read", "fs.write", "net.http", "ui.toast", "tools.register", "log.write"]);
 const pluginActions = new Set(["grant", "revoke", "enable", "disable", "load", "unload", "reload", "uninstall"]);
 function registerPluginsIpc(): void {
@@ -1267,6 +1322,8 @@ registerModelIpc();
 registerToolsIpc();
 registerJobsIpc();
 registerAutomationIpc();
+registerSkillsIpc();
+registerCompleteIpc();
 registerPluginsIpc();
 
 registerGatewayIpc();

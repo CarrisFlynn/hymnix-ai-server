@@ -273,6 +273,8 @@ export type GatewayApi = {
   health: () => Promise<GatewayHealth>;
   models: (apiKey: string) => Promise<GatewayModelsResponse>;
   streamChat: (input: StreamChatInput) => Promise<void>;
+  /** One non-streaming completion, used by delegated subagents. */
+  complete: (input: { baseUrl: string; apiKey?: string; model: string; kind?: string; agentId?: string; maxTokens?: number; system?: string; prompt: string }) => Promise<{ ok: boolean; text?: string; error?: string }>;
   cancelChat: (requestId: string) => void;
   adminStatus?: (adminKey: string) => Promise<AdminStatus>;
   adminErrors?: (adminKey: string, limit?: number) => Promise<AdminErrorRecord[]>;
@@ -681,7 +683,15 @@ export type AutomationApi = {
   onUpdate: (listener: (task: AutomationTask) => void) => () => void;
 };
 
+export type SkillEntry = { id: string; name: string; description: string; path: string };
+
+export type SkillsApi = {
+  list: () => Promise<{ ok: boolean; skills: SkillEntry[] }>;
+  read: (id: string) => Promise<{ ok: boolean; id?: string; content?: string; error?: string }>;
+};
+
 export type DesktopApi = {
+  skills: SkillsApi;
   automation: AutomationApi;
   jobs: JobsApi;
   gateway: GatewayApi;

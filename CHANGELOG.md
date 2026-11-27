@@ -2,6 +2,22 @@
 
 Only user-visible changes are listed. Internal refactors, test scaffolding and machine-specific paths are intentionally omitted.
 
+## Unreleased — subagents, goals and skills (2026-11-27)
+
+The rest of the DSH capability slice, all local: delegation, a durable objective, and on-demand domain knowledge.
+
+### Added
+
+- **`subagent.run`** — hands one self-contained task to a fresh context. The subagent has no tools; it reasons and returns text, and the parent sees it as a tool result. Runs through a new non-streaming completion channel with a 180 s cap.
+- **`goal.write` / `goal.read`** — a persistent objective for the conversation with a round budget (1–20). After a turn settles, if the goal is still active, the shell sends the next continuation prompt by itself; completing it is the model's call (`status: complete`).
+- **`skill.list` / `skill.load`** — a `skills/<id>/SKILL.md` folder is discovered by the main process (user data, then the app's own folder) and loaded only when a task names it, so domain knowledge is pulled in on demand instead of sitting in every prompt.
+
+### Verified
+
+- Skills: a folder on disk was discovered (`Demo Skill`) and read back through the real IPC.
+- Subagent: `gateway.complete` against local Ollama returned `收到`.
+- Goals: four unit tests cover creation, validation, round consumption and the stop condition.
+
 ## Unreleased — agent-side tools (2026-11-27)
 
 First capability slice from the DSH comparison: the agent can change the machine, not only read it.

@@ -7,6 +7,7 @@ import "./orbit-v2.css";
 import brandIcon from "./assets/hymnix-red-white-star.png";
 import { THEMES, readStoredTheme, readStoredMode, applyTheme, persistTheme, persistAppearanceMode, activeMode, selectedTheme, systemMode, type AppearanceMode } from "../theme/themeManager";
 import { t, tf, getLang, setLang, type Lang } from "./i18n";
+import { applyGoalPatch, consumeRound, continuationPrompt, createGoal, shouldContinue, type Goal } from "./lib/goals.js";
 import type { ChatMessage } from "./chat";
 import { ChatViewport } from "./chat-navigation";
 import { pullErrorMessage, trackDownloadProgress } from "./model-download";
@@ -65,6 +66,11 @@ type ApprovalArchiveRow = ApprovalRecord & { decided: "approved" | "denied"; dec
 const PLATFORM = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform || "") ? "darwin" : "win32";
 
 /** How many model→tool→model rounds one send may take before it stops. */
+const SUBAGENT_TOOL_SPEC = { type: "function", function: { name: "subagent.run", description: "Delegate a self-contained task to a fresh context. The subagent cannot call tools; it reasons and returns text.", parameters: { type: "object", properties: { prompt: { type: "string" }, system: { type: "string" } }, required: ["prompt"], additionalProperties: false } } };
+const GOAL_TOOL_SPEC = { type: "function", function: { name: "goal.write", description: "Set the objective of this conversation's goal, or update its status/budget.", parameters: { type: "object", properties: { objective: { type: "string" }, status: { type: "string", enum: ["active", "paused", "complete"] }, maxRounds: { type: "number" } }, additionalProperties: false } } };
+const GOAL_READ_SPEC = { type: "function", function: { name: "goal.read", description: "Read the current goal, its status and remaining rounds.", parameters: { type: "object", properties: {}, additionalProperties: false } } };
+const SKILL_LIST_SPEC = { type: "function", function: { name: "skill.list", description: "List installed skills (id, name, one-line description).", parameters: { type: "object", properties: {}, additionalProperties: false } } };
+const SKILL_LOAD_SPEC = { type: "function", function: { name: "skill.load", description: "Load one skill's full instructions by id before doing a task it covers.", parameters: { type: "object", properties: { id: { type: "string" } }, required: ["id"], additionalProperties: false } } };
 const TOOL_ROUND_LIMIT = 6;
 
 /** Evidence kept per conversation: enough to explain a turn, not a transcript. */
@@ -476,6 +482,11 @@ function App() {
   const [jobSelected, setJobSelected] = useState("");
   const [jobCommand, setJobCommand] = useState("");
   const [jobBusy, setJobBusy] = useState(false);
+  // ---- goal (persistent objective for this conversation) --------------------
+  const [goal, setGoal] = useState<Goal | null>(null);
+  const goalRef = useRef<Goal | null>(null);
+  goalRef.current = goal;
+  const wasGeneratingRef = useRef(false);
   // ---- automation (scheduled prompts) --------------------------------------
   const [automationTasks, setAutomationTasks] = useState<import("../shared/protocol").AutomationTask[]>([]);
   const [automationForm, setAutomationForm] = useState<null | {
@@ -870,7 +881,7 @@ function App() {
   }
   const toolSpecs = useMemo(() => {
     const advertised = tools.filter((item) => ADVERTISED_TOOLS.has(item.name)).map((item) => ({ type: "function" as const, function: { name: item.name, description: item.description, parameters: item.schema } }));
-    return [TODO_TOOL_SPEC, ...advertised];
+    return [TODO_TOOL_SPEC, SUBAGENT_TOOL_SPEC, GOAL_TOOL_SPEC, GOAL_READ_SPEC, SKILL_LIST_SPEC, SKILL_LOAD_SPEC, ...advertised];
   }, [tools]);
   /**
    * Some local models cannot emit structured tool_calls and answer with the call
@@ -949,6 +960,46 @@ function App() {
       recordEvidence({ kind: "plan", title: t("Plan updated"), detail: next.steps.map((step) => step.intent).slice(0, 6).join(" · ") || t("No steps"), durationMs: Math.round(performance.now() - started) });
       return JSON.stringify({ ok: true, steps: next.steps.length });
     }
+    if (call.name === "goal.write") {
+      const created = goalRef.current ? { goal: goalRef.current } : createGoal(String(args.objective || ""), Number(args.maxRounds) || 6);
+      if ("error" in created) return JSON.stringify({ ok: false, error: created.error });
+      const patched = applyGoalPatch(created.goal || null, args as Record<string, unknown>);
+      if ("error" in patched) return JSON.stringify({ ok: false, error: patched.error });
+      goalRef.current = patched.goal || null;
+      setGoal(patched.goal || null);
+      recordEvidence({ kind: "plan", title: t("Goal updated"), detail: (patched.goal?.objective || "").slice(0, 140), status: "ok", durationMs: Math.round(performance.now() - started) });
+      return JSON.stringify({ ok: true, goal: patched.goal });
+    }
+    if (call.name === "goal.read") return JSON.stringify({ ok: true, goal: goalRef.current });
+    if (call.name === "skill.list") {
+      const listing = await window.hymnix.skills.list().catch((reason: unknown) => ({ ok: false, skills: [], error: String(reason) }));
+      return JSON.stringify({ ok: listing.ok !== false, skills: (listing.skills || []).map((item) => ({ id: item.id, name: item.name, description: item.description })) });
+    }
+    if (call.name === "skill.load") {
+      const loaded: { ok: boolean; id?: string; content?: string; error?: string } = await window.hymnix.skills.read(String(args.id || "")).catch((reason: unknown) => ({ ok: false, error: String(reason) }));
+      if (!loaded.ok) return JSON.stringify({ ok: false, error: loaded.error || "not_found" });
+      recordEvidence({ kind: "tool", title: "skill.load", detail: String(loaded.id || ""), status: "ok", durationMs: Math.round(performance.now() - started) });
+      return JSON.stringify({ ok: true, id: loaded.id, content: loaded.content });
+    }
+    if (call.name === "subagent.run") {
+      const prompt = String(args.prompt || "").trim();
+      if (!prompt) return JSON.stringify({ ok: false, error: "prompt_required" });
+      const cloudTurn = source === "cloud";
+      const base = cloudTurn ? cloudBase.trim() : (remoteActive() ? serverBase.trim() : gatewayBase);
+      const key = cloudTurn ? cloudKey.trim() : (remoteActive() ? apiKey.trim() : "");
+      const turnModel = cloudTurn ? (cloudModel.trim() || model) : model;
+      const reply: { ok: boolean; text?: string; error?: string } = await window.hymnix.gateway.complete({
+        baseUrl: base, apiKey: key, model: turnModel,
+        kind: cloudTurn ? providerKind : "openai",
+        agentId: cloudTurn ? agentId.trim() : "",
+        maxTokens: cloudTurn ? providerMaxTokens : 0,
+        system: typeof args.system === "string" ? args.system : undefined,
+        prompt,
+      }).catch((reason: unknown) => ({ ok: false, error: String(reason) } as { ok: boolean; text?: string; error?: string }));
+      recordEvidence({ kind: "tool", title: "subagent.run", detail: (reply.ok ? (reply.text || "").slice(0, 140) : reply.error || "failed"), status: reply.ok ? "ok" : "error", durationMs: Math.round(performance.now() - started) });
+      return JSON.stringify(reply.ok ? { ok: true, text: reply.text } : { ok: false, error: reply.error });
+    }
+
     let response;
     try { response = await window.hymnix.tools.call({ requestId: crypto.randomUUID(), tool: call.name, args }); }
     catch (reason) {
@@ -1262,6 +1313,37 @@ function App() {
     const timer = window.setInterval(() => setNowTick(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, [plan, jobs]);
+  // Goals persist per conversation and one round is consumed per continuation.
+  useEffect(() => {
+    try {
+      const all = JSON.parse(localStorage.getItem("hymnix.goals.v1") || "{}") as Record<string, Goal>;
+      const restored = all[currentSessionId] || null;
+      setGoal(restored);
+      goalRef.current = restored;
+    } catch { setGoal(null); goalRef.current = null; }
+  }, [currentSessionId]);
+  useEffect(() => {
+    if (!goal) return;
+    try {
+      const all = JSON.parse(localStorage.getItem("hymnix.goals.v1") || "{}") as Record<string, Goal>;
+      all[currentSessionId] = goal;
+      localStorage.setItem("hymnix.goals.v1", JSON.stringify(all));
+    } catch { /* storage is best-effort */ }
+  }, [goal, currentSessionId]);
+  useEffect(() => {
+    if (chatBusy) { wasGeneratingRef.current = true; return; }
+    if (!wasGeneratingRef.current) return;
+    wasGeneratingRef.current = false;
+    const current = goalRef.current;
+    if (!current || !shouldContinue(current) || error) return;
+    const last = messages[messages.length - 1] as (Message & { stopped?: boolean }) | undefined;
+    if (last?.stopped) return;
+    const next = consumeRound(current);
+    goalRef.current = next;
+    setGoal(next);
+    const timer = window.setTimeout(() => { void send(continuationPrompt(next)); }, 1200);
+    return () => window.clearTimeout(timer);
+  }, [chatBusy, messages, error]);
   // Scheduled tasks live in the main process. A fire opens a new conversation
   // with the prompt and runs it when a model is ready; otherwise the prompt is
   // left in the composer so nothing is executed silently.
