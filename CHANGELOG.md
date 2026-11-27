@@ -2,6 +2,17 @@
 
 Only user-visible changes are listed. Internal refactors, test scaffolding and machine-specific paths are intentionally omitted.
 
+## Unreleased — the session panel (2026-11-27)
+
+### Changed
+
+- **Subagents moved out of Context.** DSH's `conversation.session.panel` is a floating panel in the chat view's aside, toggled from the session header — not a settings tab. Hymnix now has the same: a 会话面板 toggle next to the conversation menu, a right-side panel with an Environment section (working folder, model, mode) and the 子智能体 section. Escape or a pointer outside closes it; the toggle itself does not count as outside.
+- The Context tab is back to system prompt and conversation facts.
+
+### Known gaps (honest)
+
+- No section drag-reorder, no per-row hover details, no nested subagent tree, and no Jobs section in the panel yet.
+
 ## Unreleased — subagents shown the DSH way (2026-11-27)
 
 ### Changed

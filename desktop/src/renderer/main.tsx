@@ -534,6 +534,8 @@ function App() {
   // that count the way DSH's subagent section does.
   const [subagentRunning, setSubagentRunning] = useState<string[]>([]);
   const [subagentsExpanded, setSubagentsExpanded] = useState(false);
+  const [sessionPanelOpen, setSessionPanelOpen] = useState(false);
+  const sessionPanelRef = useRef<HTMLElement | null>(null);
   const answeringRef = useRef<Set<string>>(new Set());
   const [riskAcknowledged, setRiskAcknowledged] = useState(false);
   const [effortDrag, setEffortDrag] = useState<number | null>(null);
@@ -1384,6 +1386,22 @@ function App() {
     const timer = window.setInterval(() => setNowTick(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, [plan, jobs]);
+  // The panel dismisses like DSH's: Escape or a pointer outside, but the toggle
+  // itself stays a toggle, so its own press is not treated as "outside".
+  useEffect(() => {
+    if (!sessionPanelOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Element | null;
+      if (sessionPanelRef.current?.contains(target as Node)) return;
+      if (target?.closest('[data-session-panel-toggle="true"]')) return;
+      setSessionPanelOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") setSessionPanelOpen(false); };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => { document.removeEventListener("pointerdown", onPointerDown); document.removeEventListener("keydown", onKeyDown); };
+  }, [sessionPanelOpen]);
+
   // Named agents persist with the app so a delegation survives a restart.
   useEffect(() => {
     try {
@@ -2559,7 +2577,6 @@ function App() {
   }
 
   const contextPanel = <div className="tab-panel">
-      {renderSubagentsSection()}
       <div className="panel-card">
         <h3>{t("System prompt")}</h3>
         <textarea className="panel-textarea" value={systemPrompt} onChange={(event) => setSystemPrompt(event.target.value)} placeholder={t("Optional instructions for every reply in this conversation.")} rows={5} />
@@ -2689,6 +2706,9 @@ function App() {
           </button>)}
         </nav>
         <div className="chat-head-actions">
+          <button type="button" className="btn ghost icon-button" aria-label={t(sessionPanelOpen ? "Hide session panel" : "Show session panel")} aria-expanded={sessionPanelOpen} data-session-panel-toggle="true" onClick={() => setSessionPanelOpen((value) => !value)}>
+            <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3" width="12" height="10" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.3" /><path d="M10.5 3v10" stroke="currentColor" strokeWidth="1.3" /></svg>
+          </button>
           <div className="conversation-menu-wrap" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setConversationMenuOpen(false); }}>
             <button type="button" className="btn ghost icon-button" aria-label={t("Conversation actions")} aria-haspopup="menu" aria-expanded={conversationMenuOpen} onClick={() => setConversationMenuOpen((value) => !value)}>⋯</button>
             {conversationMenuOpen && <div className="conversation-menu" role="menu">
@@ -2715,6 +2735,21 @@ function App() {
       {chatTab === "context" && <div className="chat-tab-body">{contextPanel}</div>}
       {chatTab === "plan" && <div className="chat-tab-body">{planPanel}</div>}
       {chatTab === "trace" && <div className="chat-tab-body">{tracePanel}</div>}
+      {sessionPanelOpen && <aside className="session-panel" ref={sessionPanelRef} role="dialog" aria-label={t("Session panel")}>
+        <header className="session-panel-head">
+          <strong>{t("Session panel")}</strong>
+          <button type="button" className="btn ghost icon-button" aria-label={t("Close")} onClick={() => setSessionPanelOpen(false)}>×</button>
+        </header>
+        <div className="session-panel-body">
+          <section className="session-section">
+            <h4>{t("Environment")}</h4>
+            <div className="panel-row"><span>{t("Working folder")}</span><strong>{filesRoot || t("No workspace selected")}</strong></div>
+            <div className="panel-row"><span>{t("Model")}</span><strong>{modelTitle}</strong></div>
+            <div className="panel-row"><span>{t("Conversation mode")}</span><strong>{composerMode === "code" ? t("Code") : t("Chat")}</strong></div>
+          </section>
+          {renderSubagentsSection()}
+        </div>
+      </aside>}
     </section>;
   }
 

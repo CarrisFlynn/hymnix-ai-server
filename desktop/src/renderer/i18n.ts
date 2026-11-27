@@ -1,6 +1,11 @@
 export type Lang = "en" | "zh";
 
 export const zh: Record<string, string> = {
+  "Session panel": "会话面板",
+  "Show session panel": "显示会话面板",
+  "Hide session panel": "隐藏会话面板",
+  "Environment": "环境",
+  "Working folder": "工作目录",
   "Subagents": "子智能体",
   "{count} running": "{count} 个子智能体运行中",
   "Idle": "当前未运行",
