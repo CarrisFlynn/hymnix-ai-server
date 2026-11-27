@@ -149,7 +149,6 @@
 > **第七轮审计（2026-11-27 10:27）指出的 4 个 P1 已全部关闭**
 > ① LSP 帧解析改为按 **Buffer 字节**切分（原来拿 JS 字符串长度比 `Content-Length`，中文符号名必超时）；② `lsp` 增加 `resolveInside` 包含校验，绝对路径与 `../` 一律 `out_of_scope`；③ `worktree.create` 的 `from` 拒绝前导 `-` 并加 `--end-of-options`；④ `__hymnixDev.runTool` 只在 `__DEV_BUILD__` 为真时安装，**生产包里没有**（`vite build` 后 grep 确认）。
 > 验证方式改了口径：LSP 现在用**中文文件名 + 中文符号名**（`中文示例.ts` / `计算总数`）活体验证，不再只用 ASCII。
-> **注意**：`__hymnixDev` 的其余基线钩子（`seedPlan` 等）仍在生产包里，这是既有行为、被视觉基线脚本使用；探针需要 `pnpm build:dev` 才能用 `runTool`。
 > **第八轮审计（2026-11-27 11:55）的 7 个 P1 + 19 个 P2 已全部处理**
 > ① `fs.edit`/`patch.apply` 完整读 + 字节写，行尾不再被改写（380 KB LF 文件进出不变）；② 网关沙箱根改为**用户工作区**（`HYMNIX_WORKSPACE` + `POST /admin/workspace`，桌面在就绪与选目录时推送）；③④⑤ `patch.apply`/`web.fetch`/插件工具的分类已修正（门禁测试会拦住下一例）；⑥ 写类工具参数上限 8 KB → 1 MB，审批带 `args_meta`、抽屉明说「仅显示前 512 字符」；⑦ `lsp` 拒绝目录并包住异常，主进程补 `uncaughtException` 兜底。
 > P2 逐条：`agent.send` 描述纠正、`agent.wait` 改共享 deadline、`run_code` 的 `tools.call` 返回对象、`job.start` 审批给完整命令、本地审批 TTL 与页脚对齐 55 秒、WebP 校验 offset 8、第 5 张图丢弃并告知、`read_image`/`fs.read` 截断标记、`code.*` 不再切 JSON、`__hymnixDev` 整对象仅 DEV 构建挂载、`agent.spawn` 补 `parent`、折叠箭头真正生效、原型键改用 own-property、目标续跑提示跟随界面语言、周几分隔符本地化、`shell.run`/`term` 按控制台代码页解码。

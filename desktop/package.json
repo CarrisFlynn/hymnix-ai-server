@@ -20,7 +20,8 @@
     "dist": "pnpm build && pnpm build:backend && electron-builder --win --x64",
     "cert:selfsigned": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/make-self-signed-cert.ps1",
     "dist:sign": "electron-builder --win --x64",
-    "build:dev": "tsc -p tsconfig.json && vite build --mode development && node scripts/fix-renderer-html.mjs dist/renderer/index.html"
+    "build:dev": "tsc -p tsconfig.json && vite build --mode development && node scripts/fix-renderer-html.mjs dist/renderer/index.html",
+    "smoke:prod": "node scripts/prod-smoke.mjs"
   },
   "dependencies": {
     "react": "latest",

@@ -886,6 +886,10 @@ function App() {
     setAnswering((current) => current.concat([id]));
     const record = approvals.find((item) => item.id === id);
     const waiter = approvalWaiters.current.get(id);
+    setApprovalsBusy(true); setApprovalsError("");
+    try {
+      // Local approvals never reach the gateway; answer them here, inside the try,
+      // so the shared cleanup in finally still clears answering/busy.
       const localResolve = localApprovalResolvers.current.get(id);
       if (localResolve) {
         localApprovalResolvers.current.delete(id);
@@ -896,8 +900,6 @@ function App() {
         setToolCall({ status: decision === "approve" ? "success" : "error", message: decision === "approve" ? t("Approved") : t("Denied") });
         return { ok: true };
       }
-    setApprovalsBusy(true); setApprovalsError("");
-    try {
       const result = decision === "approve" ? await window.hymnix.tools.approve(id) : await window.hymnix.tools.deny(id);
       if (!result.ok) throw new Error(result.error?.message || t("Approval decision failed"));
       setApprovals((current) => current.filter((item) => item.id !== id));

@@ -70,15 +70,17 @@ export function closeAgent(agents, name) {
 
 /** Depth-first rows: a child follows its parent, indented by depth. */
 export function treeRows(agents) {
-  const byParent = {};
+  // Null prototype: an agent may legitimately be named __proto__ or constructor,
+  // and a plain {} would resolve those keys through the prototype chain.
+  const byParent = Object.create(null);
   for (const agent of Object.values(agents)) {
-    const key = agent.parent && agents[agent.parent] ? agent.parent : "";
+    const key = agent.parent && own(agents, agent.parent) ? agent.parent : "";
     (byParent[key] = byParent[key] || []).push(agent);
   }
   const rows = [];
   const walk = (parent, depth) => {
-    for (const agent of (byParent[parent] || []).sort((left, right) => left.name.localeCompare(right.name))) {
-      rows.push({ ...agent, depth, children: (byParent[agent.name] || []).length });
+    for (const agent of (own(byParent, parent) || []).sort((left, right) => left.name.localeCompare(right.name))) {
+      rows.push({ ...agent, depth, children: (own(byParent, agent.name) || []).length });
       walk(agent.name, depth + 1);
     }
   };
@@ -89,11 +91,11 @@ export function treeRows(agents) {
 /** Slash path from the root, e.g. lead/reviewer/checker, the way DSH names agents. */
 export function agentPath(agents, name) {
   const parts = [];
-  let current = agents[name];
+  let current = own(agents, name);
   let guard = 0;
   while (current && guard < 20) {
     parts.unshift(current.name);
-    current = current.parent ? agents[current.parent] : undefined;
+    current = current.parent ? own(agents, current.parent) : undefined;
     guard += 1;
   }
   return parts.join("/");

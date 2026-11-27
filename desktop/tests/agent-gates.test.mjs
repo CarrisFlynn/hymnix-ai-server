@@ -1,8 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdtempSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 
 /**
  * Gates for what the eighth audit found by calling the real path.
@@ -28,15 +29,24 @@ function setMembers(source, name) {
   return [...body.matchAll(/"([^"]+)"/g)].map((row) => row[1]);
 }
 
-test("every advertised tool is allowed by the default workspace policy", () => {
+test("every advertised tool passes the gateway policy, decided by the gateway", () => {
+  // The advertised names have to come from the renderer source (they are data),
+  // but the verdict is not read from source text: each name is handed to the
+  // real _tool_policy_allows() in the gateway, which is the code that answers
+  // the model at runtime. That keeps this a behaviour check, not a string match.
   const start = renderer.indexOf("ADVERTISED_TOOLS = new Set([");
   assert.ok(start > 0, "the advertised list must be findable");
   const body = renderer.slice(start, renderer.indexOf("])", start));
   const advertised = [...body.matchAll(/"([^"]+)"/g)].map((row) => row[1]);
   assert.ok(advertised.length >= 19, "expected the full advertised list, got " + advertised.length);
-  const classified = new Set([...setMembers(gateway, "_TOOL_READ"), ...setMembers(gateway, "_TOOL_WRITE")]);
-  const denied = advertised.filter((name) => !classified.has(name));
-  assert.deepEqual(denied, [], "advertised but unclassified (=> exec => policy_denied): " + denied.join(", "));
+  const dir = mkdtempSync(join(tmpdir(), "hx-gate-"));
+  const listFile = join(dir, "advertised.json");
+  writeFileSync(listFile, JSON.stringify(advertised), "utf8");
+  const out = execFileSync("python", [join(process.cwd(), "tests/probes/advertised.py"), listFile], { cwd: server, encoding: "utf8" });
+  const denied = JSON.parse((out.match(/DENIED (.*)/) || [])[1] || "null");
+  assert.ok(Array.isArray(denied), "the probe must report a list: " + out);
+  assert.deepEqual(denied, [], "the gateway policy refuses a tool the model is offered: " + denied.join(", "));
+  assert.match(out, new RegExp("CHECKED " + advertised.length));
 });
 
 test("the tools that used to be refused now pass the default policy", () => {
