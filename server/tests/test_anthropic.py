@@ -114,6 +114,25 @@ class StreamTranslation(unittest.TestCase):
         self.assertEqual(len(ids), 2)
         self.assertEqual(len(set(ids)), 2, "tool_use ids must be unique: %r" % (ids,))
 
+class InputValidation(unittest.TestCase):
+    """A malformed body is the caller's mistake: 400, never a 500 with a traceback."""
+
+    def test_non_string_content_is_rejected(self):
+        with self.assertRaises(anthropic.BadRequest):
+            anthropic.anthropic_to_upstream({"messages": [{"role": "user", "content": 123}]}, "m")
+
+    def test_non_list_tools_are_rejected(self):
+        with self.assertRaises(anthropic.BadRequest):
+            anthropic.anthropic_to_upstream({"messages": [], "tools": "nope"}, "m")
+
+    def test_non_string_system_is_rejected(self):
+        with self.assertRaises(anthropic.BadRequest):
+            anthropic.anthropic_to_upstream({"system": 5, "messages": []}, "m")
+
+    def test_a_normal_body_is_still_accepted(self):
+        body = anthropic.anthropic_to_upstream({"system": "s", "messages": [{"role": "user", "content": "hi"}], "tools": []}, "m")
+        self.assertEqual(body["messages"][0]["role"], "system")
+
 
 if __name__ == "__main__":
     unittest.main()

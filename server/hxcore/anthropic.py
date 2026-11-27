@@ -27,11 +27,21 @@ def _text_of(content) -> str:
     return "\n".join(p for p in parts if p)
 
 
+class BadRequest(ValueError):
+    """The caller sent something the Messages schema does not allow."""
+
+
 def anthropic_to_upstream(payload: dict, real_model: str) -> dict:
-    """Anthropic Messages request -> the shape Ollama's /api/chat takes."""
+    """Anthropic Messages request -> the shape Ollama's /api/chat takes.
+
+    Raises BadRequest, never TypeError: a malformed body is the caller's mistake
+    and has to come back as a 400, not as a 500 with a traceback in the log.
+    """
     messages: list[dict] = []
 
     system = payload.get("system")
+    if system is not None and not isinstance(system, (str, list)):
+        raise BadRequest("system must be a string or a list of blocks")
     system_text = _text_of(system).strip()
     if system_text:
         messages.append({"role": "system", "content": system_text})
@@ -41,6 +51,8 @@ def anthropic_to_upstream(payload: dict, real_model: str) -> dict:
             continue
         role = str(turn.get("role") or "user")
         content = turn.get("content")
+        if content is not None and not isinstance(content, (str, list)):
+            raise BadRequest("message content must be a string or a list of blocks")
         if isinstance(content, str):
             messages.append({"role": role, "content": content})
             continue
@@ -84,6 +96,8 @@ def anthropic_to_upstream(payload: dict, real_model: str) -> dict:
     body: dict = {"model": real_model, "messages": messages, "stream": True}
 
     tools = payload.get("tools")
+    if tools is not None and not isinstance(tools, list):
+        raise BadRequest("tools must be a list")
     if isinstance(tools, list) and tools:
         converted = []
         for tool in tools:

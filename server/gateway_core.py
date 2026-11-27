@@ -1984,6 +1984,13 @@ class Handler(BaseHTTPRequestHandler):
                 note_auth_failure(self._ip())
                 log_event("admin_auth_fail", ip=self._ip(), path=path)
                 return self._json(401, {"ok": False, "error": "admin_key_required"})
+            # The host's disk belongs to the host, exactly like its tools. The
+            # desktop reads files in its own process, so this route only ever
+            # serves outside clients.
+            if path.startswith("/api/files/"):
+                if not self._tools_local_only():
+                    return self._json(403, {"ok": False, "error": "files_local_only",
+                                            "detail": "The shared machine provides compute only; files are read where they live."})
             if path == "/api/tools" or path == "/api/tools/call":
                 if not self._tools_local_only():
                     return self._json(403, {"ok": False, "error": "tools_local_only",
@@ -2809,8 +2816,20 @@ class Handler(BaseHTTPRequestHandler):
         run on the guest's own machine: the host provides the model, never the hands.
         """
         from hxcore import anthropic
+        ip = self._ip()
+        # Same defenses as the proxy path: a wrong key counts toward the ban
+        # threshold, otherwise this endpoint is a free brute-force oracle.
+        if banned(ip):
+            return self._json(429, {"type": "error", "error": {"type": "rate_limit_error", "message": "too many attempts, try again later"}})
         if not self._api_key_ok():
+            with LOCK:
+                STATS["auth_fail"] += 1
+            note_auth_failure(ip)
+            log_event("auth_fail", ip=ip, path="/v1/messages",
+                      key_hint=(self._key()[:4] + "***") if self._key() else "")
             return self._json(401, {"type": "error", "error": {"type": "authentication_error", "message": "invalid api key"}})
+        if _quota_block(ip):
+            return self._json(429, {"type": "error", "error": {"type": "rate_limit_error", "message": "daily quota reached"}})
         try:
             body = self._read_body()
             payload = json.loads(body.decode("utf-8", "ignore") or "{}")
@@ -2821,7 +2840,16 @@ class Handler(BaseHTTPRequestHandler):
         model, real_model = _resolve_model(payload)
         if not real_model:
             return self._json(400, {"type": "error", "error": {"type": "invalid_request_error", "message": "model is required"}})
-        upstream = anthropic.anthropic_to_upstream(payload, real_model)
+        try:
+            upstream = anthropic.anthropic_to_upstream(payload, real_model)
+        except anthropic.BadRequest as exc:
+            return self._json(400, {"type": "error", "error": {"type": "invalid_request_error", "message": str(exc)[:200]}})
+        try:
+            touch_client(ip, self.headers.get("User-Agent", ""), model=model)
+            with LOCK:
+                STATS["requests"] += 1
+        except Exception:
+            pass
         encoded = json.dumps(upstream, ensure_ascii=False).encode("utf-8")
         try:
             conn, resp = _open_upstream("POST", "/api/chat", body=encoded,

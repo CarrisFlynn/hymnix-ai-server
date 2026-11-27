@@ -12,7 +12,7 @@
  * the whole file with exact bytes so a large file cannot be truncated and its
  * line endings cannot be rewritten.
  */
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 export type ToolDef = {
@@ -123,7 +123,13 @@ function writeExact(path: string, text: string): void {
   const data = Buffer.from(text, "utf8");
   const tmp = path + ".hx-" + process.pid + "-" + Math.random().toString(36).slice(2, 8);
   writeFileSync(tmp, data);
-  renameSync(tmp, path);
+  try {
+    renameSync(tmp, path);
+  } catch (error) {
+    // Never leave a temp copy of the file behind: it holds the whole content.
+    try { unlinkSync(tmp); } catch { /* already gone */ }
+    throw error;
+  }
 }
 
 export function registerTool(def: ToolDef): void { REGISTRY.set(def.name, def); }

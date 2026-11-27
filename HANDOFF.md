@@ -173,6 +173,14 @@
 > ⑤ 仓库卫生：测试残留 `.hx-agent.txt` 删除；本批一次性探针移入 `scripts/audit/`；`.gitignore` 增加 `.hx-*` 防护。
 > **回归证据**：`tests/sandbox.test.mjs`（5 项，建 junction 后 `safePath` 必须 `out_of_scope`；映射地址必须判私网）；`tests/test_anthropic.py` 增至 9 项（thinking→tool 块顺序、双工具 id 唯一）。`pnpm check` = 143 JS + 9 Python。
 > **真机复现前后**：`SYMLINK_READ ok=true TOPSECRET_OUTSIDE` → `ok=false out_of_scope`；`[::ffff:127.0.0.1] → 200` → `private_destination`。
+> **第十二轮审计修复（共享端点遗留）**
+> ① `/v1/messages` 爆破不计封禁：错误 key 原先只回 401，不累加 `note_auth_failure`，可无限穷举 → 现与 `_proxy` 同口径（`banned()` 预检、`STATS["auth_fail"]++`、`note_auth_failure`、`log_event`）。实测连续错误 key：8×401 后转 429，封禁期内正确 key 同样 429。
+> ② 畸形 `content` 返回 500 → `anthropic.BadRequest`（`system`/`content`/`tools` 类型校验），handler 捕获转 **400 invalid_request_error**。实测 `{"content":123}` → 400。
+> ③ 补 `_quota_block()` 与 `touch_client()`，共享端点流量进每日配额与在线统计。
+> ④ **产品判断**：`/api/files/*` 与工具同属「宿主磁盘」，加同一道 `tools_local_only` 限制（访客 403 `files_local_only`）。桌面端文件浏览走主进程本地读，不受影响。
+> ⑤ `writeExact()` 的 `.hx-*` 临时文件在 rename 失败时 `unlinkSync` 清理（此前会留下含全文的残留）。
+> **验证**：`test_anthropic.py` 增至 13 项（新增 4 项类型校验）；门禁 = 143 JS + 13 Python。隔离网关实测：`MALFORMED 400`、`BRUTE [401×8, 429, 429]`、`FILES_LOOPBACK 200 / FILES_FORWARDED 403`。
+> **测试环境注意**：本机若有其他隔离网关正在跑，`providers.test.mjs` 的端口型用例会假失败并把测试进程吊住；单独重跑即通过。跑门禁前先确保没有别的网关进程。
 ## 六、架构与文件地图
 
 ```
