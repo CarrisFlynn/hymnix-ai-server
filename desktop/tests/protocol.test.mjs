@@ -143,7 +143,7 @@ assert.ok(main.includes("async function shutdownAll"), "quit and restart must sh
 assert.ok(main.includes("void shutdownAll().finally(() => { allowQuit = true; app.relaunch(); app.quit(); })"), "restart must clean up before relaunching");
 
 // --- automation (scheduled tasks) -------------------------------------------
-assert.ok(renderer.includes('["Terminal", "Jobs", "Automation", "Agents", "Code"]'), "automation, agents and code are pages in the rail");
+assert.ok(renderer.includes('["Terminal", "Jobs", "Automation"]'), "automation stays a page; subagents live in the conversation panel");
 assert.ok(renderer.includes('if (active === "Automation") return renderAutomation();'), "the automation page must be reachable");
 assert.ok(renderer.includes("window.hymnix.automation.onFire"), "the renderer must react to fired tasks");
 assert.ok(main.includes('ipcMain.handle("automation:create"'), "automation IPC must exist");
@@ -187,6 +187,7 @@ assert.ok(renderer.includes('"term.write"'), "term tools must be advertised to t
 assert.ok(read("../../server/gateway_core.py").includes('"term.start", "term.write", "term.stop"'), "terminal mutations must be approval-gated");
 // --- named agents and code navigation ----------------------------------------
 assert.ok(renderer.includes('"agent.spawn"') && renderer.includes('"agent.send"'), "named agents must be offered to the model");
+assert.ok(renderer.includes("subagents-section"), "the subagent panel lives in the conversation, the way DSH shows it");
 assert.ok(renderer.includes('"code.definition"'), "symbol navigation must be offered");
 assert.ok(main.includes("code:outline"), "navigation lives in the main process");
 assert.ok(preload.includes("code: {"), "the shell must expose navigation");

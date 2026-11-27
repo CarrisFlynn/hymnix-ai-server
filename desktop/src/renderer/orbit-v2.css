@@ -1914,6 +1914,19 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 .code-list code { flex: 0 0 auto; color: var(--accent-text); font-size: calc(11.5px * var(--text-scale, 1)); }
 .code-list span { overflow: hidden; color: var(--muted); font-size: calc(11.5px * var(--text-scale, 1)); text-overflow: ellipsis; white-space: nowrap; }
 
+.subagents-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.subagents-indicator { color: var(--faint); font-size: calc(11px * var(--text-scale, 1)); }
+.subagent-list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.subagent-row { display: flex; align-items: flex-start; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.subagent-row:last-child { border-bottom: 0; }
+.subagent-dot { display: inline-block; flex: 0 0 auto; width: 7px; height: 7px; margin-top: 6px; border-radius: 50%; background: var(--faint); }
+.subagent-dot[data-state="running"] { background: var(--success, var(--accent-fill)); }
+.subagent-dot[data-state="failed"] { background: var(--danger, var(--accent-fill)); }
+.subagent-main { display: flex; min-width: 0; flex-direction: column; gap: 1px; }
+.subagent-main strong { color: var(--text); font-size: calc(12.5px * var(--text-scale, 1)); }
+.subagent-main small { color: var(--faint); font-size: calc(11px * var(--text-scale, 1)); }
+.subagent-error { margin: 2px 0 0; color: var(--danger); font-size: calc(11px * var(--text-scale, 1)); }
+
 /* ---- tab badges ---------------------------------------------------------- */
 .chat-tabs button { position: relative; }
 .tab-badge { margin-left: 6px; padding: 0 5px; border-radius: 999px; background: var(--highlight); color: var(--muted); font-family: var(--font-mono); font-size: calc(10px * var(--text-scale, 1)); line-height: 16px; }

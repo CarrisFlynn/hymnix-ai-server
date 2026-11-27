@@ -1,6 +1,11 @@
 export type Lang = "en" | "zh";
 
 export const zh: Record<string, string> = {
+  "Subagents": "子智能体",
+  "{count} running": "{count} 个子智能体运行中",
+  "Idle": "当前未运行",
+  "No subagents in this conversation.": "本对话还没有子智能体。",
+  "Show less": "收起",
   "Agents": "代理",
   "Named agents keep their own transcript so a delegated task can run over several messages.": "命名代理各自保留对话记录，委派出去的任务可以跨多轮继续。",
   "No agents yet.": "还没有代理。",

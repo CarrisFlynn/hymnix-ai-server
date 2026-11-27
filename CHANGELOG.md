@@ -2,6 +2,17 @@
 
 Only user-visible changes are listed. Internal refactors, test scaffolding and machine-specific paths are intentionally omitted.
 
+## Unreleased — subagents shown the DSH way (2026-11-27)
+
+### Changed
+
+- **Subagents are a section in the conversation panel, not a page of their own.** After reading DSH's `ui-subagent`, the standalone Agents page was removed: it now sits at the top of the Context tab as 「子智能体」, with the running count in the header, running rows first, then the most recently active, five before the fold, and each row carrying a status dot, its activity (running / idle / failed) and its message count.
+- **The Code page is gone.** DSH exposes navigation as tools, not as a screen, so `code.outline` / `code.definition` / `code.references` stay model-side only.
+
+### Fixed
+
+- The status dot was an `<i>` with no box model, so its width and height were ignored and a failed agent rendered as a large block; it uses `data-state` now instead of borrowing the global `error` class.
+
 ## Unreleased — patches and panels (2026-11-27)
 
 ### Added

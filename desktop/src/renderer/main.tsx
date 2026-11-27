@@ -178,7 +178,7 @@ function Icon({ name }: { name: string }) { return <svg viewBox="0 0 24 24" aria
 
 const navGroups = [
   { title: "WORKSPACE", items: ["Chat", "Models", "Gateway", "Plugins", "Changelog", "Support"] },
-  { title: "DEVELOPER", items: ["Terminal", "Jobs", "Automation", "Agents", "Code"] }
+  { title: "DEVELOPER", items: ["Terminal", "Jobs", "Automation"] }
 ];
 
 /** The two product surfaces, mirroring ChatGPT / Codex: same history, different agent. */
@@ -530,6 +530,10 @@ function App() {
   const [codePath, setCodePath] = useState("");
   const [codeResult, setCodeResult] = useState<null | { kind: "definition" | "references" | "outline"; root?: string; rows: { label: string; preview: string }[]; error?: string }>(null);
   const [codeBusy, setCodeBusy] = useState(false);
+  // A named agent is "running" only while its send is in flight; the panel shows
+  // that count the way DSH's subagent section does.
+  const [subagentRunning, setSubagentRunning] = useState<string[]>([]);
+  const [subagentsExpanded, setSubagentsExpanded] = useState(false);
   const answeringRef = useRef<Set<string>>(new Set());
   const [riskAcknowledged, setRiskAcknowledged] = useState(false);
   const [effortDrag, setEffortDrag] = useState<number | null>(null);
@@ -1007,6 +1011,7 @@ function App() {
       const name = String(args.name || "").trim();
       const agent = agentsRef.current[name];
       if (!agent) return JSON.stringify({ ok: false, error: "no_agent" });
+      setSubagentRunning((current) => current.includes(name) ? current : current.concat([name]));
       const cloudTurn = source === "cloud";
       const base = cloudTurn ? cloudBase.trim() : (remoteActive() ? serverBase.trim() : gatewayBase);
       const key = cloudTurn ? cloudKey.trim() : (remoteActive() ? apiKey.trim() : "");
@@ -1020,6 +1025,7 @@ function App() {
         messages: history,
       }).catch((reason: unknown) => ({ ok: false, error: String(reason) } as { ok: boolean; text?: string; error?: string }));
       const updated = appendExchange(agentsRef.current, name, String(args.message || ""), reply);
+      setSubagentRunning((current) => current.filter((item) => item !== name));
       if ("error" in updated) return JSON.stringify({ ok: false, error: updated.error });
       agentsRef.current = updated.agents || {};
       setAgents(agentsRef.current);
@@ -2520,7 +2526,40 @@ function App() {
 {plainEmpty && <div className="starter-row">{starters.map(([label, detail]) => <button type="button" key={label} className="starter" onClick={() => setDraft(detail)}>{label}</button>)}</div>}
 {composer}</div>;
 
-    const contextPanel = <div className="tab-panel">
+    function renderSubagentsSection() {
+    const rows = listAgents(agents).sort((left, right) => {
+      const leftRunning = subagentRunning.includes(left.name) ? 1 : 0;
+      const rightRunning = subagentRunning.includes(right.name) ? 1 : 0;
+      return rightRunning - leftRunning || right.updatedAt - left.updatedAt;
+    });
+    const visible = subagentsExpanded ? rows : rows.slice(0, 5);
+    return <div className="panel-card subagents-section">
+      <div className="subagents-head">
+        <h3>{t("Subagents")}</h3>
+        <span className="subagents-indicator">{tf("{count} running", { count: String(subagentRunning.length) })}</span>
+      </div>
+      {rows.length === 0
+        ? <p className="panel-note">{t("No subagents in this conversation.")}</p>
+        : <ul className="subagent-list">{visible.map((row) => {
+            const running = subagentRunning.includes(row.name);
+            const activity = row.lastError ? t("Failed") : running ? t("Running") : t("Idle");
+            return <li key={row.name} className="subagent-row" data-state={row.lastError ? "error" : running ? "running" : "idle"}>
+              <i className="subagent-dot" data-state={row.lastError ? "failed" : running ? "running" : "idle"} aria-hidden="true" />
+              <div className="subagent-main">
+                <strong>{row.name}</strong>
+                <small>{activity} · {tf("{count} messages", { count: String(row.messages) })}</small>
+                {row.lastError && <p className="subagent-error">{row.lastError}</p>}
+              </div>
+            </li>;
+          })}</ul>}
+      {rows.length > 5 && <button type="button" className="link-button" onClick={() => setSubagentsExpanded((value) => !value)}>
+        {subagentsExpanded ? t("Show less") : tf("Show the other {count}", { count: String(rows.length - 5) })}
+      </button>}
+    </div>;
+  }
+
+  const contextPanel = <div className="tab-panel">
+      {renderSubagentsSection()}
       <div className="panel-card">
         <h3>{t("System prompt")}</h3>
         <textarea className="panel-textarea" value={systemPrompt} onChange={(event) => setSystemPrompt(event.target.value)} placeholder={t("Optional instructions for every reply in this conversation.")} rows={5} />
@@ -3533,70 +3572,7 @@ function App() {
     </section>;
   }
   // ---- agents and code pages ------------------------------------------------
-  async function runCode(kind: "definition" | "references" | "outline"): Promise<void> {
-    const symbol = codeSymbol.trim();
-    const path = codePath.trim();
-    if (kind !== "outline" && !symbol) return;
-    if (kind === "outline" && !path) return;
-    setCodeBusy(true);
-    try {
-      if (kind === "outline") {
-        const result = await window.hymnix.code.outline(path);
-        setCodeResult({ kind, root: result.root, error: result.error, rows: (result.symbols || []).map((hit) => ({ label: hit.kind + " · " + hit.name + " · " + hit.file + ":" + hit.line, preview: hit.preview })) });
-      } else {
-        const result = kind === "definition" ? await window.hymnix.code.definition(symbol) : await window.hymnix.code.references(symbol);
-        setCodeResult({ kind, root: result.root, error: result.error, rows: (result.hits || []).map((hit) => ({ label: hit.file + ":" + hit.line, preview: hit.preview })) });
-      }
-    } catch (reason) {
-      setCodeResult({ kind, rows: [], error: reason instanceof Error ? reason.message : String(reason) });
-    } finally {
-      setCodeBusy(false);
-    }
-  }
-
-  function renderAgents() {
-    const rows = listAgents(agents);
-    return <section className="view-page agents-page">
-      <div className="page-head"><div><label>{t("DEVELOPER")}</label><h2>{t("Agents")}</h2><p>{t("Named agents keep their own transcript so a delegated task can run over several messages.")}</p></div></div>
-      {rows.length === 0
-        ? <div className="card automation-empty"><strong>{t("No agents yet.")}</strong><span>{t("The model creates them with agent.spawn; they survive a restart.")}</span></div>
-        : <ul className="automation-list">{rows.map((row) => <li key={row.name} className="automation-row">
-            <div className="automation-main">
-              <strong>{row.name}</strong>
-              <small>{tf("{count} messages", { count: String(row.messages) })} · {new Date(row.updatedAt).toLocaleString(lang === "zh" ? "zh-CN" : "en-US", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}</small>
-              {row.lastError && <p className="error">{row.lastError}</p>}
-            </div>
-            <div className="automation-actions">
-              <button type="button" className="btn danger" onClick={() => { const closed = closeAgent(agentsRef.current, row.name); if (closed.agents) { agentsRef.current = closed.agents; setAgents(closed.agents); } }}>{t("Close")}</button>
-            </div>
-          </li>)}</ul>}
-    </section>;
-  }
-
-  function renderCode() {
-    return <section className="view-page code-page">
-      <div className="page-head"><div><label>{t("DEVELOPER")}</label><h2>{t("Code")}</h2><p>{t("Symbol navigation by scanning the workspace: outline a file, find a definition, list references.")}</p></div></div>
-      <div className="card code-controls">
-        <label className="automation-field"><span>{t("Symbol")}</span><input value={codeSymbol} onChange={(event) => setCodeSymbol(event.target.value)} placeholder="streamTurn" /></label>
-        <div className="automation-actions">
-          <button type="button" className="btn primary" disabled={codeBusy || !codeSymbol.trim()} onClick={() => void runCode("definition")}>{t("Find definition")}</button>
-          <button type="button" className="btn" disabled={codeBusy || !codeSymbol.trim()} onClick={() => void runCode("references")}>{t("Find references")}</button>
-        </div>
-        <label className="automation-field"><span>{t("File")}</span><input value={codePath} onChange={(event) => setCodePath(event.target.value)} placeholder="src/main/code-nav.ts" /></label>
-        <div className="automation-actions">
-          <button type="button" className="btn" disabled={codeBusy || !codePath.trim()} onClick={() => void runCode("outline")}>{t("Outline file")}</button>
-        </div>
-      </div>
-      {codeResult && <div className="card code-results">
-        <h3 className="card-title">{t(codeResult.kind === "definition" ? "Definitions" : codeResult.kind === "references" ? "References" : "Outline")}</h3>
-        {codeResult.root && <p className="drawer-note">{tf("Workspace root: {root}", { root: codeResult.root })}</p>}
-        {codeResult.error && <p className="error">{codeResult.error}</p>}
-        {codeResult.rows.length === 0 && !codeResult.error ? <p className="drawer-note">{t("Nothing found.")}</p> : <ul className="code-list">{codeResult.rows.map((row, index) => <li key={index}><code>{row.label}</code><span>{row.preview}</span></li>)}</ul>}
-      </div>}
-    </section>;
-  }
-
-  function renderAutomation() {
+  async       function renderAutomation() {
     const form = automationForm;
     return <section className="view-page automation-page">
       <div className="page-head"><div><label>{t("DEVELOPER")}</label><h2>{t("Automation")}</h2><p>{t("Scheduled prompts: a task opens a new conversation and sends its prompt on the schedule you pick.")}</p></div>
@@ -3648,8 +3624,6 @@ function App() {
     if (active === "Terminal") return renderTerminal();
     if (active === "Jobs") return renderJobs();
     if (active === "Automation") return renderAutomation();
-    if (active === "Agents") return renderAgents();
-    if (active === "Code") return renderCode();
     if (active === "History") return renderHistory();
     if (active === "Gateway") return renderGateway();
     if (active === "Monitor") return renderMonitor();
@@ -3682,7 +3656,7 @@ function App() {
       <div className="palette" role="dialog" aria-label={t("Command palette")} onClick={(event) => event.stopPropagation()}>
         <input autoFocus className="palette-input" value={paletteQuery} placeholder={t("Type a command or a page…")} onChange={(event) => setPaletteQuery(event.target.value)} />
         <div className="palette-list">
-          {["Chat", "Models", "Gateway", "Plugins", "Terminal", "Jobs", "Automation", "Agents", "Code", "Changelog", "Support", "Settings"]
+          {["Chat", "Models", "Gateway", "Plugins", "Terminal", "Jobs", "Automation", "Changelog", "Support", "Settings"]
             .filter((page) => t(page).toLowerCase().includes(paletteQuery.toLowerCase()))
             .map((page) => <button type="button" key={page} className="palette-item" onClick={() => { setActive(page); setPaletteOpen(false); }}><span>{t(page)}</span><small>{t("Page")}</small></button>)}
           <button type="button" className="palette-item" onClick={() => { createSession(); setPaletteOpen(false); }}><span>{t("New chat")}</span><small>Ctrl+N</small></button>
