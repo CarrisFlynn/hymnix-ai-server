@@ -23,6 +23,7 @@ import { activeJobCount, filterJobs, findJob, formatElapsed, jobElapsed, jobForM
 import { buildSchedulePatch, isEmptyPatch, scheduleForModel, summarizeTask } from "./lib/schedule-view.js";
 import { allSkipped, buildAnswers, normalizeQuestions, type AskQuestion } from "./lib/ask.js";
 import { leafName, normalizeDeliverables, type Deliverable } from "./lib/deliverables.js";
+import { listSessionsView, searchSessions } from "./lib/session-view.js";
 import { createToolCallCollector } from "./lib/tool-stream.js";
 
 declare global { interface Window { hymnix: DesktopApi } }
@@ -73,6 +74,13 @@ const PLATFORM = typeof navigator !== "undefined" && /Mac/i.test(navigator.platf
 const SUBAGENT_TOOL_SPEC = { type: "function", function: { name: "subagent.run", description: "Delegate a self-contained task to a fresh context. The subagent cannot call tools; it reasons and returns text.", parameters: { type: "object", properties: { prompt: { type: "string" }, system: { type: "string" } }, required: ["prompt"], additionalProperties: false } } };
 const GOAL_TOOL_SPEC = { type: "function", function: { name: "goal.write", description: "Set the objective of this conversation's goal, or update its status/budget.", parameters: { type: "object", properties: { objective: { type: "string" }, status: { type: "string", enum: ["active", "paused", "complete"] }, maxRounds: { type: "number" } }, additionalProperties: false } } };
 const GOAL_READ_SPEC = { type: "function", function: { name: "goal.read", description: "Read the current goal, its status and remaining rounds.", parameters: { type: "object", properties: {}, additionalProperties: false } } };
+const WORKTREE_LIST_SPEC = { type: "function", function: { name: "worktree.list", description: "List the git worktrees of the current repository, with their branch and head commit. The first row is the main checkout.", parameters: { type: "object", properties: {}, additionalProperties: false } } };
+const WORKTREE_CREATE_SPEC = { type: "function", function: { name: "worktree.create", description: "Create a sibling git worktree on a new branch, so an experiment can run without touching the current checkout. The name becomes both the branch and the folder.", parameters: { type: "object", properties: { name: { type: "string", description: "Lowercase letters, digits and dashes, 2-41 chars" }, from: { type: "string", description: "Commit, branch or tag to start from; default HEAD" } }, required: ["name"], additionalProperties: false } } };
+const WORKTREE_REMOVE_SPEC = { type: "function", function: { name: "worktree.remove", description: "Remove a worktree created by worktree.create. The main checkout is refused.", parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"], additionalProperties: false } } };
+const LIST_SESSION_SPEC = { type: "function", function: { name: "list_session", description: "List saved conversations with id, title, message count and when they were last used. Newest first.", parameters: { type: "object", properties: { pinnedOnly: { type: "boolean" }, limit: { type: "number", description: "1-50, default 20" } }, additionalProperties: false } } };
+const SESSION_SEARCH_SPEC = { type: "function", function: { name: "session_search", description: "Search the text of every saved conversation. Returns the matching conversations with a short snippet around each hit, so you can point the user back to earlier work without them re-explaining it.", parameters: { type: "object", properties: { query: { type: "string" }, perSession: { type: "number", description: "Matching messages per conversation, 1-10, default 3" }, limit: { type: "number", description: "1-50, default 10" } }, required: ["query"], additionalProperties: false } } };
+const AGENT_WAIT_SPEC = { type: "function", function: { name: "agent.wait", description: "Wait for delegated agents to finish and collect their replies. Call it after agent.send when you need the result. Returns still_running for anything that outlasted the timeout.", parameters: { type: "object", properties: { names: { type: "array", items: { type: "string" }, description: "Agent names; omit to wait for every running agent" }, timeoutSeconds: { type: "number", description: "1-600, default 120" } }, additionalProperties: false } } };
+const AGENT_INTERRUPT_SPEC = { type: "function", function: { name: "agent.interrupt", description: "Stop a running agent and discard its answer. Use it when the task changed, not to retry.", parameters: { type: "object", properties: { name: { type: "string" } }, required: ["name"], additionalProperties: false } } };
 const ASK_USER_SPEC = { type: "function", function: { name: "ask_user_question", description: "Ask the user up to 4 questions and wait for the answer. Use it when a choice changes what you do next and you cannot decide it from the code. Each question may offer options (multi_select allows several); the user can always answer in their own words instead.", parameters: { type: "object", properties: { questions: { type: "array", items: { type: "object", properties: { id: { type: "string" }, question: { type: "string" }, header: { type: "string", description: "Short label, 1-3 words" }, options: { type: "array", items: { type: "object", properties: { label: { type: "string" }, description: { type: "string" } }, required: ["label"] } }, multi_select: { type: "boolean" } }, required: ["question"] } } }, required: ["questions"], additionalProperties: false } } };
 const PRESENT_SPEC = { type: "function", function: { name: "present", description: "Declare up to 4 files as the finished deliverables of this turn, so the user can open them. Paths may be workspace-relative or absolute and must already exist. Use it once at the end instead of listing files in prose.", parameters: { type: "object", properties: { files: { type: "array", items: { type: "object", properties: { path: { type: "string" }, description: { type: "string" } }, required: ["path"] } } }, required: ["files"], additionalProperties: false } } };
 const WEB_SEARCH_SPEC = { type: "function", function: { name: "web.search", description: "Search the web and get titles, URLs and snippets. Use it when you do not already know the address; follow up with web.fetch for a full page. Bing is tried first, Baidu second.", parameters: { type: "object", properties: { query: { type: "string" }, count: { type: "number", description: "1-20, default 8" }, provider: { type: "string", enum: ["auto", "bing", "baidu"] } }, required: ["query"], additionalProperties: false } } };
@@ -529,6 +537,8 @@ function App() {
   const [askPicked, setAskPicked] = useState<Record<string, string[]>>({});
   const [askCustom, setAskCustom] = useState<Record<string, string>>({});
   const askResolver = useRef<((answers: ReturnType<typeof buildAnswers>) => void) | null>(null);
+  /** One in-flight delegated completion per agent, so wait and interrupt have a target. */
+  const agentRunsRef = useRef(new Map<string, { requestId: string; said: string; run: Promise<{ ok: boolean; text?: string; error?: string }> }>());
   // present: files the model declared finished, shown above the composer.
   const [deliverables, setDeliverables] = useState<Deliverable[]>([]);
   // ---- shortcuts -----------------------------------------------------------
@@ -989,7 +999,7 @@ function App() {
   }
   const toolSpecs = useMemo(() => {
     const advertised = tools.filter((item) => ADVERTISED_TOOLS.has(item.name)).map((item) => ({ type: "function" as const, function: { name: item.name, description: item.description, parameters: item.schema } }));
-    return [TODO_TOOL_SPEC, SUBAGENT_TOOL_SPEC, AGENT_SPAWN_SPEC, AGENT_SEND_SPEC, AGENT_LIST_SPEC, AGENT_CLOSE_SPEC, CODE_OUTLINE_SPEC, CODE_DEFINITION_SPEC, CODE_REFERENCES_SPEC, GOAL_TOOL_SPEC, GOAL_READ_SPEC, SKILL_LIST_SPEC, SKILL_LOAD_SPEC, ASK_USER_SPEC, PRESENT_SPEC, WEB_SEARCH_SPEC, JOB_START_SPEC, JOB_LIST_SPEC, JOB_OUTPUT_SPEC, JOB_KILL_SPEC, SCHEDULE_LIST_SPEC, SCHEDULE_CREATE_SPEC, SCHEDULE_UPDATE_SPEC, SCHEDULE_REMOVE_SPEC, ...advertised];
+    return [TODO_TOOL_SPEC, SUBAGENT_TOOL_SPEC, AGENT_SPAWN_SPEC, AGENT_SEND_SPEC, AGENT_LIST_SPEC, AGENT_CLOSE_SPEC, CODE_OUTLINE_SPEC, CODE_DEFINITION_SPEC, CODE_REFERENCES_SPEC, GOAL_TOOL_SPEC, GOAL_READ_SPEC, SKILL_LIST_SPEC, SKILL_LOAD_SPEC, WORKTREE_LIST_SPEC, WORKTREE_CREATE_SPEC, WORKTREE_REMOVE_SPEC, LIST_SESSION_SPEC, SESSION_SEARCH_SPEC, AGENT_WAIT_SPEC, AGENT_INTERRUPT_SPEC, ASK_USER_SPEC, PRESENT_SPEC, WEB_SEARCH_SPEC, JOB_START_SPEC, JOB_LIST_SPEC, JOB_OUTPUT_SPEC, JOB_KILL_SPEC, SCHEDULE_LIST_SPEC, SCHEDULE_CREATE_SPEC, SCHEDULE_UPDATE_SPEC, SCHEDULE_REMOVE_SPEC, ...advertised];
   }, [tools]);
   useEffect(() => { toolSpecsRef.current = toolSpecs; }, [toolSpecs]);
   /**
@@ -1089,6 +1099,29 @@ function App() {
       if (!loaded.ok) return JSON.stringify({ ok: false, error: loaded.error || "not_found" });
       recordEvidence({ kind: "tool", title: "skill.load", detail: String(loaded.id || ""), status: "ok", durationMs: Math.round(performance.now() - started) });
       return JSON.stringify({ ok: true, id: loaded.id, content: loaded.content });
+    }
+    if (call.name === "worktree.list") {
+      const listed = await window.hymnix.worktree.list().catch((reason: unknown) => ({ ok: false, worktrees: undefined as undefined | Array<{ path: string; branch: string; head: string; bare: boolean; current: boolean }>, error: String(reason) }));
+      if (!listed.ok) return JSON.stringify({ ok: false, error: listed.error || "worktree_failed" });
+      return JSON.stringify({ ok: true, worktrees: listed.worktrees });
+    }
+    if (call.name === "worktree.create") {
+      const created = await window.hymnix.worktree.create({ name: String(args.name || ""), ...(args.from ? { from: String(args.from) } : {}) }).catch((reason: unknown) => ({ ok: false, path: undefined as string | undefined, branch: undefined as string | undefined, base: undefined as string | undefined, error: String(reason) }));
+      if (!created.ok) return JSON.stringify({ ok: false, error: created.error || "worktree_failed" });
+      recordEvidence({ kind: "tool", title: "worktree.create", detail: String(created.path || ""), status: "ok", durationMs: Math.round(performance.now() - started) });
+      return JSON.stringify({ ok: true, path: created.path, branch: created.branch, base: created.base });
+    }
+    if (call.name === "worktree.remove") {
+      const removed = await window.hymnix.worktree.remove({ path: String(args.path || "") }).catch((reason: unknown) => ({ ok: false, error: String(reason) as string | undefined }));
+      if (!removed.ok) return JSON.stringify({ ok: false, error: removed.error || "worktree_failed" });
+      return JSON.stringify({ ok: true });
+    }
+    if (call.name === "list_session") return JSON.stringify({ ok: true, ...listSessionsView(savedSessions, args) });
+    if (call.name === "session_search") {
+      const found = searchSessions(savedSessions, args);
+      if (found.error) return JSON.stringify({ ok: false, error: found.error });
+      recordEvidence({ kind: "tool", title: "session_search", detail: String(args.query || "").slice(0, 120) + " → " + found.total, status: "ok", durationMs: Math.round(performance.now() - started) });
+      return JSON.stringify({ ok: true, ...found });
     }
     if (call.name === "ask_user_question") {
       const questions = normalizeQuestions(args.questions);
@@ -1206,26 +1239,67 @@ function App() {
       const name = String(args.name || "").trim();
       const agent = agentsRef.current[name];
       if (!agent) return JSON.stringify({ ok: false, error: "no_agent" });
-      setSubagentRunning((current) => current.includes(name) ? current : current.concat([name]));
+      if (agentRunsRef.current.has(name)) return JSON.stringify({ ok: false, error: "already_running", name });
       const cloudTurn = source === "cloud";
       const base = cloudTurn ? cloudBase.trim() : (remoteActive() ? serverBase.trim() : gatewayBase);
       const key = cloudTurn ? cloudKey.trim() : (remoteActive() ? apiKey.trim() : "");
       const turnModel = cloudTurn ? (cloudModel.trim() || model) : model;
-      const history = wireMessages(agent).concat([{ role: "user", content: String(args.message || "").slice(0, 8000) }]);
-      const reply: { ok: boolean; text?: string; error?: string } = await window.hymnix.gateway.complete({
-        baseUrl: base, apiKey: key, model: turnModel,
+      const said = String(args.message || "").slice(0, 8000);
+      const requestId = "agent-" + crypto.randomUUID();
+      const history = wireMessages(agent).concat([{ role: "user", content: said }]);
+      setSubagentRunning((current) => current.includes(name) ? current : current.concat([name]));
+      // Deliberately not awaited: the caller keeps its turn and collects the
+      // answer with agent.wait, which is what makes several agents concurrent.
+      const run = window.hymnix.gateway.complete({
+        requestId, baseUrl: base, apiKey: key, model: turnModel,
         kind: cloudTurn ? providerKind : "openai",
         agentId: cloudTurn ? agentId.trim() : "",
         maxTokens: cloudTurn ? providerMaxTokens : 0,
         messages: history,
       }).catch((reason: unknown) => ({ ok: false, error: String(reason) } as { ok: boolean; text?: string; error?: string }));
-      const updated = appendExchange(agentsRef.current, name, String(args.message || ""), reply);
-      setSubagentRunning((current) => current.filter((item) => item !== name));
-      if ("error" in updated) return JSON.stringify({ ok: false, error: updated.error });
-      agentsRef.current = updated.agents || {};
-      setAgents(agentsRef.current);
-      recordEvidence({ kind: "tool", title: "agent.send " + name, detail: (reply.text || reply.error || "").slice(0, 140), status: reply.ok ? "ok" : "error", durationMs: Math.round(performance.now() - started) });
-      return JSON.stringify(reply.ok ? { ok: true, name, text: reply.text } : { ok: false, name, error: reply.error });
+      agentRunsRef.current.set(name, { requestId, said, run });
+      void run.then((reply) => {
+        agentRunsRef.current.delete(name);
+        setSubagentRunning((current) => current.filter((item) => item !== name));
+        const updated = appendExchange(agentsRef.current, name, said, reply);
+        if (!("error" in updated)) { agentsRef.current = updated.agents || {}; setAgents(agentsRef.current); }
+        recordEvidence({ kind: "tool", title: "agent.send " + name, detail: (reply.text || reply.error || "").slice(0, 140), status: reply.ok ? "ok" : "error", durationMs: null });
+      });
+      return JSON.stringify({ ok: true, name, status: "running", requestId });
+    }
+    if (call.name === "agent.wait") {
+      const names = Array.isArray(args.names) && args.names.length
+        ? (args.names as unknown[]).map((item) => String(item).trim()).filter(Boolean)
+        : [...agentRunsRef.current.keys()];
+      if (!names.length) return JSON.stringify({ ok: true, finished: [] });
+      const rawTimeout = Number(args.timeoutSeconds);
+      const seconds = Math.min(Math.max(Number.isFinite(rawTimeout) ? rawTimeout : 120, 1), 600);
+      const results: Array<{ name: string; status: string; text?: string; error?: string }> = [];
+      for (const name of names) {
+        const entry = agentRunsRef.current.get(name);
+        if (!entry) {
+          const agent = agentsRef.current[name];
+          if (!agent) { results.push({ name, status: "no_agent" }); continue; }
+          const last = [...agent.messages].reverse().find((item) => item.role === "assistant");
+          results.push({ name, status: "idle", ...(last ? { text: String(last.content).slice(0, 8000) } : {}), ...(agent.lastError ? { error: agent.lastError } : {}) });
+          continue;
+        }
+        const settled = await Promise.race([
+          entry.run.then((reply) => reply),
+          new Promise<{ ok: false; error: string }>((resolve) => window.setTimeout(() => resolve({ ok: false, error: "wait_timeout" }), seconds * 1000)),
+        ]);
+        results.push(settled.ok ? { name, status: "done", text: settled.text } : { name, status: settled.error === "wait_timeout" ? "still_running" : "error", error: settled.error });
+      }
+      return JSON.stringify({ ok: true, finished: results });
+    }
+    if (call.name === "agent.interrupt") {
+      const name = String(args.name || "").trim();
+      const entry = agentRunsRef.current.get(name);
+      if (!entry) return JSON.stringify({ ok: false, error: "not_running", name });
+      // The abort reaches the fetch in the main process; the promise then settles
+      // as an error and the run is cleared by the same handler that started it.
+      window.hymnix.gateway.completeCancel(entry.requestId);
+      return JSON.stringify({ ok: true, name, status: "interrupted" });
     }
     if (call.name === "agent.list") return JSON.stringify({ ok: true, agents: listAgents(agentsRef.current) });
     if (call.name === "agent.close") {

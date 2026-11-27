@@ -274,7 +274,9 @@ export type GatewayApi = {
   models: (apiKey: string) => Promise<GatewayModelsResponse>;
   streamChat: (input: StreamChatInput) => Promise<void>;
   /** One non-streaming completion, used by delegated subagents. */
-  complete: (input: { baseUrl: string; apiKey?: string; model: string; kind?: string; agentId?: string; maxTokens?: number; system?: string; prompt?: string; messages?: { role: string; content: string }[] }) => Promise<{ ok: boolean; text?: string; error?: string }>;
+  complete: (input: { requestId?: string; baseUrl: string; apiKey?: string; model: string; kind?: string; agentId?: string; maxTokens?: number; system?: string; prompt?: string; messages?: { role: string; content: string }[] }) => Promise<{ ok: boolean; text?: string; error?: string }>;
+  /** Stop one delegated completion by the requestId it was started with. */
+  completeCancel: (requestId: string) => void;
   cancelChat: (requestId: string) => void;
   adminStatus?: (adminKey: string) => Promise<AdminStatus>;
   adminErrors?: (adminKey: string, limit?: number) => Promise<AdminErrorRecord[]>;
@@ -710,12 +712,20 @@ export type WebSearchApi = {
   search: (input: { query: string; count?: number; provider?: "auto" | "bing" | "baidu" }) => Promise<{ ok: boolean; provider?: string; query?: string; hits?: WebSearchHit[]; error?: string }>;
 };
 
+export type WorktreeRow = { path: string; branch: string; head: string; bare: boolean; current: boolean };
+
+export type WorktreeApi = {
+  list: () => Promise<{ ok: boolean; worktrees?: WorktreeRow[]; error?: string }>;
+  create: (input: { name?: string; from?: string }) => Promise<{ ok: boolean; path?: string; branch?: string; base?: string; error?: string }>;
+  remove: (input: { path: string }) => Promise<{ ok: boolean; error?: string }>;
+};
 export type DesktopApi = {
   code: CodeNavApi;
   skills: SkillsApi;
   automation: AutomationApi;
   jobs: JobsApi;
   web: WebSearchApi;
+  worktree: WorktreeApi;
   gateway: GatewayApi;
   workspace: WorkspaceApi;
   files: FilesApi;

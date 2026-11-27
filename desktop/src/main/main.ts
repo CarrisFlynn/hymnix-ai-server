@@ -1,4 +1,5 @@
 import { searchWeb } from "./web-search.ts";
+import { createWorktree, listWorktrees, removeWorktree } from "./worktree.ts";
 import {app,BrowserWindow,Menu,Notification,Tray,WebContentsView,dialog,ipcMain,net,nativeTheme,protocol,safeStorage,screen,session,shell} from "electron";
 import {basename,extname,isAbsolute,join,relative,resolve,sep} from "node:path";
 import {pathToFileURL} from "node:url";
@@ -716,6 +717,33 @@ function skillDirectories(): string[] {
   return [join(app.getPath("userData"), "skills"), join(app.getAppPath(), "skills")];
 }
 
+/** Git worktrees live beside the checkout; the root is the one the app already uses. */
+function registerWorktreeIpc(): void {
+  ipcMain.handle("worktree:list", async (event) => { assertSender(event); return await listWorktrees(workspaceCwd(undefined)); });
+  ipcMain.handle("worktree:create", async (event, raw: unknown) => {
+    assertSender(event);
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error(JSON.stringify({ code: "invalid_request", message: "Invalid worktree request" }));
+    return await createWorktree(workspaceCwd(undefined), raw as { name?: unknown; from?: unknown });
+  });
+  ipcMain.handle("worktree:remove", async (event, raw: unknown) => {
+    assertSender(event);
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error(JSON.stringify({ code: "invalid_request", message: "Invalid worktree request" }));
+    return await removeWorktree(workspaceCwd(undefined), raw as { path?: unknown });
+  });
+}
+
+/** Completions in flight, so an agent can be interrupted instead of only ignored. */
+const activeCompletes = new Map<string, AbortController>();
+
+/** Stop one delegated completion; the renderer treats it as an interrupt. */
+function registerCompleteCancelIpc(): void {
+  ipcMain.on("gateway:complete-cancel", (event, rawId: unknown) => {
+    try { assertSender(event); } catch { return; }
+    if (typeof rawId !== "string") return;
+    activeCompletes.get(rawId)?.abort();
+  });
+}
+
 /** One non-streaming completion for a delegated subagent (no tools). */
 function registerCompleteIpc(): void {
   ipcMain.handle("gateway:complete", async (event, raw: unknown) => {
@@ -739,6 +767,8 @@ function registerCompleteIpc(): void {
     const baseUrl = typeof value.baseUrl === "string" ? value.baseUrl : "";
     if (!model || !baseUrl) throw new Error(JSON.stringify({ code: "invalid_request", message: "model and baseUrl are required" }));
     const controller = new AbortController();
+    const completeId = typeof value.requestId === "string" ? value.requestId.slice(0, 64) : "";
+    if (completeId) activeCompletes.set(completeId, controller);
     const timer = setTimeout(() => controller.abort(), 180_000);
     let text = "";
     try {
@@ -761,6 +791,7 @@ function registerCompleteIpc(): void {
       return { ok: false, error: (error instanceof Error ? error.message : String(error)).slice(0, 300) };
     } finally {
       clearTimeout(timer);
+      if (completeId) activeCompletes.delete(completeId);
     }
   });
 }
@@ -1389,7 +1420,9 @@ registerAutomationIpc();
 registerSkillsIpc();
 registerCodeIpc();
 registerCompleteIpc();
+registerCompleteCancelIpc();
 registerWebIpc();
+registerWorktreeIpc();
 registerPluginsIpc();
 
 registerGatewayIpc();

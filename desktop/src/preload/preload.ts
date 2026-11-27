@@ -147,6 +147,11 @@ const api: DesktopApi & { adminHistory: (adminKey: string, query?: AdminHistoryQ
       return () => { ipcRenderer.removeListener("automation:update", handler); };
     },
   },
+  worktree: {
+    list: () => ipcRenderer.invoke("worktree:list"),
+    create: (input: { name?: string; from?: string }) => ipcRenderer.invoke("worktree:create", input),
+    remove: (input: { path: string }) => ipcRenderer.invoke("worktree:remove", input),
+  },
   web: {
     search: (input) => ipcRenderer.invoke("web:search", input),
   },
@@ -185,5 +190,6 @@ const api: DesktopApi & { adminHistory: (adminKey: string, query?: AdminHistoryQ
     });
   },
   complete: (input: unknown): Promise<{ ok: boolean; text?: string; error?: string }> => ipcRenderer.invoke("gateway:complete", input),
+  completeCancel: (requestId: string): void => { ipcRenderer.send("gateway:complete-cancel", requestId); },
 } };
 contextBridge.exposeInMainWorld("hymnix", api);
