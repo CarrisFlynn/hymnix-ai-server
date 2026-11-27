@@ -647,6 +647,8 @@ export type JobsApi = {
   list: () => Promise<{ ok: boolean; jobs: JobView[] }>;
   start: (request: JobStartRequest) => Promise<{ ok: boolean; job?: JobView; error?: string }>;
   stop: (id: string) => Promise<{ ok: boolean; id: string }>;
+  /** One job with its output tail, for a single lookup. */
+  read: (id: string) => Promise<{ ok: boolean; job?: JobView }>;
   clear: () => Promise<{ ok: boolean }>;
   /** One job changed status. */
   onUpdate: (listener: (job: JobView) => void) => () => void;

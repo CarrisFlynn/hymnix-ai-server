@@ -25,3 +25,8 @@ export declare function formatElapsed(ms: number | null | undefined): string;
 export declare function filterJobs<T extends JobView>(jobs: T[] | null | undefined, filter: JobFilter): T[];
 export declare function jobStatusLabel(status: string): string;
 export declare function jobSummary(job: JobView | null | undefined): string;
+
+export declare function summarizeJob(job: JobView | null | undefined, now?: number): Record<string, unknown> | null;
+export declare function jobForModel(jobs: JobView[] | null | undefined, input?: { status?: string; limit?: number }, now?: number): { total: number; jobs: Array<Record<string, unknown> | null> };
+export declare function findJob<T extends JobView>(jobs: T[] | null | undefined, id: string): { job: T } | { error: string };
+export declare function tailOutput(text: string | null | undefined, maxChars?: number): { text: string; truncated: boolean };

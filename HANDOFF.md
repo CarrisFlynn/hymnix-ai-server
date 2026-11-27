@@ -32,7 +32,7 @@
 | 本地分支 | `main`，远端 `origin` = CarrisFlynn/hymnix-ai-server |
 | 本地领先远端 | **9 个提交**（见下），**未推送** |
 | 已发布到 GitHub 的版本 | v1.4.0、v1.4.1、v1.4.2（三个 Release 都有 4 个附件） |
-| 未发布的新能力 | shell.run、fs.edit、patch.apply、term.*、subagent.run、agent.*、goal.*、skill.*、code.*、会话面板 |
+| 未发布的新能力 | shell.run、fs.edit、patch.apply、term.*、subagent.run、agent.*、goal.*、skill.*、code.*、job.*、schedule.*、会话面板 |
 | 测试 | `pnpm check` = **85 项全过**，typecheck 过，设计令牌过，对比度 279/279 |
 | 本地产物 | `release/` 下 1.3.3 / 1.4.0 / 1.4.1 / 1.4.2 四套 Setup+Portable |
 | gh CLI | `C:\Program Files\GitHub CLI\gh.exe`，已登录 `CarrisFlynn`（scope: repo） |
@@ -49,7 +49,7 @@
 8. `ce210f2` 分区排序 + 行详情 + 树 + 任务分区
 9. `fa991be` 子代理可继续 + 键盘排序 + 焦点陷阱
 
-> 注：`4c7b1a3`（本文）之后又加了 1 个仓库卫生提交（探针产物移出仓库 + `.gitignore`），本地领先远端为 **11 个**。
+> 注：`4c7b1a3`（本文）之后又加了仓库卫生与 `job.*`/`schedule.*` 两个本地提交，领先数会随提交增长——**以 `git rev-list --count origin/main..HEAD` 为准，不要抄这个数字**。
 
 ---
 
@@ -85,6 +85,8 @@
 | 技能 | `skill.list/load` | 磁盘发现 + 读回 |
 | 代码导航 | `code.outline/definition/references` | `streamTurn` → `src/renderer/main.tsx:931`；8 处引用 |
 | 会话面板 | 右侧浮层：环境 / 子智能体 / 任务 | 截图 `docs/audit-1.4.0/session-panel*.png` |
+| 后台任务工具化 | `job.list` / `job.output` / `job.kill` | 真 Electron：`echo` 任务 exit 0、输出含 marker、kill 后 `cancelled` |
+| 定时任务工具化 | `schedule.list/create/update/remove` | 真 Electron：建 → 暂停（nextAt=null）→ 恢复 → 拒非法规则 → 删 |
 
 会话面板行为：DSH 风格的 header 开关、Esc/外部点击关闭、Tab 焦点陷阱、Esc 归还焦点；分区可拖拽也可用 ↑↓ 排序（存 `hymnix.panel.order.v1`）；子代理树支持 parent/缩进/展开；点名字进详情，详情内有输入框可继续对话（走同一补全通道）。
 

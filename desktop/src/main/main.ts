@@ -655,6 +655,11 @@ function registerJobsIpc(): void {
     return { ok: jobCenter.stop(rawId), id: rawId };
   });
   ipcMain.handle("jobs:clear", (event) => { assertSender(event); jobCenter.clear(); return { ok: true }; });
+  ipcMain.handle("jobs:read", (event, rawId: unknown) => {
+    assertSender(event);
+    if (typeof rawId !== "string" || !rawId.trim() || rawId.length > 128) throw new Error(JSON.stringify({ code: "invalid_request", message: "Invalid job id" }));
+    return { ok: true, job: jobCenter.get(rawId.trim()) || undefined };
+  });
 }
 
 /** Scheduled-task IPC: the store lives in the main process. */

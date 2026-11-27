@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import type { ApprovalRecord, DesktopApi, GatewayHealth, PluginDescriptor, ProviderKind, ProviderProfile, TerminalBridgeReply, ToolDescriptor } from "../shared/protocol";
+import type { ApprovalRecord, AutomationTask, DesktopApi, GatewayHealth, PluginDescriptor, ProviderKind, ProviderProfile, TerminalBridgeReply, ToolDescriptor, JobView, ScheduleRule } from "../shared/protocol";
 import "../styles/index.css";
 import "./styles.css";
 import "./orbit-v2.css";
@@ -19,7 +19,8 @@ import { ModelCombobox, PasswordMeter, QrCode, SkeletonList, ErrorPanel, Tooltip
 import { estimateTokens, parseSlashCommand, classifyConnectError, downloadBytes } from "./lib/pure.js";
 import { DEFAULT_SHORTCUTS, bindingKeycaps, eventBinding, findConflicts, matchesBinding, resolveShortcuts, shortcutGroups, withOverride, withoutOverride, type ShortcutOverrides } from "./lib/shortcuts.js";
 import { activeStep, applyTodos, attachEvidence, createPlan, formatDuration as formatPlanDuration, markStep, planPercent, planStats, type PlanState, type PlanStep, type PlanStatus } from "./lib/plan.js";
-import { activeJobCount, filterJobs, formatElapsed, jobElapsed, jobStatusLabel, mergeJob, sortJobs } from "./lib/jobs.js";
+import { activeJobCount, filterJobs, findJob, formatElapsed, jobElapsed, jobForModel, jobStatusLabel, mergeJob, sortJobs, summarizeJob, tailOutput } from "./lib/jobs.js";
+import { buildSchedulePatch, isEmptyPatch, scheduleForModel, summarizeTask } from "./lib/schedule-view.js";
 import { createToolCallCollector } from "./lib/tool-stream.js";
 
 declare global { interface Window { hymnix: DesktopApi } }
@@ -70,6 +71,13 @@ const PLATFORM = typeof navigator !== "undefined" && /Mac/i.test(navigator.platf
 const SUBAGENT_TOOL_SPEC = { type: "function", function: { name: "subagent.run", description: "Delegate a self-contained task to a fresh context. The subagent cannot call tools; it reasons and returns text.", parameters: { type: "object", properties: { prompt: { type: "string" }, system: { type: "string" } }, required: ["prompt"], additionalProperties: false } } };
 const GOAL_TOOL_SPEC = { type: "function", function: { name: "goal.write", description: "Set the objective of this conversation's goal, or update its status/budget.", parameters: { type: "object", properties: { objective: { type: "string" }, status: { type: "string", enum: ["active", "paused", "complete"] }, maxRounds: { type: "number" } }, additionalProperties: false } } };
 const GOAL_READ_SPEC = { type: "function", function: { name: "goal.read", description: "Read the current goal, its status and remaining rounds.", parameters: { type: "object", properties: {}, additionalProperties: false } } };
+const JOB_LIST_SPEC = { type: "function", function: { name: "job.list", description: "List background jobs (shell commands, model downloads, gateway restarts) with status, elapsed time and exit code. Filter with status=running or status=finished.", parameters: { type: "object", properties: { status: { type: "string", enum: ["all", "running", "finished"] }, limit: { type: "number", description: "1-100, default 20" } }, additionalProperties: false } } };
+const JOB_OUTPUT_SPEC = { type: "function", function: { name: "job.output", description: "Read the tail of one background job\u0027s output. Use job.list first to get the id.", parameters: { type: "object", properties: { id: { type: "string" }, maxChars: { type: "number", description: "200-64000, default 8000" } }, required: ["id"], additionalProperties: false } } };
+const JOB_KILL_SPEC = { type: "function", function: { name: "job.kill", description: "Cancel a running background job and kill its process tree. Finished jobs cannot be killed.", parameters: { type: "object", properties: { id: { type: "string" } }, required: ["id"], additionalProperties: false } } };
+const SCHEDULE_LIST_SPEC = { type: "function", function: { name: "schedule.list", description: "List scheduled tasks: title, rule, whether enabled, and when each one next runs.", parameters: { type: "object", properties: { enabledOnly: { type: "boolean" }, limit: { type: "number", description: "1-100, default 50" } }, additionalProperties: false } } };
+const SCHEDULE_CREATE_SPEC = { type: "function", function: { name: "schedule.create", description: "Create a scheduled task. It sends a prompt to a fresh conversation when it fires. The rule is one of: {kind:\"at\", at:<epoch ms>}, {kind:\"every\", seconds:>=60}, {kind:\"daily\", time:\"HH:MM\"}, {kind:\"weekly\", time:\"HH:MM\", weekdays:[0-6]}.", parameters: { type: "object", properties: { title: { type: "string" }, prompt: { type: "string" }, rule: { type: "object", description: "See the description for the four accepted shapes." } }, required: ["title", "prompt", "rule"], additionalProperties: false } } };
+const SCHEDULE_UPDATE_SPEC = { type: "function", function: { name: "schedule.update", description: "Change a scheduled task: title, prompt, rule, or enabled. Sending only {enabled:false} pauses it; {enabled:true} resumes it.", parameters: { type: "object", properties: { id: { type: "string" }, title: { type: "string" }, prompt: { type: "string" }, rule: { type: "object" }, enabled: { type: "boolean" } }, required: ["id"], additionalProperties: false } } };
+const SCHEDULE_REMOVE_SPEC = { type: "function", function: { name: "schedule.remove", description: "Delete a scheduled task permanently. Prefer schedule.update with enabled false when you only want to pause it.", parameters: { type: "object", properties: { id: { type: "string" } }, required: ["id"], additionalProperties: false } } };
 const SKILL_LIST_SPEC = { type: "function", function: { name: "skill.list", description: "List installed skills (id, name, one-line description).", parameters: { type: "object", properties: {}, additionalProperties: false } } };
 const SKILL_LOAD_SPEC = { type: "function", function: { name: "skill.load", description: "Load one skill's full instructions by id before doing a task it covers.", parameters: { type: "object", properties: { id: { type: "string" } }, required: ["id"], additionalProperties: false } } };
 const AGENT_SPAWN_SPEC = { type: "function", function: { name: "agent.spawn", description: "Create a named agent with its own conversation history.", parameters: { type: "object", properties: { name: { type: "string" }, system: { type: "string" } }, required: ["name"], additionalProperties: false } } };
@@ -468,6 +476,8 @@ function App() {
   // ---- plan / evidence -----------------------------------------------------
   const [plan, setPlan] = useState<PlanState | null>(null);
   const planRef = useRef<PlanState | null>(null);
+  /** Dev hook: a probe reads the exact tool list the model is offered. */
+  const toolSpecsRef = useRef<Array<{ function: { name: string } }>>([]);
   const [evidence, setEvidence] = useState<Evidence[]>([]);
   const [openStepId, setOpenStepId] = useState<string | null>(null);
   const [loopState, setLoopState] = useState<{ round: number; waitingFor: string } | null>(null);
@@ -916,8 +926,9 @@ function App() {
   }
   const toolSpecs = useMemo(() => {
     const advertised = tools.filter((item) => ADVERTISED_TOOLS.has(item.name)).map((item) => ({ type: "function" as const, function: { name: item.name, description: item.description, parameters: item.schema } }));
-    return [TODO_TOOL_SPEC, SUBAGENT_TOOL_SPEC, AGENT_SPAWN_SPEC, AGENT_SEND_SPEC, AGENT_LIST_SPEC, AGENT_CLOSE_SPEC, CODE_OUTLINE_SPEC, CODE_DEFINITION_SPEC, CODE_REFERENCES_SPEC, GOAL_TOOL_SPEC, GOAL_READ_SPEC, SKILL_LIST_SPEC, SKILL_LOAD_SPEC, ...advertised];
+    return [TODO_TOOL_SPEC, SUBAGENT_TOOL_SPEC, AGENT_SPAWN_SPEC, AGENT_SEND_SPEC, AGENT_LIST_SPEC, AGENT_CLOSE_SPEC, CODE_OUTLINE_SPEC, CODE_DEFINITION_SPEC, CODE_REFERENCES_SPEC, GOAL_TOOL_SPEC, GOAL_READ_SPEC, SKILL_LIST_SPEC, SKILL_LOAD_SPEC, JOB_LIST_SPEC, JOB_OUTPUT_SPEC, JOB_KILL_SPEC, SCHEDULE_LIST_SPEC, SCHEDULE_CREATE_SPEC, SCHEDULE_UPDATE_SPEC, SCHEDULE_REMOVE_SPEC, ...advertised];
   }, [tools]);
+  useEffect(() => { toolSpecsRef.current = toolSpecs; }, [toolSpecs]);
   /**
    * Some local models cannot emit structured tool_calls and answer with the call
    * as plain JSON text instead (qwen2.5-coder does exactly this through Ollama).
@@ -1015,6 +1026,58 @@ function App() {
       if (!loaded.ok) return JSON.stringify({ ok: false, error: loaded.error || "not_found" });
       recordEvidence({ kind: "tool", title: "skill.load", detail: String(loaded.id || ""), status: "ok", durationMs: Math.round(performance.now() - started) });
       return JSON.stringify({ ok: true, id: loaded.id, content: loaded.content });
+    }
+    if (call.name === "job.list") {
+      const listing = await window.hymnix.jobs.list().catch((reason: unknown) => ({ ok: false, jobs: [] as JobView[], error: String(reason) }));
+      if (listing.ok === false) return JSON.stringify({ ok: false, error: (listing as { error?: string }).error || "jobs_unavailable" });
+      return JSON.stringify({ ok: true, ...jobForModel(listing.jobs || [], args) });
+    }
+    if (call.name === "job.output") {
+      const wanted = String(args.id || "").trim();
+      if (!wanted) return JSON.stringify({ ok: false, error: "id_required" });
+      let job: JobView | undefined = (await window.hymnix.jobs.read(wanted).catch(() => ({ ok: false, job: undefined as JobView | undefined }))).job;
+      if (!job) {
+        const listing = await window.hymnix.jobs.list().catch(() => ({ ok: false, jobs: [] as JobView[] }));
+        const found = findJob(listing.jobs || [], wanted);
+        if ("error" in found) return JSON.stringify({ ok: false, error: found.error });
+        job = found.job;
+      }
+      const tail = tailOutput(job.output || "", Number(args.maxChars) || 8000);
+      recordEvidence({ kind: "tool", title: "job.output", detail: job.title.slice(0, 100), status: "ok", durationMs: Math.round(performance.now() - started) });
+      return JSON.stringify({ ok: true, id: job.id, title: job.title, status: job.status, exitCode: job.exitCode, elapsedMs: jobElapsed(job), truncated: tail.truncated, output: tail.text });
+    }
+    if (call.name === "job.kill") {
+      const listing = await window.hymnix.jobs.list().catch(() => ({ ok: false, jobs: [] as JobView[] }));
+      const found = findJob(listing.jobs || [], String(args.id || ""));
+      if ("error" in found) return JSON.stringify({ ok: false, error: found.error });
+      if (found.job.status !== "running") return JSON.stringify({ ok: false, error: "not_running", id: found.job.id, status: found.job.status });
+      const stopped = await window.hymnix.jobs.stop(found.job.id).catch((reason: unknown) => ({ ok: false, error: String(reason) }));
+      recordEvidence({ kind: "tool", title: "job.kill", detail: found.job.title.slice(0, 100), status: stopped.ok ? "ok" : "error", durationMs: Math.round(performance.now() - started) });
+      return JSON.stringify({ ok: Boolean(stopped.ok), id: found.job.id, ...(stopped.ok ? {} : { error: (stopped as { error?: string }).error || "kill_failed" }) });
+    }
+    if (call.name === "schedule.list") {
+      const listing = await window.hymnix.automation.list().catch((reason: unknown) => ({ ok: false, tasks: [] as AutomationTask[], error: String(reason) }));
+      if (listing.ok === false) return JSON.stringify({ ok: false, error: (listing as { error?: string }).error || "schedules_unavailable" });
+      return JSON.stringify({ ok: true, ...scheduleForModel(listing.tasks || [], args) });
+    }
+    if (call.name === "schedule.create") {
+      const created = await window.hymnix.automation.create({ title: String(args.title || ""), prompt: String(args.prompt || ""), rule: args.rule as ScheduleRule }).catch((reason: unknown) => ({ ok: false, error: String(reason) } as { ok: boolean; task?: AutomationTask; error?: string }));
+      if (!created.ok) return JSON.stringify({ ok: false, error: created.error || "create_failed" });
+      recordEvidence({ kind: "tool", title: "schedule.create", detail: String(created.task?.title || "").slice(0, 100), status: "ok", durationMs: Math.round(performance.now() - started) });
+      return JSON.stringify({ ok: true, task: summarizeTask(created.task) });
+    }
+    if (call.name === "schedule.update") {
+      const patch = buildSchedulePatch(args as Record<string, unknown>);
+      if (isEmptyPatch(patch)) return JSON.stringify({ ok: false, error: "no_fields" });
+      const updated = await window.hymnix.automation.update(String(args.id || ""), patch).catch((reason: unknown) => ({ ok: false, error: String(reason) } as { ok: boolean; task?: AutomationTask; error?: string }));
+      if (!updated.ok) return JSON.stringify({ ok: false, error: updated.error || "update_failed" });
+      recordEvidence({ kind: "tool", title: "schedule.update", detail: String(updated.task?.title || "").slice(0, 100), status: "ok", durationMs: Math.round(performance.now() - started) });
+      return JSON.stringify({ ok: true, task: summarizeTask(updated.task) });
+    }
+    if (call.name === "schedule.remove") {
+      const removed = await window.hymnix.automation.remove(String(args.id || "")).catch((reason: unknown) => ({ ok: false, error: String(reason) }));
+      recordEvidence({ kind: "tool", title: "schedule.remove", detail: String(args.id || ""), status: removed.ok ? "ok" : "error", durationMs: Math.round(performance.now() - started) });
+      return JSON.stringify({ ok: Boolean(removed.ok), ...(removed.ok ? {} : { error: (removed as { error?: string }).error || "not_found" }) });
     }
     if (call.name === "agent.spawn") {
       const spawned = spawnAgent(agentsRef.current, String(args.name || ""), String(args.system || ""), String(args.parent || ""));
@@ -1366,6 +1429,7 @@ function App() {
   // Playwright visual baselines drive pages and themes through this hook.
   useEffect(() => {
     (window as any).__hymnixDev = {
+      toolNames: () => toolSpecsRef.current.map((spec) => spec.function.name),
       navigate: (page: string) => setActive(page),
       applyTheme: (id: string) => changeTheme(id),
       setSettingsSection: (section: string) => { setActive("Settings"); setSettingsSection(section); },

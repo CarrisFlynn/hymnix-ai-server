@@ -25,7 +25,14 @@ export class JobCenter {
   private readonly jobs = new Map<string, LiveJob>();
   private sequence = 0;
 
-  constructor(private readonly publish: JobPublish) {}
+  // Explicit field instead of a parameter property: Node's strip-only TypeScript
+  // loader cannot parse parameter properties, which would make this class
+  // unimportable from the test runner.
+  private readonly publish: JobPublish;
+
+  constructor(publish: JobPublish) {
+    this.publish = publish;
+  }
 
   /** Start tracking one unit of work. */
   create(input: { kind: JobKind; title: string; command?: string }): JobView {

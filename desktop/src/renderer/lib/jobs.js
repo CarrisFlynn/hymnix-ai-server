@@ -74,3 +74,53 @@ export function jobSummary(job) {
   if (job.status === "failed") return job.error || "Failed";
   return job.exitCode == null ? "Done" : "Exit " + job.exitCode;
 }
+
+/** Model-facing row: no output, bounded strings, elapsed instead of raw timestamps. */
+export function summarizeJob(job, now = Date.now()) {
+  if (!job || !job.id) return null;
+  const row = {
+    id: job.id,
+    kind: job.kind,
+    title: String(job.title || "").slice(0, 120),
+    status: job.status,
+    elapsedMs: jobElapsed(job, now),
+  };
+  if (job.command) row.command = String(job.command).slice(0, 400);
+  if (job.status !== "running") {
+    row.exitCode = job.exitCode == null ? null : job.exitCode;
+    row.error = String(job.error || "").slice(0, 300);
+  }
+  return row;
+}
+
+/** Filter and cap the list one tool call returns; the model never gets 50 rows. */
+export function jobForModel(jobs, input = {}, now = Date.now()) {
+  const status = String(input.status || "all");
+  const filter = status === "running" ? "running" : status === "finished" ? "finished" : "all";
+  const raw = Number(input.limit);
+  const limit = Math.min(Math.max(Number.isFinite(raw) ? raw : 20, 1), 100);
+  const rows = filterJobs(jobs, filter);
+  return { total: rows.length, jobs: rows.slice(0, limit).map((job) => summarizeJob(job, now)) };
+}
+
+/** Exact id first, then a unique prefix: the model echoes the short form a lot. */
+export function findJob(jobs, id) {
+  const wanted = String(id || "").trim();
+  if (!wanted) return { error: "id_required" };
+  const list = jobs || [];
+  const exact = list.find((job) => job.id === wanted);
+  if (exact) return { job: exact };
+  const prefixed = list.filter((job) => job.id.startsWith(wanted));
+  if (prefixed.length === 1) return { job: prefixed[0] };
+  if (prefixed.length > 1) return { error: "ambiguous_id" };
+  return { error: "not_found" };
+}
+
+/** The end of a log is the useful part; the start is usually noise. */
+export function tailOutput(text, maxChars = 8000) {
+  const value = String(text == null ? "" : text);
+  const raw = Number(maxChars);
+  const cap = Math.min(Math.max(Number.isFinite(raw) ? raw : 8000, 200), 64000);
+  if (value.length <= cap) return { text: value, truncated: false };
+  return { text: value.slice(value.length - cap), truncated: true };
+}

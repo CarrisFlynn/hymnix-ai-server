@@ -150,6 +150,7 @@ const api: DesktopApi & { adminHistory: (adminKey: string, query?: AdminHistoryQ
     list: (): Promise<{ ok: boolean; jobs: JobView[] }> => ipcRenderer.invoke("jobs:list"),
     start: (request) => ipcRenderer.invoke("jobs:start", request),
     stop: (id: string): Promise<{ ok: boolean; id: string }> => ipcRenderer.invoke("jobs:stop", id),
+    read: (id: string): Promise<{ ok: boolean; job?: JobView }> => ipcRenderer.invoke("jobs:read", id),
     clear: (): Promise<{ ok: boolean }> => ipcRenderer.invoke("jobs:clear"),
     onUpdate: (listener: (job: JobView) => void) => {
       const handler = (_e: Electron.IpcRendererEvent, job: JobView) => listener(job);
