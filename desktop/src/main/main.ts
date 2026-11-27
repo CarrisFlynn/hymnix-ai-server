@@ -1,6 +1,7 @@
 import { searchWeb } from "./web-search.ts";
 import { createWorktree, listWorktrees, removeWorktree } from "./worktree.ts";
 import { runLspQuery } from "./lsp.ts";
+import { runProgram } from "./run-code.ts";
 import {app,BrowserWindow,Menu,Notification,Tray,WebContentsView,dialog,ipcMain,net,nativeTheme,protocol,safeStorage,screen,session,shell} from "electron";
 import {basename,extname,isAbsolute,join,relative,resolve,sep} from "node:path";
 import {pathToFileURL} from "node:url";
@@ -763,6 +764,43 @@ function locateBundledLsp(): string {
   return "";
 }
 
+/**
+ * run_code: the program executes in a child process, and every tool it calls
+ * comes back here and is forwarded to the renderer, so the approval queue and the
+ * plan/evidence bookkeeping still see it.
+ */
+let runCallSeq = 0;
+const runCallWaiters = new Map<number, (value: { result?: unknown; error?: string }) => void>();
+
+function registerRunCodeIpc(): void {
+  ipcMain.on("run:reply", (event, raw: unknown) => {
+    try { assertSender(event); } catch { return; }
+    const v = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+    const id = Number(v.id) || 0;
+    const settle = runCallWaiters.get(id);
+    if (!settle) return;
+    runCallWaiters.delete(id);
+    settle({ ...(v.error !== undefined ? { error: String(v.error) } : { result: v.result }) });
+  });
+  ipcMain.handle("run:code", async (event, raw: unknown) => {
+    assertSender(event);
+    const v = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+    const sender = event.sender;
+    const outcome = await runProgram({
+      code: String(v.code || ""),
+      cwd: workspaceCwd(undefined),
+      timeoutMs: Number(v.timeoutMs) || 20_000,
+      onCall: (call) => new Promise((settle) => {
+        const id = ++runCallSeq;
+        const timer = setTimeout(() => { runCallWaiters.delete(id); settle(Promise.reject(new Error("tool_call_timeout"))); }, 120_000);
+        runCallWaiters.set(id, (answer) => { clearTimeout(timer); if (answer.error) settle(Promise.reject(new Error(answer.error))); else settle(answer.result); });
+        try { sender.send("run:call", { id, name: call.name, args: call.args }); } catch { runCallWaiters.delete(id); clearTimeout(timer); settle(Promise.reject(new Error("renderer_unavailable"))); }
+      }),
+    });
+    return outcome;
+  });
+}
+
 /** Git worktrees live beside the checkout; the root is the one the app already uses. */
 function registerWorktreeIpc(): void {
   ipcMain.handle("worktree:list", async (event) => { assertSender(event); return await listWorktrees(workspaceCwd(undefined)); });
@@ -1478,6 +1516,7 @@ registerCompleteIpc();
 registerCompleteCancelIpc();
 registerWebIpc();
 registerWorktreeIpc();
+registerRunCodeIpc();
 registerPluginsIpc();
 
 registerGatewayIpc();

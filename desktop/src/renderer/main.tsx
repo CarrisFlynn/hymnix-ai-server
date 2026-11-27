@@ -75,6 +75,7 @@ const PLATFORM = typeof navigator !== "undefined" && /Mac/i.test(navigator.platf
 const SUBAGENT_TOOL_SPEC = { type: "function", function: { name: "subagent.run", description: "Delegate a self-contained task to a fresh context. The subagent cannot call tools; it reasons and returns text.", parameters: { type: "object", properties: { prompt: { type: "string" }, system: { type: "string" } }, required: ["prompt"], additionalProperties: false } } };
 const GOAL_TOOL_SPEC = { type: "function", function: { name: "goal.write", description: "Set the objective of this conversation's goal, or update its status/budget.", parameters: { type: "object", properties: { objective: { type: "string" }, status: { type: "string", enum: ["active", "paused", "complete"] }, maxRounds: { type: "number" } }, additionalProperties: false } } };
 const GOAL_READ_SPEC = { type: "function", function: { name: "goal.read", description: "Read the current goal, its status and remaining rounds.", parameters: { type: "object", properties: {}, additionalProperties: false } } };
+const RUN_CODE_SPEC = { type: "function", function: { name: "run_code", description: "Run one Node.js ES module and let it call your tools. Put `export default <value>` at the top level of the module; inside the program `await tools.call(name, args)` runs any tool you can call, including fs.*, shell.run and web.search, and each of those still needs approval. Use it to loop, branch or join many tool calls in one step instead of one call at a time. The user approves the program before it runs.", parameters: { type: "object", properties: { code: { type: "string", description: "ES module source; use export default for the value to return" }, timeoutMs: { type: "number", description: "1000-120000, default 20000" } }, required: ["code"], additionalProperties: false } } };
 const LSP_SPEC = { type: "function", function: { name: "lsp", description: "Ask a real language server for a definition, references or a file outline. Unlike code.*, which scans text, this follows imports and types. Hymnix ships typescript-language-server, so it works out of the box for .ts/.tsx/.js.", parameters: { type: "object", properties: { operation: { type: "string", enum: ["definition", "references", "symbols"] }, file: { type: "string", description: "Workspace-relative path" }, line: { type: "number", description: "1-based, default 1" }, character: { type: "number", description: "1-based, default 1" } }, required: ["operation", "file"], additionalProperties: false } } };
 const READ_IMAGE_SPEC = { type: "function", function: { name: "read_image", description: "Look at an image file (png, jpeg, gif, webp; max 4 MB). The picture is attached to your next turn, so this is how you read screenshots, diagrams and UI captures. Paths may be workspace-relative or absolute.", parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"], additionalProperties: false } } };
 const WORKTREE_LIST_SPEC = { type: "function", function: { name: "worktree.list", description: "List the git worktrees of the current repository, with their branch and head commit. The first row is the main checkout.", parameters: { type: "object", properties: {}, additionalProperties: false } } };
@@ -544,6 +545,8 @@ function App() {
   const agentRunsRef = useRef(new Map<string, { requestId: string; said: string; run: Promise<{ ok: boolean; text?: string; error?: string }> }>());
   /** Images a tool just produced, attached to the next round so the model can see them. */
   const toolImagesRef = useRef<Array<{ mime: string; data: string; name: string }>>([]);
+  /** Tool calls a run_code program is waiting on. */
+  const runCallsRef = useRef<(call: { id: number; name: string; args: unknown }) => void>(() => undefined);
   // present: files the model declared finished, shown above the composer.
   const [deliverables, setDeliverables] = useState<Deliverable[]>([]);
   // ---- shortcuts -----------------------------------------------------------
@@ -1004,7 +1007,7 @@ function App() {
   }
   const toolSpecs = useMemo(() => {
     const advertised = tools.filter((item) => ADVERTISED_TOOLS.has(item.name)).map((item) => ({ type: "function" as const, function: { name: item.name, description: item.description, parameters: item.schema } }));
-    return [TODO_TOOL_SPEC, SUBAGENT_TOOL_SPEC, AGENT_SPAWN_SPEC, AGENT_SEND_SPEC, AGENT_LIST_SPEC, AGENT_CLOSE_SPEC, CODE_OUTLINE_SPEC, CODE_DEFINITION_SPEC, CODE_REFERENCES_SPEC, GOAL_TOOL_SPEC, GOAL_READ_SPEC, SKILL_LIST_SPEC, SKILL_LOAD_SPEC, LSP_SPEC, READ_IMAGE_SPEC, WORKTREE_LIST_SPEC, WORKTREE_CREATE_SPEC, WORKTREE_REMOVE_SPEC, LIST_SESSION_SPEC, SESSION_SEARCH_SPEC, AGENT_WAIT_SPEC, AGENT_INTERRUPT_SPEC, ASK_USER_SPEC, PRESENT_SPEC, WEB_SEARCH_SPEC, JOB_START_SPEC, JOB_LIST_SPEC, JOB_OUTPUT_SPEC, JOB_KILL_SPEC, SCHEDULE_LIST_SPEC, SCHEDULE_CREATE_SPEC, SCHEDULE_UPDATE_SPEC, SCHEDULE_REMOVE_SPEC, ...advertised];
+    return [TODO_TOOL_SPEC, SUBAGENT_TOOL_SPEC, AGENT_SPAWN_SPEC, AGENT_SEND_SPEC, AGENT_LIST_SPEC, AGENT_CLOSE_SPEC, CODE_OUTLINE_SPEC, CODE_DEFINITION_SPEC, CODE_REFERENCES_SPEC, GOAL_TOOL_SPEC, GOAL_READ_SPEC, SKILL_LIST_SPEC, SKILL_LOAD_SPEC, RUN_CODE_SPEC, LSP_SPEC, READ_IMAGE_SPEC, WORKTREE_LIST_SPEC, WORKTREE_CREATE_SPEC, WORKTREE_REMOVE_SPEC, LIST_SESSION_SPEC, SESSION_SEARCH_SPEC, AGENT_WAIT_SPEC, AGENT_INTERRUPT_SPEC, ASK_USER_SPEC, PRESENT_SPEC, WEB_SEARCH_SPEC, JOB_START_SPEC, JOB_LIST_SPEC, JOB_OUTPUT_SPEC, JOB_KILL_SPEC, SCHEDULE_LIST_SPEC, SCHEDULE_CREATE_SPEC, SCHEDULE_UPDATE_SPEC, SCHEDULE_REMOVE_SPEC, ...advertised];
   }, [tools]);
   useEffect(() => { toolSpecsRef.current = toolSpecs; }, [toolSpecs]);
   /**
@@ -1104,6 +1107,18 @@ function App() {
       if (!loaded.ok) return JSON.stringify({ ok: false, error: loaded.error || "not_found" });
       recordEvidence({ kind: "tool", title: "skill.load", detail: String(loaded.id || ""), status: "ok", durationMs: Math.round(performance.now() - started) });
       return JSON.stringify({ ok: true, id: loaded.id, content: loaded.content });
+    }
+    if (call.name === "run_code") {
+      const code = String(args.code || "");
+      if (!code.trim()) return JSON.stringify({ ok: false, error: "code_required" });
+      const approved = await requestLocalApproval("run_code", { code: code.slice(0, 600) }, ["Runs a Node.js program in a child process", "It can call your tools, and those calls still ask for approval", "Filesystem access comes from Node, which is why this needs a decision"]);
+      if (!approved) {
+        recordEvidence({ kind: "approval", title: "run_code", detail: String(args.code || "").slice(0, 120), status: "denied", durationMs: Math.round(performance.now() - started) });
+        return JSON.stringify({ ok: false, error: "denied_by_user" });
+      }
+      const outcome = await window.hymnix.run.program({ code, timeoutMs: Number(args.timeoutMs) || 20_000 }).catch((reason: unknown) => ({ ok: false, value: undefined as unknown, error: String(reason), logs: [] as string[], calls: [] as string[], durationMs: 0 }));
+      recordEvidence({ kind: "tool", title: "run_code", detail: String(outcome.error || "ok") + " · " + String((outcome.calls || []).length) + " calls", status: outcome.ok ? "ok" : "error", durationMs: Math.round(performance.now() - started) });
+      return JSON.stringify({ ok: Boolean(outcome.ok), ...(outcome.ok ? { value: outcome.value } : { error: outcome.error }), logs: (outcome.logs || []).slice(-40), calls: outcome.calls || [], durationMs: outcome.durationMs });
     }
     if (call.name === "lsp") {
       const answer = await window.hymnix.lsp.query({
@@ -1622,6 +1637,15 @@ function App() {
   }, [modelPopover]);
   useEffect(() => { setModelPopover("closed"); setConversationMenuOpen(false); }, [active]);
   useEffect(() => { setDeliverables([]); }, [currentSessionId]);
+  // A run_code program calls back into the same tool loop, so approvals still apply.
+  useEffect(() => {
+    runCallsRef.current = (call) => {
+      void runToolCall({ id: "run-" + call.id, name: call.name, arguments: JSON.stringify(call.args ?? {}) }, 0)
+        .then((result) => window.hymnix.run.reply({ id: call.id, result }))
+        .catch((reason: unknown) => window.hymnix.run.reply({ id: call.id, error: String(reason) }));
+    };
+    return window.hymnix.run.onCall((call) => runCallsRef.current(call));
+  }, []);
   // Sidebar footer: what this machine did today, straight from the saved sessions.
   useEffect(() => {
     const today = new Date().toDateString();

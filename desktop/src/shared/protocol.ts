@@ -723,6 +723,11 @@ export type WorktreeApi = {
   remove: (input: { path: string }) => Promise<{ ok: boolean; error?: string }>;
 };
 export type DesktopApi = {
+  run: {
+    program: (input: { code: string; timeoutMs?: number }) => Promise<{ ok: boolean; value?: unknown; logs?: string[]; calls?: string[]; error?: string; durationMs?: number }>;
+    onCall: (listener: (call: { id: number; name: string; args: unknown }) => void) => () => void;
+    reply: (input: { id: number; result?: unknown; error?: string }) => void;
+  };
   lsp: {
     query: (input: { operation: "definition" | "references" | "symbols"; file: string; line?: number; character?: number }) => Promise<{ ok: boolean; operation?: string; server?: string; results?: Array<{ file: string; line: number; character: number }>; error?: string; hint?: string }>;
   };

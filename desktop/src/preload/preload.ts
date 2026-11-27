@@ -122,6 +122,15 @@ const api: DesktopApi & { adminHistory: (adminKey: string, query?: AdminHistoryQ
     search: (request: FileSearchRequest): Promise<FileSearchResponse> => ipcRenderer.invoke("files:search", request),
     read: (request: FileReadRequest): Promise<FileReadResponse> => ipcRenderer.invoke("files:read", request),
   },
+  run: {
+    program: (input: { code: string; timeoutMs?: number }) => ipcRenderer.invoke("run:code", input),
+    onCall: (listener: (call: { id: number; name: string; args: unknown }) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, call: { id: number; name: string; args: unknown }) => listener(call);
+      ipcRenderer.on("run:call", handler);
+      return () => { ipcRenderer.removeListener("run:call", handler); };
+    },
+    reply: (input: { id: number; result?: unknown; error?: string }) => { ipcRenderer.send("run:reply", input); },
+  },
   lsp: {
     query: (input: { operation: "definition" | "references" | "symbols"; file: string; line?: number; character?: number }) => ipcRenderer.invoke("lsp:query", input),
   },

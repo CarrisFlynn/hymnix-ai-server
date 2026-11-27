@@ -69,4 +69,31 @@ const def = await win.evaluate(() => window.__hymnixDev.runTool("lsp", { operati
 const parsedDef = JSON.parse(def);
 console.log("LSP_DEFINITION ok=" + String(parsedDef.ok) + " results=" + JSON.stringify((parsedDef.results || []).slice(0, 2)));
 
+// run_code：子进程执行 + 工具桥接 + 审批门
+const program = 'const raw = await tools.call("list_session", {}); const parsed = JSON.parse(raw); console.log("sessions", parsed.total); export default { total: parsed.total, ok: parsed.ok };';
+const runPromise = win.evaluate((code) => window.__hymnixDev.runTool("run_code", { code }), program);
+await win.waitForTimeout(900);
+const runDrawer = await win.evaluate(() => ({
+  open: Boolean(document.querySelector(".approvals-drawer")),
+  tools: [...document.querySelectorAll(".approval-row strong")].map((el) => el.textContent && el.textContent.trim()),
+  reasons: [...document.querySelectorAll(".approval-reasons")].map((el) => el.textContent && el.textContent.trim()),
+}));
+console.log("RUNCODE_APPROVAL_OPEN " + runDrawer.open + " tools=" + JSON.stringify(runDrawer.tools));
+console.log("RUNCODE_REASONS " + JSON.stringify(runDrawer.reasons));
+await win.evaluate(() => document.querySelector(".approval-row-actions .btn.primary").click());
+const runResult = await runPromise;
+console.log("RUNCODE_RESULT " + String(runResult).slice(0, 320));
+
+// 拒绝路径：不得执行
+const denyPromise = win.evaluate(() => window.__hymnixDev.runTool("run_code", { code: "export default 1;" }));
+await win.waitForTimeout(800);
+await win.evaluate(() => document.querySelector(".approval-row-actions .btn.danger").click());
+console.log("RUNCODE_DENIED " + String(await denyPromise).slice(0, 160));
+
+// 语法错误要报出来，不能假装成功
+const badPromise = win.evaluate(() => window.__hymnixDev.runTool("run_code", { code: "export default (((;" }));
+await win.waitForTimeout(800);
+await win.evaluate(() => document.querySelector(".approval-row-actions .btn.primary").click());
+console.log("RUNCODE_SYNTAX_ERROR " + String(await badPromise).slice(0, 220));
+
 await app.close();
