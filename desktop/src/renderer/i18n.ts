@@ -1,6 +1,7 @@
 export type Lang = "en" | "zh";
 
 export const zh: Record<string, string> = {
+  "Shared sessions only run Orbit": "共享会话只能使用 Orbit",
   "Changes files or runs a command inside the workspace": "会改动工作区里的文件，或执行一条命令",
   "Terminal mode": "终端模式",
   "Could not start this program": "无法启动该程序",

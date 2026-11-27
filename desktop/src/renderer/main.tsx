@@ -493,6 +493,10 @@ function App() {
   const [shareTest, setShareTest] = useState<{ state: "idle" | "testing" | "ok" | "fail"; message: string; category?: string }>({ state: "idle", message: "" });
   const [updateState, setUpdateState] = useState<{ status: "idle" | "checking" | "current" | "available" | "error"; detail: string; url: string }>({ status: "idle", detail: "", url: "" });
   // ---- Codex-style shell state -------------------------------------------
+  /** What the user picked before connecting to a host, so it can be restored. */
+  const surfaceBeforeRemoteRef = useRef<"ai" | "orbit" | null>(null);
+  /** Live value for probe hooks, which are created once and would otherwise read a stale closure. */
+  const surfaceRef = useRef<"ai" | "orbit">("ai");
   const [surface, setSurface] = useState<"ai" | "orbit">(() => { try { return localStorage.getItem("hymnix.surface") === "orbit" ? "orbit" : "ai"; } catch { return "ai"; } });
   const [productMenuOpen, setProductMenuOpen] = useState(false);
   const [chatTab, setChatTab] = useState<"chat" | "context" | "trace" | "plan">("chat");
@@ -826,7 +830,17 @@ function App() {
     } catch (reason) { setPluginsError(reason instanceof Error ? reason.message : String(reason)); }
     finally { setPluginActionBusy(""); }
   }
-  function remoteActive(): boolean { return mode === "remote" && !!serverBase.trim(); }
+  /**
+   * Switching product mode. A shared session is the host's compute and the guest's
+   * computer, so it only makes sense as Orbit: AI is the plain chat surface and has
+   * nothing to act on. The switch is refused here, not only greyed out in the menu.
+   */
+  function chooseSurface(next: "ai" | "orbit"): void {
+    if (next === "ai" && remoteActive()) return;
+    setSurface(next);
+  }
+
+function remoteActive(): boolean { return mode === "remote" && !!serverBase.trim(); }
   async function invokeSelectedTool(): Promise<void> {
     const args = selectedTool ? SAFE_TOOL_PRESETS[selectedTool] : undefined;
     if (!selectedTool || !args) { setToolCall({ status: "error", message: t("Select a safe tool first") }); return; }
@@ -1715,7 +1729,20 @@ function App() {
     }
     setTodayUsage({ messages, tokens });
   }, [savedSessions]);
-  useEffect(() => { try { localStorage.setItem("hymnix.surface", surface); } catch { /* private mode */ } }, [surface]);
+  useEffect(() => { surfaceRef.current = surface; try { localStorage.setItem("hymnix.surface", surface); } catch { /* private mode */ } }, [surface]);
+  // A shared session is Orbit only. Remember what the user had, switch immediately,
+  // and put it back when the guest disconnects.
+  useEffect(() => {
+    if (mode === "remote") {
+      if (surfaceBeforeRemoteRef.current === null) surfaceBeforeRemoteRef.current = surface;
+      if (surface !== "orbit") setSurface("orbit");
+      return;
+    }
+    if (surfaceBeforeRemoteRef.current) {
+      setSurface(surfaceBeforeRemoteRef.current);
+      surfaceBeforeRemoteRef.current = null;
+    }
+  }, [mode]);
   // The surface sets the default working mode: Orbit is the coding agent.
   useEffect(() => { setComposerMode(surface === "orbit" ? "code" : "chat"); }, [surface]);
   useEffect(() => {
@@ -1740,6 +1767,9 @@ function App() {
       seedApprovals: (rows: ApprovalRecord[]) => setApprovals(rows),
       seedAsk: (questions: unknown) => { const normalized = normalizeQuestions(questions); if (normalized.length) { setAskPicked({}); setAskCustom({}); setAskOpen(normalized); } },
       closeAsk: () => finishAsk(true),
+      // Probe hook: pretend a host is connected, without touching the network.
+      seedRemote: (on: boolean) => { setServerBase(on ? "http://127.0.0.1:9" : ""); setMode(on ? "remote" : "local"); },
+      surfaceNow: () => surfaceRef.current,
       seedDeliverables: (files: unknown) => setDeliverables(normalizeDeliverables(files)),
       // Run one tool exactly as the model's tool loop would, for behaviour probes.
       // Only a development build exposes this: it drives the tool loop with no
@@ -4339,11 +4369,16 @@ function App() {
           <Icon name="Chevron" />
         </button>
         {productMenuOpen && <div className="product-menu" role="menu">
-          {SURFACES.map((item) => <button key={item.id} type="button" role="menuitemradio" aria-checked={surface === item.id} className={surface === item.id ? "active" : ""} onClick={() => { setSurface(item.id); setProductMenuOpen(false); }}>
+          {SURFACES.map((item) => {
+            const locked = item.id === "ai" && remoteActive();
+            return <button key={item.id} type="button" role="menuitemradio" aria-checked={surface === item.id} aria-disabled={locked}
+              className={(surface === item.id ? "active" : "") + (locked ? " locked" : "")}
+              title={locked ? t("Shared sessions only run Orbit") : undefined}
+              onClick={() => { if (locked) { setToast({ message: t("Shared sessions only run Orbit") }); window.setTimeout(() => setToast(null), 3200); return; } setProductMenuOpen(false); chooseSurface(item.id); }}>
             <span className="product-dot" data-surface={item.id} aria-hidden="true" />
             <span className="product-copy"><strong>{t(item.label)}</strong><small>{t(item.hint)}</small></span>
             {surface === item.id && <span className="product-check" aria-hidden="true">✓</span>}
-          </button>)}
+          </button>; })}
         </div>}
       </div>
       <button type="button" className="side-new" onClick={createSession}>

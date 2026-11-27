@@ -1984,6 +1984,10 @@ class Handler(BaseHTTPRequestHandler):
                 note_auth_failure(self._ip())
                 log_event("admin_auth_fail", ip=self._ip(), path=path)
                 return self._json(401, {"ok": False, "error": "admin_key_required"})
+            if path == "/api/tools" or path == "/api/tools/call":
+                if not self._tools_local_only():
+                    return self._json(403, {"ok": False, "error": "tools_local_only",
+                                       "detail": "Tools run on the machine that owns them. A shared session executes tools on the guest side."})
             if path == "/api/tools":
                 if method != "GET":
                     return self._json(405, {"ok": False, "error": "method_not_allowed"})
@@ -2370,6 +2374,26 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(403, {"ok": False, "error": "forbidden"})
         except OSError:
             return self._json(400, {"ok": False, "error": "filesystem_error"})
+
+    def _tools_local_only(self):
+        """Tools may only run for the person sitting at this machine.
+
+        A guest connects through the tunnel or the LAN, so a guest call is never a
+        naked loopback connection: it either originates from another address, or it
+        arrives through the tunnel with a forwarded identity header. The host's own
+        app calls straight into 127.0.0.1 with neither.
+
+        This is the rule that keeps a guest from asking the host to read the host's
+        own files: the model runs here, but the hands belong to the caller.
+        """
+        if not bool(CFG.get("tools_local_only", True)):
+            return True
+        peer = self.client_address[0] if self.client_address else ""
+        if peer not in ("127.0.0.1", "::1"):
+            return False
+        if self.headers.get("CF-Connecting-IP") or self.headers.get("X-Forwarded-For"):
+            return False
+        return True
 
     def _api_key_ok(self):
         got = self._key()

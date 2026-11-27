@@ -2185,3 +2185,6 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 .pty-bar .term-dim { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--term-fg); opacity: .62; }
 .pty-screen { flex: 1; min-height: 240px; padding: 6px 8px; }
 .pty-screen .xterm { height: 100%; }
+
+/* A shared session is Orbit only: the AI entry stays visible but cannot be chosen. */
+.product-menu button.locked { opacity: .45; cursor: not-allowed; }
