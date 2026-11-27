@@ -48,3 +48,27 @@ DSH/
 # probe artefacts (written by the audit scripts, never part of the app)
 *-probe.txt
 agent-edit.txt
+
+# audit probe outputs are run artefacts, not source:
+# desktop/scripts/*probe*, look.mjs and board-check.mjs write every screenshot
+# under docs/audit-1.4.0/ and the root .look-*/.board/.gw-ready shots.
+# Only the evidence HANDOFF.md cites stays tracked; re-run the probe to regenerate.
+docs/audit-1.4.0/*.png
+!docs/audit-1.4.0/session-panel.png
+!docs/audit-1.4.0/session-panel-tree.png
+!docs/audit-1.4.0/session-panel-tree2.png
+!docs/audit-1.4.0/panel-tree.png
+!docs/audit-1.4.0/panel-detail.png
+!docs/audit-1.4.0/panel-detail-composer.png
+!docs/audit-1.4.0/subagents-section.png
+!docs/audit-1.4.0/risk-policy.png
+!docs/audit-1.4.0/automation.png
+!docs/audit-1.4.0/automation-page.png
+!docs/audit-1.4.0/automation-dialog.png
+!docs/audit-1.4.0/automation-run.png
+!docs/audit-1.4.0/automation-run2.png
+/.board.png
+/.gw-ready.png
+/.look-1926.png
+/.look-plain.png
+/.audit-archive/

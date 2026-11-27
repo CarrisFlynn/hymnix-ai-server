@@ -49,6 +49,8 @@
 8. `ce210f2` 分区排序 + 行详情 + 树 + 任务分区
 9. `fa991be` 子代理可继续 + 键盘排序 + 焦点陷阱
 
+> 注：`4c7b1a3`（本文）之后又加了 1 个仓库卫生提交（探针产物移出仓库 + `.gitignore`），本地领先远端为 **11 个**。
+
 ---
 
 ## 三、已经做完的（按阶段）
@@ -243,6 +245,7 @@ git -c user.name="Hymnix Agent" -c user.email="agent@hymnix.local" commit -m "fe
 - `desktop/scripts/panel4-probe.mjs` — 面板树/排序/详情
 - `desktop/scripts/a11y-probe.mjs` — 焦点陷阱/键盘排序/焦点归还
 - 截图：`docs/audit-1.4.0/*.png`（risk-policy、automation、session-panel、panel-tree…）
+- 截图与探针日志是**运行产物**，已被 `.gitignore` 忽略（`docs/audit-1.4.0/*.png`、根目录 `.look-*`/`.board`/`.gw-ready`）。仓库只留 13 张被本文点名的证据（session-panel\*、panel-detail\*、panel-tree、subagents-section、risk-policy、automation\*）；其余 45 个一次性产物（约 3.3 MB）归档在仓库外 `C:\Users\xiaoy\Desktop\Hymnix AI 1.4.0-audit-archive\`，要复现直接重跑对应探针。
 
 运行方式：`node scripts/<name>.mjs`（Playwright + 隔离 profile）；Python 探针在 `server/` 下执行。
 
