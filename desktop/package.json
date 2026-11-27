@@ -61,6 +61,10 @@
       {
         "from": "../build/hymnix-orbit2-backend/hymnix-server-1.4.2-x64.exe",
         "to": "backend-gateway-headless.exe"
+      },
+      {
+        "from": "../lsp-server",
+        "to": "lsp-server"
       }
     ],
     "win": {

@@ -743,6 +743,26 @@ function skillDirectories(): string[] {
   return [join(app.getPath("userData"), "skills"), join(app.getAppPath(), "skills")];
 }
 
+/**
+ * Point the LSP client at the language server shipped next to the app.
+ *
+ * The app compiles with TypeScript 7 (the native port), which no longer ships the
+ * tsserver that typescript-language-server drives. A self-contained copy with
+ * TypeScript 5 lives in lsp-server/ and is copied to resources/ when packaged, so
+ * the two never have to agree on a version.
+ */
+function locateBundledLsp(): string {
+  const cli = join("node_modules", "typescript-language-server", "lib", "cli.mjs");
+  const candidates = [
+    join(process.resourcesPath || "", "lsp-server", cli),
+    join(app.getAppPath(), "..", "lsp-server", cli),
+  ];
+  for (const candidate of candidates) {
+    try { if (existsSync(candidate)) return candidate; } catch { /* unreadable path */ }
+  }
+  return "";
+}
+
 /** Git worktrees live beside the checkout; the root is the one the app already uses. */
 function registerWorktreeIpc(): void {
   ipcMain.handle("worktree:list", async (event) => { assertSender(event); return await listWorktrees(workspaceCwd(undefined)); });
@@ -1453,6 +1473,8 @@ registerAutomationIpc();
 registerSkillsIpc();
 registerCodeIpc();
 registerCompleteIpc();
+  const bundledLsp = locateBundledLsp();
+  if (bundledLsp && !process.env.HYMNIX_LSP_TYPESCRIPT) process.env.HYMNIX_LSP_TYPESCRIPT = bundledLsp;
 registerCompleteCancelIpc();
 registerWebIpc();
 registerWorktreeIpc();

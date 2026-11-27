@@ -140,9 +140,10 @@
 >
 > `web.search` 在主进程实现，**不依赖 Python 网关**。实测：DuckDuckGo 在本网络不可达；Bing 的 HTML 页对脚本请求返回无关结果，因此走 `format=rss`；Baidu 作为兜底。每个来源都要过相关性闸门，答不相关就报 `no_relevant_results`，不许把垃圾当答案。
 
-> **未完成：真 LSP（`lsp` 工具已实现但不对外广告）**
-> `src/main/lsp.ts` 已经能起 `typescript-language-server`、完成 `initialize` 握手（实测收到 `$/typescriptVersion`），帧编解码、URI 互转有 5 项单测。但 `textDocument/documentSymbol` 与 `textDocument/definition` 在**应用仓库和干净临时项目里都返回空**，所以工具**没有注册给模型**，`code.*` 仍是唯一的导航手段。
-> 服务器不随包发布：`serverCandidates()` 会找 `HYMNIX_LSP_TYPESCRIPT`、仓库与 cwd 下的 `node_modules/.bin`。要继续，先查 tsserver 就绪时序（可能需要在 `initialized` 之后等 `$/progress` 结束再发请求）。
+> **真 LSP 已可用（`lsp` 工具）**
+> `src/main/lsp.ts` 起 `typescript-language-server`，支持 `definition` / `references` / `symbols`。实测：`symbols` 返回 `dedupe@106`、`hit@109` 这类带名字与行号的条目；`definition` 从 `searchStart` 调用点直达 `src/main/main.ts:1:10`。
+> **为什么单独打包**：应用自己用 `typescript@7`（原生 Go 版 tsgo），它**不再提供** `typescript-language-server` 所需的 `tsserver`。两者装在一起时 LSP 握手成功但每个查询都返回空。所以语言服务器放在仓库根 `lsp-server/`，钉 `typescript@5.6.3` + `typescript-language-server@6.1.0`，自带 `node_modules`，由 `extraResources` 拷到 `resources/lsp-server/`。
+> **代价：约 25 MB**（typescript 5 解包后约 22 MB）。装包前必须先 `cd lsp-server && pnpm install --prod --ignore-workspace`（`--ignore-workspace` 不能省，否则会被当成 desktop 工作区的安装，把 devDependencies 剪掉）。
 ## 六、架构与文件地图
 
 ```

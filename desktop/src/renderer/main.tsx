@@ -75,6 +75,7 @@ const PLATFORM = typeof navigator !== "undefined" && /Mac/i.test(navigator.platf
 const SUBAGENT_TOOL_SPEC = { type: "function", function: { name: "subagent.run", description: "Delegate a self-contained task to a fresh context. The subagent cannot call tools; it reasons and returns text.", parameters: { type: "object", properties: { prompt: { type: "string" }, system: { type: "string" } }, required: ["prompt"], additionalProperties: false } } };
 const GOAL_TOOL_SPEC = { type: "function", function: { name: "goal.write", description: "Set the objective of this conversation's goal, or update its status/budget.", parameters: { type: "object", properties: { objective: { type: "string" }, status: { type: "string", enum: ["active", "paused", "complete"] }, maxRounds: { type: "number" } }, additionalProperties: false } } };
 const GOAL_READ_SPEC = { type: "function", function: { name: "goal.read", description: "Read the current goal, its status and remaining rounds.", parameters: { type: "object", properties: {}, additionalProperties: false } } };
+const LSP_SPEC = { type: "function", function: { name: "lsp", description: "Ask a real language server for a definition, references or a file outline. Unlike code.*, which scans text, this follows imports and types. Hymnix ships typescript-language-server, so it works out of the box for .ts/.tsx/.js.", parameters: { type: "object", properties: { operation: { type: "string", enum: ["definition", "references", "symbols"] }, file: { type: "string", description: "Workspace-relative path" }, line: { type: "number", description: "1-based, default 1" }, character: { type: "number", description: "1-based, default 1" } }, required: ["operation", "file"], additionalProperties: false } } };
 const READ_IMAGE_SPEC = { type: "function", function: { name: "read_image", description: "Look at an image file (png, jpeg, gif, webp; max 4 MB). The picture is attached to your next turn, so this is how you read screenshots, diagrams and UI captures. Paths may be workspace-relative or absolute.", parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"], additionalProperties: false } } };
 const WORKTREE_LIST_SPEC = { type: "function", function: { name: "worktree.list", description: "List the git worktrees of the current repository, with their branch and head commit. The first row is the main checkout.", parameters: { type: "object", properties: {}, additionalProperties: false } } };
 const WORKTREE_CREATE_SPEC = { type: "function", function: { name: "worktree.create", description: "Create a sibling git worktree on a new branch, so an experiment can run without touching the current checkout. The name becomes both the branch and the folder.", parameters: { type: "object", properties: { name: { type: "string", description: "Lowercase letters, digits and dashes, 2-41 chars" }, from: { type: "string", description: "Commit, branch or tag to start from; default HEAD" } }, required: ["name"], additionalProperties: false } } };
@@ -1003,7 +1004,7 @@ function App() {
   }
   const toolSpecs = useMemo(() => {
     const advertised = tools.filter((item) => ADVERTISED_TOOLS.has(item.name)).map((item) => ({ type: "function" as const, function: { name: item.name, description: item.description, parameters: item.schema } }));
-    return [TODO_TOOL_SPEC, SUBAGENT_TOOL_SPEC, AGENT_SPAWN_SPEC, AGENT_SEND_SPEC, AGENT_LIST_SPEC, AGENT_CLOSE_SPEC, CODE_OUTLINE_SPEC, CODE_DEFINITION_SPEC, CODE_REFERENCES_SPEC, GOAL_TOOL_SPEC, GOAL_READ_SPEC, SKILL_LIST_SPEC, SKILL_LOAD_SPEC, READ_IMAGE_SPEC, WORKTREE_LIST_SPEC, WORKTREE_CREATE_SPEC, WORKTREE_REMOVE_SPEC, LIST_SESSION_SPEC, SESSION_SEARCH_SPEC, AGENT_WAIT_SPEC, AGENT_INTERRUPT_SPEC, ASK_USER_SPEC, PRESENT_SPEC, WEB_SEARCH_SPEC, JOB_START_SPEC, JOB_LIST_SPEC, JOB_OUTPUT_SPEC, JOB_KILL_SPEC, SCHEDULE_LIST_SPEC, SCHEDULE_CREATE_SPEC, SCHEDULE_UPDATE_SPEC, SCHEDULE_REMOVE_SPEC, ...advertised];
+    return [TODO_TOOL_SPEC, SUBAGENT_TOOL_SPEC, AGENT_SPAWN_SPEC, AGENT_SEND_SPEC, AGENT_LIST_SPEC, AGENT_CLOSE_SPEC, CODE_OUTLINE_SPEC, CODE_DEFINITION_SPEC, CODE_REFERENCES_SPEC, GOAL_TOOL_SPEC, GOAL_READ_SPEC, SKILL_LIST_SPEC, SKILL_LOAD_SPEC, LSP_SPEC, READ_IMAGE_SPEC, WORKTREE_LIST_SPEC, WORKTREE_CREATE_SPEC, WORKTREE_REMOVE_SPEC, LIST_SESSION_SPEC, SESSION_SEARCH_SPEC, AGENT_WAIT_SPEC, AGENT_INTERRUPT_SPEC, ASK_USER_SPEC, PRESENT_SPEC, WEB_SEARCH_SPEC, JOB_START_SPEC, JOB_LIST_SPEC, JOB_OUTPUT_SPEC, JOB_KILL_SPEC, SCHEDULE_LIST_SPEC, SCHEDULE_CREATE_SPEC, SCHEDULE_UPDATE_SPEC, SCHEDULE_REMOVE_SPEC, ...advertised];
   }, [tools]);
   useEffect(() => { toolSpecsRef.current = toolSpecs; }, [toolSpecs]);
   /**
@@ -1103,6 +1104,20 @@ function App() {
       if (!loaded.ok) return JSON.stringify({ ok: false, error: loaded.error || "not_found" });
       recordEvidence({ kind: "tool", title: "skill.load", detail: String(loaded.id || ""), status: "ok", durationMs: Math.round(performance.now() - started) });
       return JSON.stringify({ ok: true, id: loaded.id, content: loaded.content });
+    }
+    if (call.name === "lsp") {
+      const answer = await window.hymnix.lsp.query({
+        operation: String(args.operation || "") as "definition" | "references" | "symbols",
+        file: String(args.file || ""),
+        line: Number(args.line) || 1,
+        character: Number(args.character) || 1,
+      }).catch((reason: unknown) => ({ ok: false, operation: undefined as string | undefined, server: undefined as string | undefined, error: String(reason) } as { ok: boolean; operation?: string; server?: string; error?: string; hint?: string; results?: Array<{ file: string; line: number; character: number }> }));
+      if (!answer.ok) {
+        recordEvidence({ kind: "tool", title: "lsp " + String(args.operation || ""), detail: String(answer.error || "failed"), status: "error", durationMs: Math.round(performance.now() - started) });
+        return JSON.stringify({ ok: false, error: answer.error || "lsp_failed", ...(answer.hint ? { hint: answer.hint } : {}) });
+      }
+      recordEvidence({ kind: "tool", title: "lsp " + String(args.operation || ""), detail: String(args.file || "") + " → " + (answer.results || []).length, status: "ok", durationMs: Math.round(performance.now() - started) });
+      return JSON.stringify({ ok: true, operation: answer.operation, results: answer.results, server: answer.server });
     }
     if (call.name === "read_image") {
       const image = await window.hymnix.files.image(String(args.path || "")).catch((reason: unknown) => ({ ok: false, mime: undefined as string | undefined, data: undefined as string | undefined, bytes: undefined as number | undefined, path: undefined as string | undefined, error: String(reason) }));

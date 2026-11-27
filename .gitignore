@@ -72,3 +72,7 @@ docs/audit-1.4.0/*.png
 /.look-1926.png
 /.look-plain.png
 /.audit-archive/
+
+# bundled language server: installed per checkout, copied by electron-builder
+lsp-server/node_modules/
+lsp-server/pnpm-lock.yaml

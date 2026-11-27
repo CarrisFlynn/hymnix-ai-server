@@ -59,4 +59,14 @@ console.log("IMAGE_MISSING_REFUSED " + String(missingImage.ok === false));
 const viaTool = await win.evaluate((p) => window.__hymnixDev.runTool("read_image", { path: p }), png);
 console.log("READ_IMAGE_TOOL " + String(viaTool).slice(0, 200));
 
+// lsp：自带语言服务器，真查询
+const symbols = await win.evaluate(() => window.__hymnixDev.runTool("lsp", { operation: "symbols", file: "src/main/web-search.ts" }));
+const parsedSymbols = JSON.parse(symbols);
+console.log("LSP_RAW " + symbols.slice(0, 300));
+console.log("LSP_SYMBOL_NAMES " + JSON.stringify((parsedSymbols.results || []).slice(0, 4).map((r) => r.name + "@" + r.line)));
+console.log("LSP_SYMBOLS ok=" + String(parsedSymbols.ok) + " count=" + String((parsedSymbols.results || []).length) + " server=" + String(parsedSymbols.server || "-").slice(-42));
+const def = await win.evaluate(() => window.__hymnixDev.runTool("lsp", { operation: "definition", file: "src/main/main.ts", line: 674, character: 18 }));
+const parsedDef = JSON.parse(def);
+console.log("LSP_DEFINITION ok=" + String(parsedDef.ok) + " results=" + JSON.stringify((parsedDef.results || []).slice(0, 2)));
+
 await app.close();

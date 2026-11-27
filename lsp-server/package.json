@@ -1,0 +1,10 @@
+{
+  "name": "hymnix-lsp-server",
+  "private": true,
+  "version": "1.0.0",
+  "description": "TypeScript language server shipped with Hymnix. Kept out of the app's own dependency tree on purpose: the app compiles with TypeScript 7 (the native port), while typescript-language-server needs the JavaScript TypeScript 5 tsserver.",
+  "dependencies": {
+    "typescript": "5.6.3",
+    "typescript-language-server": "6.1.0"
+  }
+}

@@ -25,7 +25,7 @@ export type LspAnswer = {
   ok: boolean;
   operation?: string;
   server?: string;
-  results?: Array<{ file: string; line: number; character: number }>;
+  results?: Array<{ file: string; line: number; character: number; name?: string }>;
   error?: string;
   hint?: string;
 };
@@ -92,10 +92,17 @@ export function pathToUri(file: string): string {
 }
 
 /** Position from either an LSP Location or a LocationLink. */
+/** Both sides to one shape: forward slashes, no trailing separator, lowercased drive. */
+function normalizeForCompare(value: string): string {
+  return String(value || "").replace(/\\/g, "/").replace(/\/+$/, "").replace(/^([A-Za-z]):/, (_m, drive: string) => drive.toLowerCase() + ":").toLowerCase();
+}
+
 function toResult(uri: string, position: { line?: number; character?: number } | undefined, root: string) {
   const file = uriToPath(uri);
-  const relative = file.startsWith(root) ? file.slice(root.length).replace(/^[\\/]+/, "") : file;
-  return { file: relative, line: (position?.line ?? 0) + 1, character: (position?.character ?? 0) + 1 };
+  const normalizedFile = normalizeForCompare(file);
+  const normalizedRoot = normalizeForCompare(root);
+  const relative = normalizedFile.startsWith(normalizedRoot + "/") ? file.slice(normalizedRoot.length + 1) : file;
+  return { file: relative.replace(/\\/g, "/"), line: (position?.line ?? 0) + 1, character: (position?.character ?? 0) + 1 };
 }
 
 /** Run one LSP request end to end; the process is always killed. */
@@ -111,7 +118,9 @@ export function runLspQuery(query: LspQuery, timeoutMs = DEFAULT_TIMEOUT): Promi
     // A bare .mjs is not executable on any platform; run it through node.
     const script = /\.(?:mjs|cjs|js)$/i.test(binary);
     const child = script
-      ? spawn(process.execPath, [binary, "--stdio"], { cwd: query.root, windowsHide: true })
+      // process.execPath is electron.exe inside the app, so it only behaves as node
+      // when ELECTRON_RUN_AS_NODE is set; without it the child exits immediately.
+      ? spawn(process.execPath, [binary, "--stdio"], { cwd: query.root, windowsHide: true, env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" } })
       : spawn(binary, ["--stdio"], { cwd: query.root, windowsHide: true, shell: process.platform === "win32" });
     let buffer = "";
     let settled = false;
@@ -124,7 +133,7 @@ export function runLspQuery(query: LspQuery, timeoutMs = DEFAULT_TIMEOUT): Promi
     const timer = setTimeout(() => finish({ ok: false, error: "lsp_timeout" }), timeoutMs);
     const send = (payload: unknown) => { try { child.stdin?.write(encodeFrame(payload)); } catch { /* stream closed */ } };
     child.once("error", () => { clearTimeout(timer); finish({ ok: false, error: "lsp_spawn_failed" }); });
-    child.once("exit", () => { clearTimeout(timer); finish({ ok: false, error: "lsp_exited" }); });
+    child.once("exit", (code: number | null) => { clearTimeout(timer); finish({ ok: false, error: "lsp_exited_" + String(code) }); });
 
     const requestedId = 2;
     child.stdout?.on("data", (chunk: Buffer) => {
@@ -142,8 +151,24 @@ export function runLspQuery(query: LspQuery, timeoutMs = DEFAULT_TIMEOUT): Promi
         clearTimeout(timer);
         const result = row.result;
         if (query.operation === "symbols") {
-          const symbols = Array.isArray(result) ? result as Array<{ name?: string; selectionRange?: { start?: { line?: number; character?: number } } }> : [];
-          finish({ ok: true, operation: "symbols", server: binary, results: symbols.slice(0, 200).map((item) => ({ file: query.file, line: (item.selectionRange?.start?.line ?? 0) + 1, character: (item.selectionRange?.start?.character ?? 0) + 1 })) });
+          // TS answers documentSymbol with DocumentSymbol when the client advertises
+          // hierarchical support, and with SymbolInformation otherwise; accept both.
+          const symbols = Array.isArray(result) ? result as Array<{
+            name?: string;
+            selectionRange?: { start?: { line?: number; character?: number } };
+            location?: { range?: { start?: { line?: number; character?: number } } };
+            children?: unknown[];
+          }> : [];
+          const flat: Array<{ file: string; line: number; character: number; name?: string }> = [];
+          const walk = (rows: typeof symbols) => {
+            for (const item of rows) {
+              const start = item.selectionRange?.start || item.location?.range?.start;
+              flat.push({ file: query.file, line: (start?.line ?? 0) + 1, character: (start?.character ?? 0) + 1, name: String(item.name || "").slice(0, 120) });
+              if (Array.isArray(item.children)) walk(item.children as typeof symbols);
+            }
+          };
+          walk(symbols);
+          finish({ ok: true, operation: "symbols", server: binary, results: flat.slice(0, 200) });
           continue;
         }
         const raw = Array.isArray(result) ? result : (result ? [result] : []);
