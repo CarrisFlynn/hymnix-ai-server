@@ -1956,6 +1956,11 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 .subagent-transcript strong { color: var(--muted); font-size: calc(10.5px * var(--text-scale, 1)); }
 .subagent-transcript span { color: var(--text); font-size: calc(11.5px * var(--text-scale, 1)); white-space: pre-wrap; }
 
+.subagent-composer { display: flex; gap: 6px; margin-top: 8px; }
+.subagent-composer input { flex: 1; min-width: 0; padding: 6px 8px; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--sunken); color: var(--text); font-size: calc(11.5px * var(--text-scale, 1)); }
+.section-grip { padding: 0; border: 0; background: transparent; font: inherit; }
+.section-grip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 3px; }
+
 /* ---- tab badges ---------------------------------------------------------- */
 .chat-tabs button { position: relative; }
 .tab-badge { margin-left: 6px; padding: 0 5px; border-radius: 999px; background: var(--highlight); color: var(--muted); font-family: var(--font-mono); font-size: calc(10px * var(--text-scale, 1)); line-height: 16px; }

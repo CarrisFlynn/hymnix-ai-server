@@ -545,6 +545,9 @@ function App() {
   const [draggingSection, setDraggingSection] = useState<string | null>(null);
   const draggingRef = useRef<string | null>(null);
   const [subagentView, setSubagentView] = useState<string | null>(null);
+  const [subagentDraft, setSubagentDraft] = useState("");
+  const sessionPanelToggleRef = useRef<HTMLButtonElement | null>(null);
+  const lastFocusedRef = useRef<HTMLElement | null>(null);
   const [expandedAgents, setExpandedAgents] = useState<string[]>([]);
   const sessionPanelRef = useRef<HTMLElement | null>(null);
   const answeringRef = useRef<Set<string>>(new Set());
@@ -1400,6 +1403,18 @@ function App() {
   useEffect(() => {
     try { localStorage.setItem("hymnix.panel.order.v1", JSON.stringify(panelOrder)); } catch { /* best effort */ }
   }, [panelOrder]);
+  function moveSectionBy(key: string, delta: number): void {
+    setPanelOrder((current) => {
+      const at = current.indexOf(key);
+      const to = at + delta;
+      if (at < 0 || to < 0 || to >= current.length) return current;
+      const next = current.slice();
+      next[at] = next[to];
+      next[to] = key;
+      return next;
+    });
+  }
+
   function moveSection(dragged: string | null, target: string): void {
     if (!dragged || dragged === target) return;
     setPanelOrder((current) => {
@@ -1420,7 +1435,21 @@ function App() {
       if (target?.closest('[data-session-panel-toggle="true"]')) return;
       setSessionPanelOpen(false);
     };
-    const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") setSessionPanelOpen(false); };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { const restore = lastFocusedRef.current || sessionPanelToggleRef.current; setSessionPanelOpen(false); window.setTimeout(() => restore?.focus(), 0); return; }
+      // Keep Tab inside the panel while it is open, the way a dialog behaves.
+      if (event.key !== "Tab" || !sessionPanelRef.current) return;
+      const focusable = [...sessionPanelRef.current.querySelectorAll<HTMLElement>('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')].filter((element) => !element.hasAttribute("disabled"));
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+      else if (event.shiftKey && (document.activeElement === first || document.activeElement === document.body)) { event.preventDefault(); last.focus(); }
+    };
+    const active = document.activeElement as HTMLElement | null;
+    lastFocusedRef.current = active && active !== document.body ? active : sessionPanelToggleRef.current;
+    const initial = sessionPanelRef.current?.querySelector<HTMLElement>('button, [href], input, select, textarea');
+    initial?.focus();
     document.addEventListener("pointerdown", onPointerDown);
     document.addEventListener("keydown", onKeyDown);
     return () => { document.removeEventListener("pointerdown", onPointerDown); document.removeEventListener("keydown", onKeyDown); };
@@ -2568,7 +2597,29 @@ function App() {
 {plainEmpty && <div className="starter-row">{starters.map(([label, detail]) => <button type="button" key={label} className="starter" onClick={() => setDraft(detail)}>{label}</button>)}</div>}
 {composer}</div>;
 
-    function renderSubagentDetail(name: string) {
+    async function sendToAgent(name: string, text: string): Promise<{ ok: boolean; text?: string; error?: string }> {
+    const agent = agentsRef.current[name];
+    if (!agent || !text.trim()) return { ok: false, error: "no_agent" };
+    setSubagentRunning((current) => current.includes(name) ? current : current.concat([name]));
+    const cloudTurn = source === "cloud";
+    const base = cloudTurn ? cloudBase.trim() : (remoteActive() ? serverBase.trim() : gatewayBase);
+    const key = cloudTurn ? cloudKey.trim() : (remoteActive() ? apiKey.trim() : "");
+    const turnModel = cloudTurn ? (cloudModel.trim() || model) : model;
+    const history = wireMessages(agent).concat([{ role: "user", content: text.slice(0, 8000) }]);
+    const reply: { ok: boolean; text?: string; error?: string } = await window.hymnix.gateway.complete({
+      baseUrl: base, apiKey: key, model: turnModel,
+      kind: cloudTurn ? providerKind : "openai",
+      agentId: cloudTurn ? agentId.trim() : "",
+      maxTokens: cloudTurn ? providerMaxTokens : 0,
+      messages: history,
+    }).catch((reason: unknown) => ({ ok: false, error: String(reason) } as { ok: boolean; text?: string; error?: string }));
+    const updated = appendExchange(agentsRef.current, name, text, reply);
+    setSubagentRunning((current) => current.filter((item) => item !== name));
+    if ("agents" in updated && updated.agents) { agentsRef.current = updated.agents; setAgents(updated.agents); }
+    return reply;
+  }
+
+  function renderSubagentDetail(name: string) {
     const agent = agents[name];
     if (!agent) return <p className="panel-note">{t("Not found.")}</p>;
     return <div className="subagent-detail">
@@ -2580,13 +2631,17 @@ function App() {
       <ul className="subagent-transcript">{agent.messages.length === 0
         ? <li className="panel-note">{t("No messages yet.")}</li>
         : agent.messages.map((message, index) => <li key={index} data-role={message.role}><strong>{message.role === "user" ? t("You") : agent.name}</strong><span>{message.content}</span></li>)}</ul>
+      <form className="subagent-composer" onSubmit={(event) => { event.preventDefault(); const text = subagentDraft.trim(); if (!text) return; setSubagentDraft(""); void sendToAgent(name, text); }}>
+        <input value={subagentDraft} onChange={(event) => setSubagentDraft(event.target.value)} placeholder={tf("Message {name}", { name })} aria-label={tf("Message {name}", { name })} />
+        <button type="submit" className="btn primary" disabled={!subagentDraft.trim() || subagentRunning.includes(name)}>{t("Send")}</button>
+      </form>
     </div>;
   }
 
   function renderJobsSection() {
     const active = sortJobs(jobs).slice(0, 4);
     return <section className="session-section">
-      <h4><span className="section-grip" draggable onDragStart={() => { draggingRef.current = "jobs"; setDraggingSection("jobs"); }} onDragEnd={() => setDraggingSection(null)} title={t("Drag to reorder")}>⠿</span>{t("Jobs")}</h4>
+      <h4><button type="button" className="section-grip" draggable aria-label={t("Drag to reorder")} title={t("Drag to reorder")} onDragStart={() => { draggingRef.current = "jobs"; setDraggingSection("jobs"); }} onDragEnd={() => setDraggingSection(null)} onKeyDown={(event) => { if (event.key === "ArrowUp") { event.preventDefault(); moveSectionBy("jobs", -1); } else if (event.key === "ArrowDown") { event.preventDefault(); moveSectionBy("jobs", 1); } }}>⠿</button>{t("Jobs")}</h4>
       {active.length === 0
         ? <p className="panel-note">{t("No jobs running.")}</p>
         : <ul className="subagent-list">{active.map((job) => <li key={job.id} className="subagent-row" data-state={job.status}>
@@ -2605,7 +2660,7 @@ function App() {
     const rows = treeRows(agents);
     const visible = subagentsExpanded ? rows : rows.slice(0, 5);
     return <section className="session-section">
-      <div className="subagents-head"><h4><span className="section-grip" draggable onDragStart={() => { draggingRef.current = "subagents"; setDraggingSection("subagents"); }} onDragEnd={() => setDraggingSection(null)} title={t("Drag to reorder")}>⠿</span>{t("Subagents")}</h4>
+      <div className="subagents-head"><h4><button type="button" className="section-grip" draggable aria-label={t("Drag to reorder")} title={t("Drag to reorder")} onDragStart={() => { draggingRef.current = "subagents"; setDraggingSection("subagents"); }} onDragEnd={() => setDraggingSection(null)} onKeyDown={(event) => { if (event.key === "ArrowUp") { event.preventDefault(); moveSectionBy("subagents", -1); } else if (event.key === "ArrowDown") { event.preventDefault(); moveSectionBy("subagents", 1); } }}>⠿</button>{t("Subagents")}</h4>
         <span className="subagents-indicator">{tf("{count} running", { count: String(subagentRunning.length) })}</span></div>
       {rows.length === 0
         ? <p className="panel-note">{t("No subagents in this conversation.")}</p>
@@ -2760,7 +2815,7 @@ function App() {
           </button>)}
         </nav>
         <div className="chat-head-actions">
-          <button type="button" className="btn ghost icon-button" aria-label={t(sessionPanelOpen ? "Hide session panel" : "Show session panel")} aria-expanded={sessionPanelOpen} data-session-panel-toggle="true" onClick={() => setSessionPanelOpen((value) => !value)}>
+          <button type="button" className="btn ghost icon-button" aria-label={t(sessionPanelOpen ? "Hide session panel" : "Show session panel")} aria-expanded={sessionPanelOpen} ref={sessionPanelToggleRef} data-session-panel-toggle="true" onClick={() => setSessionPanelOpen((value) => !value)}>
             <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3" width="12" height="10" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.3" /><path d="M10.5 3v10" stroke="currentColor" strokeWidth="1.3" /></svg>
           </button>
           <div className="conversation-menu-wrap" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setConversationMenuOpen(false); }}>
@@ -2799,7 +2854,7 @@ function App() {
             onDragOver={(event) => event.preventDefault()}
             onDrop={() => { moveSection(draggingRef.current || draggingSection, key); draggingRef.current = null; setDraggingSection(null); }}>
             {key === "environment" && <section className="session-section">
-              <h4><span className="section-grip" draggable onDragStart={() => { draggingRef.current = "environment"; setDraggingSection("environment"); }} onDragEnd={() => setDraggingSection(null)} title={t("Drag to reorder")}>⠿</span>{t("Environment")}</h4>
+              <h4><button type="button" className="section-grip" draggable aria-label={t("Drag to reorder")} title={t("Drag to reorder")} onDragStart={() => { draggingRef.current = "environment"; setDraggingSection("environment"); }} onDragEnd={() => setDraggingSection(null)} onKeyDown={(event) => { if (event.key === "ArrowUp") { event.preventDefault(); moveSectionBy("environment", -1); } else if (event.key === "ArrowDown") { event.preventDefault(); moveSectionBy("environment", 1); } }}>⠿</button>{t("Environment")}</h4>
               <div className="panel-row"><span>{t("Working folder")}</span><strong>{filesRoot || t("No workspace selected")}</strong></div>
               <div className="panel-row"><span>{t("Model")}</span><strong>{modelTitle}</strong></div>
               <div className="panel-row"><span>{t("Conversation mode")}</span><strong>{composerMode === "code" ? t("Code") : t("Chat")}</strong></div>

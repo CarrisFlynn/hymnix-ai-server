@@ -1,6 +1,7 @@
 export type Lang = "en" | "zh";
 
 export const zh: Record<string, string> = {
+  "Message {name}": "给 {name} 发消息",
   "No jobs running.": "没有正在运行的任务。",
   "Drag to reorder": "拖动排序",
   "Expand": "展开",

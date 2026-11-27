@@ -2,6 +2,18 @@
 
 Only user-visible changes are listed. Internal refactors, test scaffolding and machine-specific paths are intentionally omitted.
 
+## Unreleased — continuable agents and panel accessibility (2026-11-27)
+
+### Added
+
+- **A subagent detail is a working sub-session**: the transcript view now carries a composer, and sending appends to that agent's history through the same completion path the model uses, so a delegated agent can be continued from the panel.
+- **Keyboard reordering**: each section grip is a focusable button; ArrowUp / ArrowDown move the section, in addition to drag.
+- **The panel is a dialog**: opening moves focus inside, Tab cycles within it, Escape closes it and returns focus to the header toggle.
+
+### Verified
+
+- Arrow keys reorder sections (order persisted), Tab stays inside the panel, Escape restores focus to the toggle, and the detail view shows the `给 lead 发消息` composer.
+
 ## Unreleased — section reorder, details, tree and jobs (2026-11-27)
 
 The remaining four gaps against DSH's session panel.
