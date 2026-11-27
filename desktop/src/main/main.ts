@@ -774,6 +774,7 @@ function skillDirectories(): string[] {
 function locateBundledLsp(): string {
   const cli = join("node_modules", "typescript-language-server", "lib", "cli.mjs");
   const candidates = [
+    join(process.resourcesPath || "", "app.asar.unpacked", "lsp-server", cli),
     join(process.resourcesPath || "", "lsp-server", cli),
     join(app.getAppPath(), "..", "lsp-server", cli),
   ];

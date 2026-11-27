@@ -7,6 +7,39 @@
 
 [English](CHANGELOG.md) | **简体中文**
 
+## [1.4.3] - 2026-11-27
+
+模型终于能用上那些已经 advertise 给它的工具，文件工具也不再毁文件。
+
+### 新增
+
+- **二十一个模型工具**，全部在真实运行的应用里验证过：`job.start/list/output/kill`、`schedule.list/create/update/remove`、`web.search`、`ask_user_question`、`present`、`read_image`、`session_search`、`list_session`、`worktree.list/create/remove`、`lsp`、`run_code`、`agent.wait`、`agent.interrupt`。
+- **真正的图片输入**：贴进去的截图不再退化成一个文件名，图片按各家方言的形状送给模型（OpenAI `image_url`、Anthropic image block、Ollama `images`），`read_image` 也能从磁盘取图。
+- **真正的语言服务器**：`lsp` 驱动 `typescript-language-server` 做定义、引用与结构，解析 import 与类型。服务器随包发布在 `resources/lsp-server`。
+- **能调用工具的程序**：`run_code` 在独立进程里跑 Node 程序，唯一出口是回到审批队列的 `tools.call` 桥。
+- **并发代理**：`agent.send` 立即返回，`agent.wait` 用共享 deadline 收集，`agent.interrupt` 真的中断请求。
+
+### 修复
+
+- **编辑大文件会毁掉它**：`fs.edit` / `patch.apply` 只读前 256 KB 再整份写回，且文本模式把每个 LF 变成 CRLF——380,000 字节的文件变回 270,882 字节。现在整份读、按字节写，返回体给出 before/after。
+- **文件工具被限制在安装目录**：打包后网关的根是 `resources/`，`fs.*`、`shell.run`、`term.*` 只能碰应用自身。桌面端现在会把用户选的工作区告诉网关。
+- **已经 advertise 的工具被永久拒绝**：`patch.apply`、`web.fetch`、`term.read`、`term.list` 未分类，默认策略一律拒绝；插件工具更是对策略不可见。
+- **`lsp` 传目录会崩主进程**（未捕获 `EISDIR`），现在拒绝一切非普通文件。
+- **审批显示得比执行的少**：`run_code` 只显示 20,000 字符里的 600，`job.start` 只显示 4,000 里的 600，网关把参数裁到 512 字符还不作声。
+- **「本次会话允许」不批当前这条**，55 秒后它自己过期。
+- **子代理树会被一个名字打崩**：叫 `__proto__` 的代理带子节点就会让面板崩溃。
+- 中文 Windows 上 `shell.run` 与终端的中文输出按 UTF-8 解码，全是乱码。
+
+### 安全
+
+- 联网检索的响应体按 2 MB 预算读取；携带内容的工具参数上限从 8 KB 提到 1 MB，不再把合法写入当成「太大」。
+- 开发钩子已从发布构建里彻底编译掉，并有冒烟测试断言它不存在。
+
+### 已验证
+
+- `pnpm check`：138/138 测试、typecheck、设计令牌、279/279 对比度、生产构建。
+- `pnpm smoke:prod`：发布包能启动、不含开发钩子、界面正常渲染——同一项检查对开发构建会失败。
+
 ## [未发布] - 可继续的代理与面板可访问性（2026-11-27）
 
 ### 新增

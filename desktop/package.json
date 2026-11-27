@@ -1,6 +1,6 @@
 {
   "name": "hymnix-desktop",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "private": true,
   "description": "Hymnix Orbit - Hymnix scheduler with local gateway connectivity: orchestrate local models, serve a private OpenAI-compatible endpoint, keep every session on your machine.",
   "author": {
@@ -21,7 +21,8 @@
     "cert:selfsigned": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/make-self-signed-cert.ps1",
     "dist:sign": "electron-builder --win --x64",
     "build:dev": "tsc -p tsconfig.json && vite build --mode development && node scripts/fix-renderer-html.mjs dist/renderer/index.html",
-    "smoke:prod": "node scripts/prod-smoke.mjs"
+    "smoke:prod": "node scripts/prod-smoke.mjs",
+    "stage:lsp": "node scripts/stage-lsp.mjs"
   },
   "dependencies": {
     "react": "latest",
@@ -37,7 +38,8 @@
     },
     "files": [
       "dist/**/*",
-      "package.json"
+      "package.json",
+      "lsp-server/**/*"
     ],
     "extraResources": [
       {
@@ -61,12 +63,8 @@
         "to": "engine-java/build/hymnix-engine.jar"
       },
       {
-        "from": "../build/hymnix-orbit2-backend/hymnix-server-1.4.2-x64.exe",
+        "from": "../build/hymnix-orbit2-backend/hymnix-server-1.4.3-x64.exe",
         "to": "backend-gateway-headless.exe"
-      },
-      {
-        "from": "../lsp-server",
-        "to": "lsp-server"
       }
     ],
     "win": {
@@ -105,7 +103,10 @@
     },
     "portable": {
       "artifactName": "Hymnix-Orbit-${version}-Portable.${ext}"
-    }
+    },
+    "asarUnpack": [
+      "lsp-server/**"
+    ]
   },
   "devDependencies": {
     "@playwright/test": "^1.65.1",

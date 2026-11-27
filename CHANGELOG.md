@@ -2,6 +2,39 @@
 
 Only user-visible changes are listed. Internal refactors, test scaffolding and machine-specific paths are intentionally omitted.
 
+## [1.4.3] - 2026-11-27
+
+The agent can finally reach the tools it was offered, and the file tools stop damaging files.
+
+### Added
+
+- **Twenty-one agent tools**, all verified in a running app: `job.start/list/output/kill`, `schedule.list/create/update/remove`, `web.search`, `ask_user_question`, `present`, `read_image`, `session_search`, `list_session`, `worktree.list/create/remove`, `lsp`, `run_code`, `agent.wait`, `agent.interrupt`.
+- **Real image input.** Attached screenshots are no longer reduced to their file names: the picture travels to the model in each dialect's own shape (OpenAI `image_url`, Anthropic image block, Ollama `images`), and `read_image` can pull one from disk.
+- **A real language server.** `lsp` drives `typescript-language-server` for definition, references and outline, following imports and types. The server ships with the app in `resources/lsp-server`.
+- **Programs that call tools.** `run_code` runs a Node program in a separate process whose only reach is a `tools.call` bridge back through the approval queue.
+- **Concurrent agents.** `agent.send` returns immediately, `agent.wait` collects with one shared deadline, `agent.interrupt` aborts the real request.
+
+### Fixed
+
+- **Editing a large file used to destroy it.** `fs.edit` and `patch.apply` read the first 256 KB and wrote that back over the original, and text mode turned every LF into CRLF. A 380 000 byte file came back 270 882 bytes. Both now read the whole file and write exact bytes; the reply reports before/after.
+- **The file tools were scoped to the install directory.** In a packaged build the gateway's root was `resources/`, so `fs.*`, `shell.run` and `term.*` could only touch the app itself. The desktop now tells the gateway which folder the user picked.
+- **Tools that were offered could be permanently refused.** `patch.apply`, `web.fetch`, `term.read` and `term.list` were unclassified, which the default policy denies; plugin tools were invisible to it entirely.
+- **`lsp` on a folder crashed the main process** with an uncaught `EISDIR`; it now refuses anything that is not a regular file.
+- **Approvals showed less than they ran.** `run_code` displayed 600 characters of a 20 000 character program, `job.start` 600 of 4 000, and the gateway clipped argument payloads to 512 characters with no notice.
+- **"Allow this session" left the request waiting** and it expired 55 seconds later.
+- **The subagent tree could be crashed by a name**: an agent called `__proto__` with a child broke the panel.
+- Chinese console output from `shell.run` and the terminal was decoded as UTF-8 on a CP936 system and arrived unreadable.
+
+### Security
+
+- Response bodies for web search are read with a 2 MB budget; argument payloads for content-carrying tools are bounded at 1 MB instead of being rejected at 8 KB.
+- The development hook is now compiled out of release builds entirely, and a smoke test asserts it is absent.
+
+### Verified
+
+- `pnpm check`: 138/138 tests, typecheck, design tokens, 279/279 contrast, production build.
+- `pnpm smoke:prod`: the shipped bundle boots, has no development hook and renders its shell — and the same check fails a development build.
+
 ## Unreleased — continuable agents and panel accessibility (2026-11-27)
 
 ### Added
