@@ -99,8 +99,8 @@ const SCHEDULE_UPDATE_SPEC = { type: "function", function: { name: "schedule.upd
 const SCHEDULE_REMOVE_SPEC = { type: "function", function: { name: "schedule.remove", description: "Delete a scheduled task permanently. Prefer schedule.update with enabled false when you only want to pause it.", parameters: { type: "object", properties: { id: { type: "string" } }, required: ["id"], additionalProperties: false } } };
 const SKILL_LIST_SPEC = { type: "function", function: { name: "skill.list", description: "List installed skills (id, name, one-line description).", parameters: { type: "object", properties: {}, additionalProperties: false } } };
 const SKILL_LOAD_SPEC = { type: "function", function: { name: "skill.load", description: "Load one skill's full instructions by id before doing a task it covers.", parameters: { type: "object", properties: { id: { type: "string" } }, required: ["id"], additionalProperties: false } } };
-const AGENT_SPAWN_SPEC = { type: "function", function: { name: "agent.spawn", description: "Create a named agent with its own conversation history.", parameters: { type: "object", properties: { name: { type: "string" }, system: { type: "string" } }, required: ["name"], additionalProperties: false } } };
-const AGENT_SEND_SPEC = { type: "function", function: { name: "agent.send", description: "Send one message to a named agent and get its reply. The agent keeps the transcript.", parameters: { type: "object", properties: { name: { type: "string" }, message: { type: "string" } }, required: ["name", "message"], additionalProperties: false } } };
+const AGENT_SPAWN_SPEC = { type: "function", function: { name: "agent.spawn", description: "Create a named agent with its own conversation history. Set parent to nest it under another agent so the panel can show a tree.", parameters: { type: "object", properties: { name: { type: "string" }, system: { type: "string" }, parent: { type: "string", description: "Existing agent name to nest under" } }, required: ["name"], additionalProperties: false } } };
+const AGENT_SEND_SPEC = { type: "function", function: { name: "agent.send", description: "Send one message to a named agent. Returns immediately with status running; call agent.wait to collect the reply. The agent keeps the transcript.", parameters: { type: "object", properties: { name: { type: "string" }, message: { type: "string" } }, required: ["name", "message"], additionalProperties: false } } };
 const AGENT_LIST_SPEC = { type: "function", function: { name: "agent.list", description: "List named agents and how many turns each has.", parameters: { type: "object", properties: {}, additionalProperties: false } } };
 const AGENT_CLOSE_SPEC = { type: "function", function: { name: "agent.close", description: "Drop a named agent and its history.", parameters: { type: "object", properties: { name: { type: "string" } }, required: ["name"], additionalProperties: false } } };
 const CODE_OUTLINE_SPEC = { type: "function", function: { name: "code.outline", description: "List the declarations in one source file with line numbers.", parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"], additionalProperties: false } } };
@@ -920,11 +920,17 @@ function App() {
   function toggleApprovalSelection(id: string): void {
     setApprovalsSelected((current) => current.includes(id) ? current.filter((row) => row !== id) : current.concat([id]));
   }
-  function toggleSessionAllow(tool: string): void {
+  /**
+   * Allow this tool for the rest of the session AND answer the row the user is
+   * looking at; the old version only flipped the flag and left the request to
+   * expire, which read as a broken button.
+   */
+  function toggleSessionAllow(tool: string, id?: string): void {
     const next = new Set(sessionAllowRef.current);
     if (next.has(tool)) next.delete(tool); else next.add(tool);
     sessionAllowRef.current = next;
     setSessionAllow([...next]);
+    if (id && next.has(tool)) void decideApproval(id, "approve");
   }
   /** Batch decision: the selection, or every pending row when nothing is ticked. */
   async function decideApprovals(decision: "approve" | "deny"): Promise<void> {
@@ -957,7 +963,7 @@ function App() {
     const id = "local-" + crypto.randomUUID();
     const record: ApprovalRecord = {
       id, requestId: id, tool, argsRedacted: args, risk: "danger", reasons,
-      createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 300_000).toISOString(),
+      createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 55_000).toISOString(),
     };
     return new Promise((resolve) => {
       const timer = window.setTimeout(() => {
@@ -1072,6 +1078,19 @@ function App() {
     return { text, calls: collector.calls(() => "call_" + crypto.randomUUID().slice(0, 8)) };
   }
   /** Execute one tool call: the plan channel locally, everything else through the gateway. */
+  /**
+   * Trim a tool result without breaking its JSON: arrays are cut, never the
+   * serialised text, because slicing the string produced unparsable output.
+   */
+  function trimResult(value: unknown, budget: number): unknown {
+    const text = JSON.stringify(value ?? null);
+    if (text.length <= budget) return value;
+    const rows = Array.isArray((value as { results?: unknown[] })?.results) ? (value as { results: unknown[] }).results : null;
+    if (rows) return { ...(value as Record<string, unknown>), results: rows.slice(0, Math.max(1, Math.floor(rows.length / 2))), truncated: true };
+    if (Array.isArray(value)) return { results: value.slice(0, Math.max(1, Math.floor(value.length / 2))), truncated: true };
+    return { value: String(text).slice(0, budget), truncated: true };
+  }
+
   async function runToolCall(call: ToolCallPart, round: number): Promise<string> {
     const started = performance.now();
     let args: ToolArgs = {};
@@ -1117,8 +1136,8 @@ function App() {
       const codeLines = code.split(/\r?\n/).length;
       const approved = await requestLocalApproval("run_code", { code, lines: codeLines, characters: code.length }, [
         tf("Runs a {lines}-line Node.js program in a child process", { lines: String(codeLines) }),
-        "It can call your tools; each call goes through the usual approval check",
-        "Node itself can touch the filesystem, which is why this needs a decision",
+        t("It can call your tools; each call goes through the usual approval check"),
+        t("Node itself can touch the filesystem, which is why this needs a decision"),
       ]);
       if (!approved) {
         recordEvidence({ kind: "approval", title: "run_code", detail: String(args.code || "").slice(0, 120), status: "denied", durationMs: Math.round(performance.now() - started) });
@@ -1215,7 +1234,7 @@ function App() {
       if (!command) return JSON.stringify({ ok: false, error: "command_required" });
       if (/[\r\n]/.test(command)) return JSON.stringify({ ok: false, error: "invalid_command" });
       const preApproved = alwaysAllow.includes("job.start") || sessionAllowRef.current.has("job.start");
-      const approved = preApproved || await requestLocalApproval("job.start", { command: command.slice(0, 600), cwd: String(args.cwd || "").slice(0, 300) }, ["Runs a shell command that outlives this turn", "The process tree can be stopped from job.kill", "Output stays visible on the Jobs page"]);
+      const approved = preApproved || await requestLocalApproval("job.start", { command, cwd: String(args.cwd || "").slice(0, 300) }, [t("Runs a shell command that outlives this turn"), t("The process tree can be stopped from job.kill"), t("Output stays visible on the Jobs page")]);
       if (!approved) {
         recordEvidence({ kind: "approval", title: "job.start", detail: command.slice(0, 120), status: "denied", durationMs: Math.round(performance.now() - started) });
         return JSON.stringify({ ok: false, error: "denied_by_user" });
@@ -1286,7 +1305,7 @@ function App() {
     }
     if (call.name === "agent.send") {
       const name = String(args.name || "").trim();
-      const agent = agentsRef.current[name];
+      const agent = Object.prototype.hasOwnProperty.call(agentsRef.current, name) ? agentsRef.current[name] : undefined;
       if (!agent) return JSON.stringify({ ok: false, error: "no_agent" });
       if (agentRunsRef.current.has(name)) return JSON.stringify({ ok: false, error: "already_running", name });
       const cloudTurn = source === "cloud";
@@ -1324,18 +1343,23 @@ function App() {
       const rawTimeout = Number(args.timeoutSeconds);
       const seconds = Math.min(Math.max(Number.isFinite(rawTimeout) ? rawTimeout : 120, 1), 600);
       const results: Array<{ name: string; status: string; text?: string; error?: string }> = [];
+      // One deadline for the whole call, not per agent: three slow agents must not
+      // multiply the advertised timeout by three.
+      const deadline = Date.now() + seconds * 1000;
       for (const name of names) {
         const entry = agentRunsRef.current.get(name);
         if (!entry) {
-          const agent = agentsRef.current[name];
+          const agent = Object.prototype.hasOwnProperty.call(agentsRef.current, name) ? agentsRef.current[name] : undefined;
           if (!agent) { results.push({ name, status: "no_agent" }); continue; }
           const last = [...agent.messages].reverse().find((item) => item.role === "assistant");
           results.push({ name, status: "idle", ...(last ? { text: String(last.content).slice(0, 8000) } : {}), ...(agent.lastError ? { error: agent.lastError } : {}) });
           continue;
         }
+        const remaining = Math.max(0, deadline - Date.now());
+        if (remaining === 0) { results.push({ name, status: "still_running", error: "wait_timeout" }); continue; }
         const settled = await Promise.race([
           entry.run.then((reply) => reply),
-          new Promise<{ ok: false; error: string }>((resolve) => window.setTimeout(() => resolve({ ok: false, error: "wait_timeout" }), seconds * 1000)),
+          new Promise<{ ok: false; error: string }>((resolve) => window.setTimeout(() => resolve({ ok: false, error: "wait_timeout" }), remaining)),
         ]);
         results.push(settled.ok ? { name, status: "done", text: settled.text } : { name, status: settled.error === "wait_timeout" ? "still_running" : "error", error: settled.error });
       }
@@ -1360,15 +1384,15 @@ function App() {
     }
     if (call.name === "code.outline") {
       const result = await window.hymnix.code.outline(String(args.path || "")).catch((reason: unknown) => ({ ok: false, error: String(reason) }));
-      return JSON.stringify(result).slice(0, 20000);
+      return JSON.stringify(trimResult(result, 20000));
     }
     if (call.name === "code.definition") {
       const result = await window.hymnix.code.definition(String(args.symbol || "")).catch((reason: unknown) => ({ ok: false, error: String(reason) }));
-      return JSON.stringify(result).slice(0, 20000);
+      return JSON.stringify(trimResult(result, 20000));
     }
     if (call.name === "code.references") {
       const result = await window.hymnix.code.references(String(args.symbol || "")).catch((reason: unknown) => ({ ok: false, error: String(reason) }));
-      return JSON.stringify(result).slice(0, 20000);
+      return JSON.stringify(trimResult(result, 20000));
     }
     if (call.name === "subagent.run") {
       const prompt = String(args.prompt || "").trim();
@@ -1649,7 +1673,13 @@ function App() {
   useEffect(() => {
     runCallsRef.current = (call) => {
       void runToolCall({ id: "run-" + call.id, name: call.name, arguments: JSON.stringify(call.args ?? {}) }, 0)
-        .then((result) => window.hymnix.run.reply({ id: call.id, result }))
+        .then((result) => {
+          // runToolCall answers with JSON text; hand the program a value, not a string
+          // it has to remember to parse.
+          let value: unknown = result;
+          try { value = JSON.parse(result); } catch { /* a non-JSON tool answer stays a string */ }
+          window.hymnix.run.reply({ id: call.id, result: value });
+        })
         .catch((reason: unknown) => window.hymnix.run.reply({ id: call.id, error: String(reason) }));
     };
     return window.hymnix.run.onCall((call) => runCallsRef.current(call));
@@ -1676,7 +1706,10 @@ function App() {
     void window.hymnix.system.paths().then(setPaths).catch(() => undefined);
   }, [uiSettings.cacheDir]);
   // Playwright visual baselines drive pages and themes through this hook.
+  // The whole hook is development-only: it can seed plans and approvals and drive
+  // the tool loop with no model in front of it, so a shipped installer must not have it.
   useEffect(() => {
+    if (!__DEV_BUILD__) return;
     (window as any).__hymnixDev = {
       toolNames: () => toolSpecsRef.current.map((spec) => spec.function.name),
       navigate: (page: string) => setActive(page),
@@ -1711,7 +1744,7 @@ function App() {
         setUnloadTarget(null);
       },
     };
-  });
+  }, []);
   // One slow clock drives the live durations on the Plan and Jobs tabs. It only
   // runs while something is actually running, so an idle window stays idle.
   useEffect(() => {
@@ -1813,7 +1846,7 @@ function App() {
     const next = consumeRound(current);
     goalRef.current = next;
     setGoal(next);
-    const timer = window.setTimeout(() => { void send(continuationPrompt(next)); }, 1200);
+    const timer = window.setTimeout(() => { void send(continuationPrompt(next, getLang())); }, 1200);
     return () => window.clearTimeout(timer);
   }, [chatBusy, messages, error]);
   // Scheduled tasks live in the main process. A fire opens a new conversation
@@ -2175,7 +2208,11 @@ function App() {
         if (requestRef.current !== requestId) return;
         if (toolImagesRef.current.length) {
           const shots = toolImagesRef.current.splice(0, 4);
-          wire.push({ role: "user", content: shots.map((shot) => "[Image: " + shot.name + "]").join("\n"), images: shots.map(({ mime, data }) => ({ mime, data })) });
+          // Anything past the fourth would otherwise ride along on the NEXT round as
+          // if the user had attached it; drop it and say so instead.
+          const dropped = toolImagesRef.current.splice(0);
+          const note = dropped.length ? "\n(" + dropped.length + " more image(s) were not attached)" : "";
+          wire.push({ role: "user", content: shots.map((shot) => "[Image: " + shot.name + "]").join("\n") + note, images: shots.map(({ mime, data }) => ({ mime, data })) });
         }
         // A fresh bubble for the next round, so the transcript reads turn by turn.
         setMessages((current) => [...current, { role: "assistant", content: "", at: stamp() }]);
@@ -2992,7 +3029,21 @@ function App() {
   function renderSubagentsSection() {
     if (subagentView) return <section className="session-section">{renderSubagentDetail(subagentView)}</section>;
     const rows = treeRows(agents);
-    const visible = subagentsExpanded ? rows : rows.slice(0, 5);
+    // A collapsed parent hides its children; the chevron only flipped a flag before,
+    // so the tree never actually folded.
+    const collapsed = new Set(rows.filter((row) => row.children > 0 && !expandedAgents.includes(row.name)).map((row) => row.name));
+    const folded = rows.filter((row) => {
+      let cursor = row.parent || "";
+      let guard = 0;
+      while (cursor && guard < 32) {
+        if (collapsed.has(cursor)) return false;
+        const parent = agents[cursor];
+        cursor = parent && parent.parent ? parent.parent : "";
+        guard += 1;
+      }
+      return true;
+    });
+    const visible = subagentsExpanded ? folded : folded.slice(0, 5);
     return <section className="session-section">
       <div className="subagents-head"><h4><button type="button" className="section-grip" draggable aria-label={t("Drag to reorder")} title={t("Drag to reorder")} onDragStart={() => { draggingRef.current = "subagents"; setDraggingSection("subagents"); }} onDragEnd={() => setDraggingSection(null)} onKeyDown={(event) => { if (event.key === "ArrowUp") { event.preventDefault(); moveSectionBy("subagents", -1); } else if (event.key === "ArrowDown") { event.preventDefault(); moveSectionBy("subagents", 1); } }}>⠿</button>{t("Subagents")}</h4>
         <span className="subagents-indicator">{tf("{count} running", { count: String(subagentRunning.length) })}</span></div>
@@ -3947,7 +3998,7 @@ function App() {
   const automationText = (task: import("../shared/protocol").AutomationTask): string => {
     const rule = task.rule;
     if (rule.kind === "daily") return tf("Every day at {time}", { time: rule.time });
-    if (rule.kind === "weekly") return tf("Every {days} at {time}", { days: rule.weekdays.map((day) => t(WEEKDAY_KEYS[day])).join("、"), time: rule.time });
+    if (rule.kind === "weekly") return tf("Every {days} at {time}", { days: rule.weekdays.map((day) => t(WEEKDAY_KEYS[day])).join(getLang() === "zh" ? "、" : ", "), time: rule.time });
     if (rule.kind === "every") return tf("Every {minutes} minutes", { minutes: String(Math.max(1, Math.round(rule.seconds / 60))) });
     return tf("Once at {time}", { time: automationStamp(rule.at) });
   };
@@ -4194,7 +4245,7 @@ function App() {
                       setRiskAcknowledged(false);
                       setAlwaysAllowConfirm({ tool: row.tool, id: row.id });
                     }} disabled={answering.includes(row.id)}>{t(answering.includes(row.id) ? "Answering…" : alwaysAllow.includes(row.tool) ? "Revoke always-allow" : "Always allow")}</button>
-                    <button type="button" className={sessionAllow.includes(row.tool) ? "btn primary" : "btn ghost"} onClick={() => toggleSessionAllow(row.tool)}>{t(sessionAllow.includes(row.tool) ? "Allowed this session" : "Allow this session")}</button>
+                    <button type="button" className={sessionAllow.includes(row.tool) ? "btn primary" : "btn ghost"} onClick={() => toggleSessionAllow(row.tool, row.id)}>{t(sessionAllow.includes(row.tool) ? "Allowed this session" : "Allow this session")}</button>
                   </div>
                 </li>)}
               </ul>}

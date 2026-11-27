@@ -1,6 +1,11 @@
 export type Lang = "en" | "zh";
 
 export const zh: Record<string, string> = {
+  "It can call your tools; each call goes through the usual approval check": "它可以调用你的工具，每次调用都照常走审批",
+  "Node itself can touch the filesystem, which is why this needs a decision": "Node 本身就能碰文件系统，所以需要你来决定",
+  "Runs a shell command that outlives this turn": "运行一条会活过本轮的命令",
+  "The process tree can be stopped from job.kill": "进程树可以用 job.kill 终止",
+  "Output stays visible on the Jobs page": "输出会留在任务页",
   "Showing the first 512 characters of {total}": "仅显示前 512 个字符，共 {total} 个",
   "Runs a {lines}-line Node.js program in a child process": "在子进程中运行 {lines} 行的 Node.js 程序",
   "Deliverables": "交付文件",

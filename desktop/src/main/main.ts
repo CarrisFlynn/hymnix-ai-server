@@ -230,11 +230,12 @@ function filesRootOrThrow(): string { if (!selectedFilesRoot) throw filesError("
  * does (workspace-relative or absolute) and refuses anything that is not a
  * real image by magic bytes, because the extension is not evidence.
  */
-const IMAGE_MIME: Array<{ mime: string; magic: number[] }> = [
+const IMAGE_MIME: Array<{ mime: string; magic: number[]; marker?: { offset: number; bytes: number[] } }> = [
   { mime: "image/png", magic: [0x89, 0x50, 0x4e, 0x47] },
   { mime: "image/jpeg", magic: [0xff, 0xd8, 0xff] },
   { mime: "image/gif", magic: [0x47, 0x49, 0x46, 0x38] },
-  { mime: "image/webp", magic: [0x52, 0x49, 0x46, 0x46] },
+  // RIFF alone also matches WAV and AVI, so a WebP must spell WEBP at offset 8.
+  { mime: "image/webp", magic: [0x52, 0x49, 0x46, 0x46], marker: { offset: 8, bytes: [0x57, 0x45, 0x42, 0x50] } },
 ];
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 
@@ -244,7 +245,8 @@ function readImageForModel(rawPath: unknown): { ok: boolean; mime?: string; data
   if (info.isDirectory()) return { ok: false, error: "is_a_directory" };
   if (info.size > MAX_IMAGE_BYTES) return { ok: false, error: "image_too_large" };
   const bytes = readFileSync(real);
-  const match = IMAGE_MIME.find((item) => item.magic.every((byte, index) => bytes[index] === byte));
+  const match = IMAGE_MIME.find((item) => item.magic.every((byte, index) => bytes[index] === byte)
+    && (!item.marker || item.marker.bytes.every((byte, index) => bytes[item.marker!.offset + index] === byte)));
   if (!match) return { ok: false, error: "not_an_image" };
   return { ok: true, mime: match.mime, data: bytes.toString("base64"), bytes: info.size, path: rel || real };
 }
@@ -444,7 +446,9 @@ function stopAllTerminals(): void {
 function workspaceCwd(requested: string | undefined): string {
   const asked = typeof requested === "string" && requested.trim() ? resolve(requested) : null;
   let cwd = process.cwd();
-  if (!selectedFilesRoot) return asked ?? cwd;
+  // With no workspace chosen, an arbitrary absolute path must not become the cwd:
+  // the caller is a model, and "ask for a folder" is not a scope decision.
+  if (!selectedFilesRoot) return cwd;
   const rootReal = realpathSyncSafe(selectedFilesRoot);
   cwd = asked ?? rootReal;
   const inside = relative(rootReal, realpathSyncSafe(cwd));

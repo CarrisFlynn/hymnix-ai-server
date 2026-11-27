@@ -10,6 +10,11 @@ const MAX_AGENTS = 6;
 const MAX_MESSAGES = 40;
 const MAX_TEXT = 8000;
 
+/** Own-property lookup: __proto__ and constructor must not look like agents. */
+function own(agents, name) {
+  return agents && Object.prototype.hasOwnProperty.call(agents, name) ? agents[name] : undefined;
+}
+
 export function emptyAgents() {
   return {};
 }
@@ -18,7 +23,7 @@ export function emptyAgents() {
 export function spawnAgent(agents, name, system = "", parent = "") {
   const id = String(name || "").trim().slice(0, 40);
   if (!id) return { error: "name_required" };
-  if (agents[id]) return { error: "already_exists" };
+  if (Object.prototype.hasOwnProperty.call(agents, id)) return { error: "already_exists" };
   if (Object.keys(agents).length >= MAX_AGENTS) return { error: "too_many_agents" };
   return {
     agents: { ...agents, [id]: { name: id, parent: String(parent || "").slice(0, 40), system: String(system || "").slice(0, MAX_TEXT), messages: [], updatedAt: Date.now() } },
@@ -30,7 +35,7 @@ export function spawnAgent(agents, name, system = "", parent = "") {
  * still has the user's message in context instead of silently losing it.
  */
 export function appendExchange(agents, name, userText, reply) {
-  const agent = agents[name];
+  const agent = own(agents, name);
   if (!agent) return { error: "no_agent" };
   const messages = agent.messages.concat([{ role: "user", content: String(userText || "").slice(0, MAX_TEXT) }]);
   if (reply && reply.ok) messages.push({ role: "assistant", content: String(reply.text || "").slice(0, MAX_TEXT) });
@@ -57,7 +62,7 @@ export function listAgents(agents) {
 }
 
 export function closeAgent(agents, name) {
-  if (!agents[name]) return { error: "no_agent" };
+  if (!own(agents, name)) return { error: "no_agent" };
   const next = { ...agents };
   delete next[name];
   return { agents: next };

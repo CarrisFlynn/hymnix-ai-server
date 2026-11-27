@@ -4,4 +4,4 @@ export declare function createGoal(objective: string, maxRounds?: number): { goa
 export declare function applyGoalPatch(goal: Goal | null, patch: Record<string, unknown>): { goal?: Goal; error?: string };
 export declare function consumeRound(goal: Goal): Goal;
 export declare function shouldContinue(goal: Goal | null): boolean;
-export declare function continuationPrompt(goal: Goal): string;
+export declare function continuationPrompt(goal: Goal, lang?: string): string;

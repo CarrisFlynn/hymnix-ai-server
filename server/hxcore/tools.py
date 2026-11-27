@@ -111,6 +111,25 @@ def _write_text_exact(path: str, text: str) -> None:
         raise
 
 
+def _console_encoding() -> str:
+    """What this machine's shells actually print.
+
+    Windows cmd writes the OEM code page (936 on a Chinese system), so decoding
+    its output as UTF-8 turned every Chinese line into replacement characters.
+    """
+    if os.name == "nt":
+        try:
+            import ctypes
+            return "cp" + str(ctypes.windll.kernel32.GetOEMCP())
+        except Exception:
+            return "mbcs"
+    try:
+        import locale
+        return locale.getpreferredencoding(False) or "utf-8"
+    except Exception:
+        return "utf-8"
+
+
 def _fs_path(args):
     p=_inside_root(args.get("path","."))
     if p is None: raise ToolError("out_of_scope")
@@ -159,7 +178,7 @@ def _term_start(args):
         shell = "cmd.exe /d /q" if os.name == "nt" else "/bin/sh"
     flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(subprocess, "CREATE_NO_WINDOW", 0)
     proc = subprocess.Popen(shell, cwd=cwd, shell=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
+                            stderr=subprocess.STDOUT, text=True, encoding=_console_encoding(), errors="replace",
                             bufsize=1, creationflags=flags)
     sid = uuid.uuid4().hex[:8]
     session = {"id": sid, "proc": proc, "buffer": "", "lock": threading.Lock(), "cwd": cwd}
@@ -261,7 +280,7 @@ def _shell_run(args):
     started = time.perf_counter()
     creation = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(subprocess, "CREATE_NO_WINDOW", 0)
     proc = subprocess.Popen(command, cwd=cwd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            text=True, encoding="utf-8", errors="replace", creationflags=creation)
+                            text=True, encoding=_console_encoding(), errors="replace", creationflags=creation)
     timed_out = False
     try:
         out, err = proc.communicate(timeout=timeout)

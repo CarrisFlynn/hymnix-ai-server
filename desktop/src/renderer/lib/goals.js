@@ -49,11 +49,20 @@ export function shouldContinue(goal) {
 }
 
 /** The prompt the shell sends for the next round; names the goal and the budget. */
-export function continuationPrompt(goal) {
+export function continuationPrompt(goal, lang = "en") {
   const round = goal.rounds + 1;
+  // The prompt goes to the model, so it follows the interface language instead of
+  // always arriving in Chinese during an English session.
+  if (lang === "zh") {
+    return [
+      "继续推进这个目标：" + goal.objective,
+      "这是第 " + round + " / " + goal.maxRounds + " 轮。",
+      "先检查当前进度，再完成下一步；目标达成时调用 goal.write 并把 status 设为 complete。",
+    ].join("\n");
+  }
   return [
-    "继续推进这个目标：" + goal.objective,
-    "这是第 " + round + " / " + goal.maxRounds + " 轮。",
-    "先检查当前进度，再完成下一步；目标达成时调用 goal.write 把 status 设为 complete，并简要说明结果。",
+    "Continue this goal: " + goal.objective,
+    "This is round " + round + " of " + goal.maxRounds + ".",
+    "Check what is already done, then take the next step. When the goal is met, call goal.write and set status to complete.",
   ].join("\n");
 }

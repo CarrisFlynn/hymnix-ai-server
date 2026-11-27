@@ -22,7 +22,10 @@ test("continuation stops at the budget and consumes one round", () => {
   assert.equal(shouldContinue(second), true);
   const third = consumeRound(second);
   assert.equal(shouldContinue(third), false);
-  assert.match(continuationPrompt(goal), /1 \/ 2/);
+  assert.match(continuationPrompt(goal, "zh"), /1 \/ 2/);
+  // The prompt follows the interface language; an English session must not get Chinese.
+  assert.match(continuationPrompt(goal, "en"), /round 1 of 2/);
+  assert.doesNotMatch(continuationPrompt(goal, "en"), /[\u4e00-\u9fff]/);
 });
 
 test("a completed goal never continues", () => {
