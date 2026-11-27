@@ -3,6 +3,8 @@ import { createWorktree, listWorktrees, removeWorktree } from "./worktree.ts";
 import { runLspQuery } from "./lsp.ts";
 import { runProgram } from "./run-code.ts";
 import { callLocalTool, configureTools, hasLocalTool, listToolDefs } from "./agent-tools.ts";
+// Registers shell.run, term.* and web.fetch alongside the file tools.
+import "./agent-shell.ts";
 import { closeAllSessions, closeSession, defaultCwd, detectProfiles, openSession, resizeSession, sessionOf, writeSession } from "./pty-host.ts";
 import {app,BrowserWindow,Menu,Notification,Tray,WebContentsView,dialog,ipcMain,net,nativeTheme,protocol,safeStorage,screen,session,shell} from "electron";
 import {basename,extname,isAbsolute,join,relative,resolve,sep} from "node:path";

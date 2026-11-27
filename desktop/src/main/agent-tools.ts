@@ -52,7 +52,7 @@ export class ToolFailure extends Error {
   constructor(public code: string) { super(code); }
 }
 
-function fail(code: string): never { throw new ToolFailure(code); }
+export function fail(code: string): never { throw new ToolFailure(code); }
 
 /** Resolve a path inside the sandbox; absolute paths and .. escapes are refused. */
 export function safePath(raw: unknown): string {
@@ -65,7 +65,7 @@ export function safePath(raw: unknown): string {
   return target;
 }
 
-function relPath(absolute: string): string {
+export function relPath(absolute: string): string {
   return relative(resolve(toolRoot()), absolute).replaceAll(sep, "/") || ".";
 }
 
@@ -88,9 +88,9 @@ function writeExact(path: string, text: string): void {
   renameSync(tmp, path);
 }
 
-function register(def: ToolDef): void { REGISTRY.set(def.name, def); }
+export function registerTool(def: ToolDef): void { REGISTRY.set(def.name, def); }
 
-register({
+registerTool({
   name: "time.now",
   description: "Current local time as an ISO 8601 string.",
   schema: { type: "object", properties: {} },
@@ -98,7 +98,7 @@ register({
   handler: () => new Date().toISOString(),
 });
 
-register({
+registerTool({
   name: "calc",
   description: "Evaluate a plain arithmetic expression (+ - * / % ** and parentheses).",
   schema: { type: "object", properties: { expression: { type: "string" } }, required: ["expression"] },
@@ -113,7 +113,7 @@ register({
   },
 });
 
-register({
+registerTool({
   name: "sysinfo",
   description: "Platform, CPU count, memory and uptime for this machine.",
   schema: { type: "object", properties: {} },
@@ -129,7 +129,7 @@ register({
   }),
 });
 
-register({
+registerTool({
   name: "fs.list",
   description: "List one folder inside the workspace.",
   schema: { type: "object", properties: { path: { type: "string" } } },
@@ -141,7 +141,7 @@ register({
   },
 });
 
-register({
+registerTool({
   name: "fs.stat",
   description: "Size, type and modification time of one path.",
   schema: { type: "object", properties: { path: { type: "string" } }, required: ["path"] },
@@ -153,7 +153,7 @@ register({
   },
 });
 
-register({
+registerTool({
   name: "fs.read",
   description: "Read a UTF-8 text file. Reports truncated and the real byte size instead of trimming silently.",
   schema: { type: "object", properties: { path: { type: "string" } }, required: ["path"] },
@@ -167,7 +167,7 @@ register({
   },
 });
 
-register({
+registerTool({
   name: "fs.write",
   description: "Write one UTF-8 file inside the workspace (max 256 KB), atomically. Replaces the whole file.",
   schema: { type: "object", properties: { path: { type: "string" }, content: { type: "string" } }, required: ["path", "content"] },
@@ -184,7 +184,7 @@ register({
   },
 });
 
-register({
+registerTool({
   name: "fs.edit",
   description: "Replace one exact occurrence in a file, or every occurrence with all=true. Reads and writes exact bytes, so nothing else in the file changes.",
   schema: {
@@ -209,7 +209,7 @@ register({
   },
 });
 
-register({
+registerTool({
   name: "patch.apply",
   description: "Apply several exact-string edits as one transaction. Every edit is checked first; one mismatch and no file is written.",
   schema: {
@@ -250,7 +250,7 @@ register({
   },
 });
 
-register({
+registerTool({
   name: "fs.mkdir",
   description: "Create a folder inside the workspace, including parents.",
   schema: { type: "object", properties: { path: { type: "string" } }, required: ["path"] },
@@ -258,7 +258,7 @@ register({
   handler: (args) => { const target = safePath(args.path); mkdirSync(target, { recursive: true }); return { path: relPath(target) }; },
 });
 
-register({
+registerTool({
   name: "fs.remove",
   description: "Delete one file or folder inside the workspace.",
   schema: { type: "object", properties: { path: { type: "string" } }, required: ["path"] },
@@ -266,7 +266,7 @@ register({
   handler: (args) => { const target = safePath(args.path); rmSync(target, { recursive: true, force: true }); return { path: relPath(target) }; },
 });
 
-register({
+registerTool({
   name: "fs.move",
   description: "Move or rename a file inside the workspace.",
   schema: { type: "object", properties: { from: { type: "string" }, to: { type: "string" } }, required: ["from", "to"] },
@@ -294,7 +294,7 @@ function walk(root: string, depth: number, out: string[], limit = 2000): void {
   }
 }
 
-register({
+registerTool({
   name: "repo.tree",
   description: "List the workspace as indented paths, skipping node_modules, .git, dist and release.",
   schema: { type: "object", properties: { depth: { type: "number" } } },
@@ -307,7 +307,7 @@ register({
   },
 });
 
-register({
+registerTool({
   name: "repo.search",
   description: "Find a literal string in the workspace and return file, line and the matching text.",
   schema: { type: "object", properties: { q: { type: "string" }, limit: { type: "number" } }, required: ["q"] },
@@ -334,7 +334,7 @@ register({
   },
 });
 
-register({
+registerTool({
   name: "repo.read",
   description: "Read a file by workspace-relative path (alias of fs.read, kept for compatibility).",
   schema: { type: "object", properties: { path: { type: "string" } }, required: ["path"] },
