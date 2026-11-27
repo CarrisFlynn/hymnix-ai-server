@@ -222,13 +222,21 @@ def stream_from_ollama(lines, model: str):
             name = str(fn.get("name") or "")
             if not name:
                 continue
+            # A block has to be closed before the next one opens, thinking included:
+            # a strict client indexes content blocks, and an unterminated thinking
+            # block followed by a tool_use at the same index reads as a corrupt stream.
+            if think_open:
+                yield block_stop(index)
+                think_open = False
+                index += 1
             if text_open:
                 yield block_stop(index)
                 text_open = False
                 index += 1
             produced_tools = True
             block_index = index
-            yield tool_block_start(block_index, str(call.get("id") or ""), name)
+            call_id = str(call.get("id") or "") or ("toolu_hymnix_" + str(tool_index))
+            yield tool_block_start(block_index, call_id, name)
             arguments = fn.get("arguments")
             payload = arguments if isinstance(arguments, str) else json.dumps(arguments or {}, ensure_ascii=False)
             yield tool_input_delta(block_index, payload or "{}")

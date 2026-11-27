@@ -85,6 +85,35 @@ class StreamTranslation(unittest.TestCase):
         self.assertIn("content_block_start", joined)
         self.assertIn("message_stop", joined)
 
+    def test_thinking_block_is_closed_before_a_tool_block(self):
+        events = list(anthropic.stream_from_ollama(self.frames([
+            {"message": {"content": "", "thinking": "planning"}},
+            {"message": {"content": "", "tool_calls": [{"id": "c1", "function": {"name": "fs.read", "arguments": json.dumps({"path": "a"})}}]}},
+            {"done": True},
+        ]), "m"))
+        joined = "".join(events)
+        thinking_at = joined.index('"type": "thinking"')
+        tool_at = joined.index('"type": "tool_use"')
+        self.assertLess(thinking_at, tool_at)
+        between = joined[thinking_at:tool_at]
+        self.assertIn("content_block_stop", between)
+        self.assertIn('"index": 0, "content_block": {"type": "thinking"', joined)
+        self.assertIn('"index": 1, "content_block": {"type": "tool_use"', joined)
+
+    def test_two_tool_calls_get_distinct_ids(self):
+        events = list(anthropic.stream_from_ollama(self.frames([
+            {"message": {"content": "", "tool_calls": [
+                {"function": {"name": "fs.read", "arguments": json.dumps({"path": "a"})}},
+                {"function": {"name": "fs.list", "arguments": json.dumps({"path": "."})}},
+            ]}},
+            {"done": True},
+        ]), "m"))
+        ids = [json.loads(line[len("data: "):])["content_block"]["id"]
+               for line in "".join(events).splitlines()
+               if line.startswith("data: ") and '"type": "tool_use"' in line]
+        self.assertEqual(len(ids), 2)
+        self.assertEqual(len(set(ids)), 2, "tool_use ids must be unique: %r" % (ids,))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -164,6 +164,15 @@
 > **边界**：这条端点只出模型结果，**绝不执行工具**。访客收到的 `tool_use` 由访客自己跑；`/api/tools*` 另有裸本机限制（`tools_local_only`）。
 > **单测**：`server/tests/test_anthropic.py`（7 项，行为断言），已接进 `pnpm check`（`pnpm test:anthropic`）。
 > **实测**：隔离网关 49711 + 真 Ollama，`/v1/messages` 返回 200 与完整事件序列，错误 key 401；max_tokens=512 时正文正常流出（64 时全被 thinking 吃掉——这是模型行为，不是转换错误）。
+> **第十一轮审计修复（1.4.3 之后）**
+> 两个 P1 都是**迁移退化**：Python 版有的边界，我在搬到 TypeScript 时没搬。
+> ① `safePath()` 只做字符串比对，工作区内的 junction 可带出越界读写 → 改为**双方 realpath 后再判包含**；目标不存在时取最近已存在祖先解析。
+> ② `web.fetch` 的 `isPrivateAddress()` 漏了 `::ffff:127.0.0.1` 这类 IPv4-mapped 地址 → 改为展开成 8 组后判定（含 mapped / NAT64 / 组播 / 保留段），并把**解析出的 IP 钉在连接上**（`requestPinned`，消除 DNS 重绑定 TOCTOU）。
+> ③ Anthropic SSE：thinking 块未关闭即开 tool_use 且 index 冲突 → 开新块前先关旧块并递增 index；`tool_use.id` 由固定常量改为 `toolu_hymnix_<n>` 唯一。
+> ④ 退出清理：`shutdownAll()` 现在调用 `closeAllSessions()` 与 `stopAgentBridge()`（此前只 import 未调用）。
+> ⑤ 仓库卫生：测试残留 `.hx-agent.txt` 删除；本批一次性探针移入 `scripts/audit/`；`.gitignore` 增加 `.hx-*` 防护。
+> **回归证据**：`tests/sandbox.test.mjs`（5 项，建 junction 后 `safePath` 必须 `out_of_scope`；映射地址必须判私网）；`tests/test_anthropic.py` 增至 9 项（thinking→tool 块顺序、双工具 id 唯一）。`pnpm check` = 143 JS + 9 Python。
+> **真机复现前后**：`SYMLINK_READ ok=true TOPSECRET_OUTSIDE` → `ok=false out_of_scope`；`[::ffff:127.0.0.1] → 200` → `private_destination`。
 ## 六、架构与文件地图
 
 ```

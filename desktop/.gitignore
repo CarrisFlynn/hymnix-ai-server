@@ -1,1 +1,6 @@
 certs/
+
+# leftovers from tool probes
+.hx-agent.txt
+.hx-escape
+.hx-probe.txt

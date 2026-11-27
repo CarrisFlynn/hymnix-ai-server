@@ -178,29 +178,130 @@ registerTool({
 
 const FETCH_LIMIT = 256 * 1024;
 
-/** True for addresses that must never be reached from a tool: loopback, LAN, link-local, IPv6 local. */
-export function isPrivateAddress(address: string): boolean {
-  if (isIP(address) === 4) {
-    const parts = address.split(".").map(Number);
-    if (parts[0] === 10 || parts[0] === 127 || parts[0] === 0) return true;
-    if (parts[0] === 169 && parts[1] === 254) return true;
-    if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
-    if (parts[0] === 192 && parts[1] === 168) return true;
-    return false;
-  }
-  const lower = address.toLowerCase();
-  if (lower === "::1" || lower === "::") return true;
-  if (lower.startsWith("fe80") || lower.startsWith("fc") || lower.startsWith("fd")) return true;
+/** IPv4 in the ranges that must never be reached from a tool. */
+function ipv4IsPrivate(address: string): boolean {
+  const parts = address.split(".").map(Number);
+  if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return true;
+  const [a, b, c] = parts;
+  if (a === 0 || a === 10 || a === 127) return true;
+  if (a === 100 && b >= 64 && b <= 127) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 0 && (c === 0 || c === 2)) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 198 && (b === 18 || b === 19)) return true;
+  if (a === 198 && b === 51 && c === 100) return true;
+  if (a === 203 && b === 0 && c === 113) return true;
+  if (a >= 224) return true;
   return false;
 }
 
-/** Resolve and refuse private destinations, so a URL cannot be a path into this machine. */
-async function assertPublicHost(hostname: string, port: number): Promise<void> {
+/** Expand an IPv6 address into its eight 16-bit groups. */
+function groupsOf(address: string): number[] | null {
+  let bare = address.split("%")[0];
+  // An embedded IPv4 tail (::ffff:93.184.216.34) is written in decimal, so it is
+  // folded into the two hex groups it stands for before parsing.
+  const dotted = bare.match(/^(.*:)(\d+\.\d+\.\d+\.\d+)$/);
+  if (dotted) {
+    const octets = dotted[2].split(".").map(Number);
+    if (octets.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return null;
+    bare = dotted[1] + (((octets[0] << 8) | octets[1]).toString(16)) + ":" + (((octets[2] << 8) | octets[3]).toString(16));
+  }
+  if (!bare.includes(":")) return null;
+  const halves = bare.split("::");
+  if (halves.length > 2) return null;
+  const parse = (part: string) => (part ? part.split(":").filter((p) => p.length) : []);
+  const head = parse(halves[0]);
+  const tail = halves.length === 2 ? parse(halves[1]) : [];
+  const missing = 8 - head.length - tail.length;
+  if (missing < 0) return null;
+  const rows = [...head, ...Array(halves.length === 2 ? missing : 0).fill("0"), ...tail];
+  if (rows.length !== 8) return null;
+  const out: number[] = [];
+  for (const row of rows) {
+    const value = parseInt(row, 16);
+    if (!Number.isFinite(value) || value < 0 || value > 0xffff) return null;
+    out.push(value);
+  }
+  return out;
+}
+
+/**
+ * True for addresses that must never be reached from a tool.
+ *
+ * An IPv4-mapped address such as ::ffff:127.0.0.1 is still loopback: the earlier
+ * version only looked at a few IPv6 prefixes and let it through, which is how a
+ * tool call could reach a local service. Mapped and NAT64 forms are unwrapped and
+ * judged as the IPv4 address they actually are.
+ */
+export function isPrivateAddress(address: string): boolean {
+  const family = isIP(address);
+  if (family === 4) return ipv4IsPrivate(address);
+  if (family !== 6) return true;
+  const groups = groupsOf(address);
+  if (!groups) return true;
+  const allZero = groups.slice(0, 7).every((g) => g === 0);
+  if (allZero && groups[7] <= 1) return true;
+  if ((groups[0] & 0xfe00) === 0xfc00) return true;
+  if ((groups[0] & 0xffc0) === 0xfe80) return true;
+  if ((groups[0] & 0xff00) === 0xff00) return true;
+  // ::ffff:a.b.c.d and ::ffff:0:a.b.c.d, the IPv4-mapped forms.
+  const mapped = groups[0] === 0 && groups[1] === 0 && groups[2] === 0 && groups[3] === 0 && groups[4] === 0 && groups[5] === 0xffff;
+  if (mapped) return ipv4IsPrivate([(groups[6] >> 8) & 0xff, groups[6] & 0xff, (groups[7] >> 8) & 0xff, groups[7] & 0xff].join("."));
+  // 64:ff9b::/96, the NAT64 prefix, carries an IPv4 address too.
+  if (groups[0] === 0x64 && groups[1] === 0xff9b && groups[2] === 0 && groups[3] === 0 && groups[4] === 0 && groups[5] === 0) {
+    return ipv4IsPrivate([(groups[6] >> 8) & 0xff, groups[6] & 0xff, (groups[7] >> 8) & 0xff, groups[7] & 0xff].join("."));
+  }
+  return false;
+}
+
+/** One request, connected to an address that was already checked. */
+function requestPinned(url: URL, address: string): Promise<{ status: number; location: string; body: Buffer }> {
+  const secure = url.protocol === "https:";
+  const port = url.port ? Number(url.port) : (secure ? 443 : 80);
+  const hostname = url.hostname.replace(/^\[|\]$/g, "");
+  const family = isIP(address) === 6 ? 6 : 4;
+  const module = secure ? require("node:https") : require("node:http");
+  return new Promise((settle, reject) => {
+    const request = module.request({
+      // The connection goes to the checked address, never through a second lookup,
+      // so a hostile DNS answer cannot turn a public name into a private target.
+      host: address,
+      family,
+      port,
+      path: url.pathname + url.search,
+      method: "GET",
+      servername: secure ? hostname : undefined,
+      headers: { Host: url.host, "User-Agent": "Hymnix-Tool/1.0", Accept: "*/*" },
+      timeout: 8000,
+    }, (response: { statusCode?: number; headers: Record<string, string | undefined>; on: Function; resume: Function }) => {
+      const chunks: Buffer[] = [];
+      let size = 0;
+      response.on("data", (chunk: Buffer) => {
+        if (size >= FETCH_LIMIT) return;
+        size += chunk.length;
+        chunks.push(chunk);
+      });
+      response.on("end", () => settle({ status: Number(response.statusCode || 0), location: String(response.headers.location || ""), body: Buffer.concat(chunks) }));
+    });
+    request.on("timeout", () => { request.destroy(new Error("timeout")); });
+    request.on("error", reject);
+    request.end();
+  });
+}
+
+/** Resolve, refuse private destinations, then connect to the address that was checked. */
+async function checkedRequest(url: URL): Promise<{ status: number; location: string; body: Buffer }> {
+  const hostname = url.hostname.replace(/^\[|\]$/g, "");
+  if (isIP(hostname)) {
+    if (isPrivateAddress(hostname)) fail("private_destination");
+    return await requestPinned(url, hostname);
+  }
   let rows: Array<{ address: string }>;
   try { rows = await lookup(hostname, { all: true }); } catch { fail("resolve_failed"); }
   if (!rows.length) fail("resolve_failed");
   for (const row of rows) if (isPrivateAddress(row.address)) fail("private_destination");
-  void port;
+  return await requestPinned(url, rows[0].address);
 }
 
 registerTool({
@@ -216,18 +317,15 @@ registerTool({
       try { parsed = new URL(current); } catch { fail("invalid_url"); }
       if (parsed.protocol !== "http:" && parsed.protocol !== "https:") fail("invalid_url");
       if (allow.length && !allow.includes(parsed.hostname.toLowerCase())) fail("host_not_allowed");
-      await assertPublicHost(parsed.hostname, parsed.port ? Number(parsed.port) : (parsed.protocol === "https:" ? 443 : 80));
-      const response = await fetch(parsed.toString(), { redirect: "manual", signal: AbortSignal.timeout(8000), headers: { "User-Agent": "Hymnix-Tool/1.0" } });
+      const response = await checkedRequest(parsed);
       if ([301, 302, 303, 307, 308].includes(response.status)) {
-        const location = response.headers.get("location");
-        if (!location) fail("redirect_invalid");
+        if (!response.location) fail("redirect_invalid");
         if (hop >= 10) fail("too_many_redirects");
-        current = new URL(location, parsed).toString();
+        current = new URL(response.location, parsed).toString();
         continue;
       }
-      const body = Buffer.from(await response.arrayBuffer());
-      const text = decodeConsole(body.subarray(0, FETCH_LIMIT));
-      return { status: response.status, url: parsed.toString(), text, truncated: body.length > FETCH_LIMIT };
+      const text = decodeConsole(response.body.subarray(0, FETCH_LIMIT));
+      return { status: response.status, url: parsed.toString(), text, truncated: response.body.length > FETCH_LIMIT };
     }
     fail("too_many_redirects");
   },

@@ -1740,6 +1740,9 @@ async function shutdownAll(): Promise<void> {
   quitCleanup = (async () => {
     try { terminalBridge.stop(); } catch (error) { bootLog("bridge shutdown failed: " + String(error)); }
     try { stopAllTerminals(); } catch (error) { bootLog("terminal shutdown failed: " + String(error)); }
+    // The PTY sessions and the agent bridge outlive a window unless they are closed here.
+    try { closeAllSessions(); } catch (error) { bootLog("pty shutdown failed: " + String(error)); }
+    try { stopAgentBridge(); } catch (error) { bootLog("agent bridge shutdown failed: " + String(error)); }
     for (const controller of chatControllers.values()) { try { controller.abort(); } catch { /* already gone */ } }
     chatControllers.clear();
     try { automation.stop(); } catch (error) { bootLog("automation shutdown failed: " + String(error)); }

@@ -12,8 +12,8 @@
  * the whole file with exact bytes so a large file cannot be truncated and its
  * line endings cannot be rewritten.
  */
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 export type ToolDef = {
   name: string;
@@ -49,20 +49,58 @@ export function hasLocalTool(name: string): boolean {
 }
 
 export class ToolFailure extends Error {
-  constructor(public code: string) { super(code); }
+  code: string;
+  constructor(code: string) {
+    super(code);
+    this.code = code;
+  }
 }
 
 export function fail(code: string): never { throw new ToolFailure(code); }
 
-/** Resolve a path inside the sandbox; absolute paths and .. escapes are refused. */
+/**
+ * Resolve the real location of a path, following links even when the last part
+ * does not exist yet: walk up to the nearest existing ancestor, resolve that,
+ * then append what is missing.
+ */
+function realLocation(target: string): string {
+  const missing: string[] = [];
+  let current = target;
+  for (let depth = 0; depth < 64; depth += 1) {
+    try {
+      const real = realpathSync(current);
+      return missing.length ? join(real, ...missing.reverse()) : real;
+    } catch {
+      const parent = dirname(current);
+      if (parent === current) return target;
+      missing.push(basename(current));
+      current = parent;
+    }
+  }
+  return target;
+}
+
+function inside(root: string, candidate: string): boolean {
+  const rel = relative(root, candidate);
+  return !rel.startsWith("..") && !isAbsolute(rel);
+}
+
+/**
+ * Resolve a path inside the sandbox.
+ *
+ * A string check alone is not enough: a junction inside the workspace can point
+ * anywhere while the path still reads "work/escape/secret.txt". Both sides are
+ * therefore resolved to their real location first, and the containment test runs
+ * on those — the same rule the gateway has enforced since its eighth audit.
+ */
 export function safePath(raw: unknown): string {
   const value = typeof raw === "string" ? raw.trim() : "";
   if (!value) fail("path_required");
-  const root = resolve(toolRoot());
+  const root = realLocation(resolve(toolRoot()));
   const target = isAbsolute(value) ? resolve(value) : resolve(root, value);
-  const rel = relative(root, target);
-  if (rel.startsWith("..") || isAbsolute(rel)) fail("out_of_scope");
-  return target;
+  const real = realLocation(target);
+  if (!inside(root, real)) fail("out_of_scope");
+  return real;
 }
 
 export function relPath(absolute: string): string {
