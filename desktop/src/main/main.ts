@@ -2,10 +2,11 @@ import { searchWeb } from "./web-search.ts";
 import { createWorktree, listWorktrees, removeWorktree } from "./worktree.ts";
 import { runLspQuery } from "./lsp.ts";
 import { runProgram } from "./run-code.ts";
-import { callLocalTool, configureTools, hasLocalTool, listToolDefs } from "./agent-tools.ts";
+import { callLocalTool, configureTools, hasLocalTool, isDangerousTool, listToolDefs } from "./agent-tools.ts";
 // Registers shell.run, term.* and web.fetch alongside the file tools.
 import "./agent-shell.ts";
-import { closeAllSessions, closeSession, defaultCwd, detectProfiles, openSession, resizeSession, sessionOf, writeSession } from "./pty-host.ts";
+import { startAgentBridge, stopAgentBridge } from "./agent-bridge.ts";
+import { closeAllSessions, closeSession, configureAgentCli, defaultCwd, detectProfiles, findNode, openSession, resizeSession, sessionOf, writeSession } from "./pty-host.ts";
 import {app,BrowserWindow,Menu,Notification,Tray,WebContentsView,dialog,ipcMain,net,nativeTheme,protocol,safeStorage,screen,session,shell} from "electron";
 import {basename,extname,isAbsolute,join,relative,resolve,sep} from "node:path";
 import {pathToFileURL} from "node:url";
@@ -869,22 +870,70 @@ function registerRunCodeIpc(): void {
  * The terminal page's real terminals. A session outlives tab switches; the app
  * closes them all on quit so no orphan shell stays behind.
  */
+/** Started once per app run; the terminal agent gets its port and token through env. */
+async function ensureAgentBridge(): Promise<{ port: number; token: string }> {
+  return await startAgentBridge({
+    ollamaBase: () => String(ollamaBase()),
+    cloudProviders: async () => {
+      try {
+        const payload = await adminJson("admin/providers") as { providers?: Array<Record<string, unknown>> };
+        const rows = payload.providers || [];
+        return rows.flatMap((row) => {
+          const kind = String(row.kind || "openai") as "ollama" | "openai" | "anthropic" | "openclaw";
+          const baseUrl = String(row.base_url || "");
+          const models = Array.isArray(row.models) ? row.models.map(String) : [];
+          if (!baseUrl || !models.length) return [];
+          return models.map((name) => ({
+            id: "cloud:" + String(row.id || kind) + ":" + name,
+            label: name + " (" + String(row.label || kind) + ")",
+            kind, baseUrl,
+            apiKey: String(row.api_key || ""),
+            model: name,
+            agentId: String(row.agent_id || ""),
+          }));
+        });
+      } catch { return []; }
+    },
+    tools: () => listToolDefs().map((tool) => ({ ...tool, danger: isDangerousTool(tool.name) })),
+  });
+}
+
 function registerPtyIpc(): void {
   ipcMain.handle("pty:profiles", (event) => { assertSender(event); return { ok: true, profiles: detectProfiles(), cwd: defaultCwd(selectedFilesRoot) }; });
 
-  ipcMain.handle("pty:open", (event, raw: unknown) => {
+  ipcMain.handle("pty:open", async (event, raw: unknown) => {
     assertSender(event);
     const v = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
     const id = String(v.id || "").slice(0, 64);
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) throw new Error(JSON.stringify({ code: "invalid_request", message: "Invalid session id" }));
     const requested = typeof v.cwd === "string" && v.cwd.trim() ? v.cwd : defaultCwd(selectedFilesRoot);
     const cwd = workspaceCwd(requested);
+    // The built-in agent is this app's own kernel in CLI form: it needs the bridge
+    // address, which only exists once the app is running.
+    const profile = String(v.profile || "command");
+    const agentEnv: Record<string, string> = {};
+    let agentArgv: string[] | undefined;
+    if (profile === "agent") {
+      const address = await ensureAgentBridge();
+      const cliPath = app.isPackaged ? join(process.resourcesPath, "cli", "agent-cli.mjs") : join(app.getAppPath(), "cli", "agent-cli.mjs");
+      if (!existsSync(cliPath)) return { ok: false, error: "agent_cli_missing" };
+      configureAgentCli(cliPath);
+      // A PTY child cannot run Electron as node (ConPTY ignores ELECTRON_RUN_AS_NODE),
+      // so the CLI needs a real Node on PATH.
+      const nodeExe = findNode();
+      if (!nodeExe) return { ok: false, error: "node_required" };
+      agentArgv = [nodeExe, cliPath];
+      agentEnv.HYMNIX_AGENT_PORT = String(address.port);
+      agentEnv.HYMNIX_AGENT_TOKEN = address.token;
+    }
     const opened = openSession({
       id,
-      profile: String(v.profile || "command"),
+      profile,
       cwd,
       cols: Number(v.cols) || 80,
       rows: Number(v.rows) || 24,
+      ...(agentArgv ? { argv: agentArgv } : {}),
+      ...(Object.keys(agentEnv).length ? { env: agentEnv } : {}),
     });
     if (!opened.ok) return opened;
     const session = sessionOf(id);
@@ -1647,6 +1696,7 @@ registerCompleteCancelIpc();
 registerWebIpc();
 registerWorktreeIpc();
 registerPtyIpc();
+void ensureAgentBridge();
 registerRunCodeIpc();
 registerPluginsIpc();
 

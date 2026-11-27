@@ -1,0 +1,38 @@
+import { _electron as electron } from "@playwright/test";
+import { resolve } from "node:path";
+const cwd = resolve(process.cwd());
+const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE;
+const app = await electron.launch({ args: ["--user-data-dir=C:\\Users\\xiaoy\\AppData\\Local\\Temp\\hymnix-agent-cli", "."], cwd, env });
+const win = await app.firstWindow();
+await win.waitForFunction(() => Boolean(window.__hymnixDev), null, { timeout: 60000 });
+await win.evaluate(() => { localStorage.setItem("hymnix.welcome","1"); localStorage.setItem("hymnix.whatsNew","1.4.3"); });
+await win.reload();
+await win.waitForFunction(() => Boolean(window.__hymnixDev), null, { timeout: 60000 });
+for (let i = 0; i < 40; i += 1) { const b = await win.evaluate(() => window.hymnix.bootstrap()); if (b.ready) break; await win.waitForTimeout(400); }
+await win.evaluate(async () => {
+  window.__agentChunks = [];
+  window.hymnix.pty.onData((e) => { if (e.id === "agenttool") window.__agentChunks.push(e.data); });
+  await window.hymnix.pty.open({ id: "agenttool", profile: "agent", cwd: "", cols: 110, rows: 32 });
+});
+await win.waitForTimeout(3500);
+const send = (text) => win.evaluate((cmd) => window.hymnix.pty.write("agenttool", cmd), text);
+await send("\r");
+await win.waitForTimeout(1500);
+await send("/tool fs.read " + JSON.stringify({ path: "package.json" }) + "\r");
+await win.waitForTimeout(3000);
+await send("/tool fs.write " + JSON.stringify({ path: ".hx-agent.txt", content: "hello-agent" }) + "\r");
+await win.waitForTimeout(1500);
+const strip = (t) => t.replace(/\x1b\][^\u0007]*\u0007/g, "").replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "");
+const mid = strip(await win.evaluate(() => window.__agentChunks.join("")));
+console.log("PROMPTED " + String(/允许 fs\.write/.test(mid)));
+await send("y\r");
+await win.waitForTimeout(2500);
+const out = strip(await win.evaluate(() => window.__agentChunks.join("")));
+console.log("TAIL " + JSON.stringify(out.slice(-420)));
+await win.evaluate(() => window.__hymnixDev.navigate("Terminal"));
+await win.waitForTimeout(400);
+await win.evaluate(() => { const b = [...document.querySelectorAll(".term-mode-switch button")].find((x) => x.textContent.includes("TERMINAL")); b?.click(); });
+await win.waitForTimeout(500);
+await win.screenshot({ path: resolve(cwd, "../docs/audit-1.4.0/agent-cli.png") });
+await win.evaluate(() => window.hymnix.pty.close("agenttool"));
+await app.close();

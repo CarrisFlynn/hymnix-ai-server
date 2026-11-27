@@ -72,6 +72,10 @@
       {
         "from": "../build/hymnix-orbit2-backend/hymnix-server-1.4.3-x64.exe",
         "to": "backend-gateway-headless.exe"
+      },
+      {
+        "from": "cli",
+        "to": "cli"
       }
     ],
     "win": {

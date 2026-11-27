@@ -154,6 +154,11 @@
 > P2 逐条：`agent.send` 描述纠正、`agent.wait` 改共享 deadline、`run_code` 的 `tools.call` 返回对象、`job.start` 审批给完整命令、本地审批 TTL 与页脚对齐 55 秒、WebP 校验 offset 8、第 5 张图丢弃并告知、`read_image`/`fs.read` 截断标记、`code.*` 不再切 JSON、`__hymnixDev` 整对象仅 DEV 构建挂载、`agent.spawn` 补 `parent`、折叠箭头真正生效、原型键改用 own-property、目标续跑提示跟随界面语言、周几分隔符本地化、`shell.run`/`term` 按控制台代码页解码。
 > **新增门禁**：`tests/agent-gates.test.mjs`（4 项）——每个已广告工具在默认策略下必须可用、编辑大文件保持大小与行尾、`fs.read` 截断必须有标记。它上线当天就抓出审计也没列的 `term.read`/`term.list`。
 > **注意**：`pnpm build` 现在不含 `__hymnixDev`，探针与视觉基线需要 `pnpm build:dev`（`pnpm visual` 已自动先建开发版）。
+> **终端：真 PTY + 自带 agent（1.4.3 之后）**
+> 终端页外观不变，只有 COMMAND / TERMINAL 两个标签。TERMINAL 是真 PTY（`node-pty` 1.1 自带 ConPTY 预编译，无需编译），启动器探测得出：`Hymnix Agent`、PowerShell、Claude Code、Codex、Gemini、Ollama、Git Bash。
+> **`Hymnix Agent` 是本应用的内核在 CLI 形态**：`cli/agent-cli.mjs` 自己不做工具与 provider 逻辑，全部通过 `src/main/agent-bridge.ts` 的**回环桥**（每次启动随机令牌）调用主进程；危险工具在终端里问 **y/N**，对标 Claude。
+> **坑（已修）**：PTY 里不能用 `electron.exe + ELECTRON_RUN_AS_NODE` 跑脚本——ConPTY 下它不生效，进程无任何输出。必须用**系统 node**；没有 node 时该启动器显示为不可用并给出提示。
+> **限制**：本地小模型（qwen3-vl:2b / qwen3:8b）不倾向发结构化 `tool_calls`，会口述方案而不调用工具；这是模型能力问题，通路已用 `/tool` 命令确定性验证（read 自动执行、write 问 y/N、答 y 后落盘）。
 ## 六、架构与文件地图
 
 ```

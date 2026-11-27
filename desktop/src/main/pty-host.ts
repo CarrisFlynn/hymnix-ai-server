@@ -35,6 +35,18 @@ type LiveSession = {
 };
 
 const sessions = new Map<string, LiveSession>();
+
+/** Path to the built-in agent CLI, set by the app at startup. */
+let agentCliPath = "";
+
+export function configureAgentCli(path: string): void {
+  agentCliPath = path;
+}
+
+/** The Node binary the CLI needs; the app itself ships Electron, not Node. */
+export function findNode(): string | null {
+  return which("node");
+}
 const MAX_SESSIONS = 8;
 
 /** Resolve a command name the way a shell would, without running one. */
@@ -64,6 +76,15 @@ export function detectProfiles(): TerminalProfile[] {
   const ollama = which("ollama");
   const gitBash = which("bash");
   const rows: TerminalProfile[] = [
+    {
+      id: "agent",
+      label: "Hymnix Agent",
+      argv: ["agent"],
+      available: Boolean(findNode() && agentCliPath && existsSync(agentCliPath)),
+      detail: findNode()
+        ? "Our own agent: local, cloud or shared models, with the app\u2019s tools."
+        : "Needs Node.js on PATH (install node, then reopen this profile).",
+    },
     {
       id: "command",
       label: "Command",
@@ -127,6 +148,8 @@ export function openSession(input: {
   cols: number;
   rows: number;
   env?: Record<string, string>;
+  /** Replace the profile's argv (used by the built-in agent, which needs a script path). */
+  argv?: string[];
 }): OpenResult {
   if (sessions.size >= MAX_SESSIONS) return { ok: false, error: "too_many_sessions" };
   const profiles = detectProfiles();
@@ -135,8 +158,9 @@ export function openSession(input: {
   if (!profile.available) return { ok: false, error: "profile_unavailable", };
   const cols = Math.min(Math.max(Math.floor(input.cols) || 80, 20), 500);
   const rows = Math.min(Math.max(Math.floor(input.rows) || 24, 5), 200);
+  const argv = input.argv && input.argv.length ? input.argv : profile.argv;
   try {
-    const term = spawnPty(profile.argv[0], profile.argv.slice(1), {
+    const term = spawnPty(argv[0], argv.slice(1), {
       name: "xterm-256color",
       cols,
       rows,
@@ -146,7 +170,7 @@ export function openSession(input: {
     sessions.set(input.id, { id: input.id, term, profile: profile.id, cwd: input.cwd, startedAt: Date.now() });
     return { ok: true, id: input.id, pid: term.pid };
   } catch (error) {
-    return { ok: false, error: String(error instanceof Error ? error.message : error).slice(0, 300) };
+    return { ok: false, error: String(error instanceof Error ? error.message : error).slice(0, 300) + " argv=" + JSON.stringify(argv) };
   }
 }
 
