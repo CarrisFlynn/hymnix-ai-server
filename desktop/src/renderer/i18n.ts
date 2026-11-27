@@ -1,6 +1,7 @@
 export type Lang = "en" | "zh";
 
 export const zh: Record<string, string> = {
+  "Runs a {lines}-line Node.js program in a child process": "在子进程中运行 {lines} 行的 Node.js 程序",
   "Deliverables": "交付文件",
   "Show in folder": "在文件夹中显示",
   "Hide deliverables": "隐藏交付文件",

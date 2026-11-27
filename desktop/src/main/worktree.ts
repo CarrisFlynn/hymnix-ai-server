@@ -59,17 +59,30 @@ export async function listWorktrees(root: string): Promise<{ ok: boolean; worktr
  * Create a sibling worktree on a new branch. The name becomes both the branch
  * and the folder, and is validated before it reaches git.
  */
+/**
+ * A ref the model may pass to git. A leading dash is refused because git would
+ * read it as an option (--force, --help, ...), which is the whole injection.
+ */
+export function isSafeRef(value: unknown): boolean {
+  const text = String(value ?? "").trim();
+  if (!text || text.length > 120) return false;
+  if (text.startsWith("-")) return false;
+  return /^[A-Za-z0-9._\/~^@{}:-]+$/.test(text);
+}
+
 export async function createWorktree(root: string, input: { name?: unknown; from?: unknown }): Promise<{ ok: boolean; path?: string; branch?: string; base?: string; error?: string }> {
   if (!(await isRepo(root))) return { ok: false, error: "not_a_repository" };
   const name = String(input.name || "").trim();
   if (!NAME.test(name)) return { ok: false, error: "invalid_name" };
   const from = String(input.from || "HEAD").trim() || "HEAD";
-  if (!/^[A-Za-z0-9._\-/]{1,120}$/.test(from)) return { ok: false, error: "invalid_ref" };
+  // A leading dash would be read by git as an option (--force, --help, ...), so
+  // the shape check rejects it; --end-of-options then makes that explicit.
+  if (!isSafeRef(from)) return { ok: false, error: "invalid_ref" };
   const target = join(dirname(resolve(root)), name);
   if (existsSync(target)) return { ok: false, error: "path_exists" };
-  const base = await git(root, ["rev-parse", "--short", from]);
+  const base = await git(root, ["rev-parse", "--short", "--end-of-options", from]);
   if (!base.ok) return { ok: false, error: "unknown_ref" };
-  const created = await git(root, ["worktree", "add", target, "-b", name, from], 60_000);
+  const created = await git(root, ["worktree", "add", target, "-b", name, "--end-of-options", from], 60_000);
   if (!created.ok) return { ok: false, error: (created.err || "git_failed").slice(0, 300) };
   return { ok: true, path: target, branch: name, base: base.out.trim() };
 }

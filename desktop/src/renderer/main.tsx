@@ -26,6 +26,7 @@ import { leafName, normalizeDeliverables, type Deliverable } from "./lib/deliver
 import { listSessionsView, searchSessions } from "./lib/session-view.js";
 import { createToolCallCollector } from "./lib/tool-stream.js";
 
+declare const __DEV_BUILD__: boolean;
 declare global { interface Window { hymnix: DesktopApi } }
 
 type Message = ChatMessage;
@@ -75,7 +76,7 @@ const PLATFORM = typeof navigator !== "undefined" && /Mac/i.test(navigator.platf
 const SUBAGENT_TOOL_SPEC = { type: "function", function: { name: "subagent.run", description: "Delegate a self-contained task to a fresh context. The subagent cannot call tools; it reasons and returns text.", parameters: { type: "object", properties: { prompt: { type: "string" }, system: { type: "string" } }, required: ["prompt"], additionalProperties: false } } };
 const GOAL_TOOL_SPEC = { type: "function", function: { name: "goal.write", description: "Set the objective of this conversation's goal, or update its status/budget.", parameters: { type: "object", properties: { objective: { type: "string" }, status: { type: "string", enum: ["active", "paused", "complete"] }, maxRounds: { type: "number" } }, additionalProperties: false } } };
 const GOAL_READ_SPEC = { type: "function", function: { name: "goal.read", description: "Read the current goal, its status and remaining rounds.", parameters: { type: "object", properties: {}, additionalProperties: false } } };
-const RUN_CODE_SPEC = { type: "function", function: { name: "run_code", description: "Run one Node.js ES module and let it call your tools. Put `export default <value>` at the top level of the module; inside the program `await tools.call(name, args)` runs any tool you can call, including fs.*, shell.run and web.search, and each of those still needs approval. Use it to loop, branch or join many tool calls in one step instead of one call at a time. The user approves the program before it runs.", parameters: { type: "object", properties: { code: { type: "string", description: "ES module source; use export default for the value to return" }, timeoutMs: { type: "number", description: "1000-120000, default 20000" } }, required: ["code"], additionalProperties: false } } };
+const RUN_CODE_SPEC = { type: "function", function: { name: "run_code", description: "Run one Node.js ES module and let it call your tools. Put `export default <value>` at the top level of the module; inside the program `await tools.call(name, args)` runs any tool you can call, including fs.*, shell.run and web.search; each call goes through the normal approval check, except for tools the user has chosen to always allow. Use it to loop, branch or join many tool calls in one step instead of one call at a time. The user approves the program before it runs.", parameters: { type: "object", properties: { code: { type: "string", description: "ES module source; use export default for the value to return" }, timeoutMs: { type: "number", description: "1000-120000, default 20000" } }, required: ["code"], additionalProperties: false } } };
 const LSP_SPEC = { type: "function", function: { name: "lsp", description: "Ask a real language server for a definition, references or a file outline. Unlike code.*, which scans text, this follows imports and types. Hymnix ships typescript-language-server, so it works out of the box for .ts/.tsx/.js.", parameters: { type: "object", properties: { operation: { type: "string", enum: ["definition", "references", "symbols"] }, file: { type: "string", description: "Workspace-relative path" }, line: { type: "number", description: "1-based, default 1" }, character: { type: "number", description: "1-based, default 1" } }, required: ["operation", "file"], additionalProperties: false } } };
 const READ_IMAGE_SPEC = { type: "function", function: { name: "read_image", description: "Look at an image file (png, jpeg, gif, webp; max 4 MB). The picture is attached to your next turn, so this is how you read screenshots, diagrams and UI captures. Paths may be workspace-relative or absolute.", parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"], additionalProperties: false } } };
 const WORKTREE_LIST_SPEC = { type: "function", function: { name: "worktree.list", description: "List the git worktrees of the current repository, with their branch and head commit. The first row is the main checkout.", parameters: { type: "object", properties: {}, additionalProperties: false } } };
@@ -1111,7 +1112,14 @@ function App() {
     if (call.name === "run_code") {
       const code = String(args.code || "");
       if (!code.trim()) return JSON.stringify({ ok: false, error: "code_required" });
-      const approved = await requestLocalApproval("run_code", { code: code.slice(0, 600) }, ["Runs a Node.js program in a child process", "It can call your tools, and those calls still ask for approval", "Filesystem access comes from Node, which is why this needs a decision"]);
+      // The whole program goes into the request: approving the first 600 characters
+      // of a 20 000 character program is not consent to run the other 19 400.
+      const codeLines = code.split(/\r?\n/).length;
+      const approved = await requestLocalApproval("run_code", { code, lines: codeLines, characters: code.length }, [
+        tf("Runs a {lines}-line Node.js program in a child process", { lines: String(codeLines) }),
+        "It can call your tools; each call goes through the usual approval check",
+        "Node itself can touch the filesystem, which is why this needs a decision",
+      ]);
       if (!approved) {
         recordEvidence({ kind: "approval", title: "run_code", detail: String(args.code || "").slice(0, 120), status: "denied", durationMs: Math.round(performance.now() - started) });
         return JSON.stringify({ ok: false, error: "denied_by_user" });
@@ -1682,7 +1690,9 @@ function App() {
       closeAsk: () => finishAsk(true),
       seedDeliverables: (files: unknown) => setDeliverables(normalizeDeliverables(files)),
       // Run one tool exactly as the model's tool loop would, for behaviour probes.
-      runTool: (name: string, args: unknown) => runToolCall({ id: "dev-" + name, name, arguments: JSON.stringify(args ?? {}) }, 0),
+      // Only a development build exposes this: it drives the tool loop with no
+      // model in front of it, so it must not exist in a shipped installer.
+      ...(__DEV_BUILD__ ? { runTool: (name: string, args: unknown) => runToolCall({ id: "dev-" + name, name, arguments: JSON.stringify(args ?? {}) }, 0) } : {}),
       setChatTab: (tab: "chat" | "context" | "plan" | "trace") => { setActive("Chat"); setChatTab(tab); },
       openApprovals: () => { setApprovalsOpen(true); setApprovalsTab("pending"); },
       openShortcuts: () => setShortcutsOpen(true),

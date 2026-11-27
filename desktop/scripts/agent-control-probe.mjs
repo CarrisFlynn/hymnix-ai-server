@@ -1,5 +1,6 @@
 import { _electron as electron } from "@playwright/test";
 import { resolve } from "node:path";
+import { readFileSync } from "node:fs";
 const cwd = resolve(process.cwd());
 const env = { ...process.env };
 delete env.ELECTRON_RUN_AS_NODE;
@@ -65,7 +66,10 @@ const parsedSymbols = JSON.parse(symbols);
 console.log("LSP_RAW " + symbols.slice(0, 300));
 console.log("LSP_SYMBOL_NAMES " + JSON.stringify((parsedSymbols.results || []).slice(0, 4).map((r) => r.name + "@" + r.line)));
 console.log("LSP_SYMBOLS ok=" + String(parsedSymbols.ok) + " count=" + String((parsedSymbols.results || []).length) + " server=" + String(parsedSymbols.server || "-").slice(-42));
-const def = await win.evaluate(() => window.__hymnixDev.runTool("lsp", { operation: "definition", file: "src/main/main.ts", line: 674, character: 18 }));
+const mainSrc = readFileSync(resolve(cwd, "src/main/main.ts"), "utf8").split(/\r?\n/);
+const hitLine = mainSrc.findIndex((row) => row.includes("await searchWeb("));
+const hitChar = mainSrc[hitLine].indexOf("searchWeb") + 1;
+const def = await win.evaluate(([line, character]) => window.__hymnixDev.runTool("lsp", { operation: "definition", file: "src/main/main.ts", line, character }), [hitLine + 1, hitChar]);
 const parsedDef = JSON.parse(def);
 console.log("LSP_DEFINITION ok=" + String(parsedDef.ok) + " results=" + JSON.stringify((parsedDef.results || []).slice(0, 2)));
 
@@ -80,6 +84,11 @@ const runDrawer = await win.evaluate(() => ({
 }));
 console.log("RUNCODE_APPROVAL_OPEN " + runDrawer.open + " tools=" + JSON.stringify(runDrawer.tools));
 console.log("RUNCODE_REASONS " + JSON.stringify(runDrawer.reasons));
+// 审批里必须是完整程序，不是截断的前 600 字
+await win.evaluate(() => document.querySelector(".approval-row .link-button") && document.querySelector(".approval-row .link-button").click());
+await win.waitForTimeout(300);
+const shown = await win.evaluate(() => { const pre = document.querySelector(".approval-args"); return pre ? pre.textContent : ""; });
+console.log("RUNCODE_APPROVAL_FULL " + String(shown.includes('sessions') && shown.length > 100) + " argsChars=" + String(shown.length));
 await win.evaluate(() => document.querySelector(".approval-row-actions .btn.primary").click());
 const runResult = await runPromise;
 console.log("RUNCODE_RESULT " + String(runResult).slice(0, 320));

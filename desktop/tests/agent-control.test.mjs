@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { listSessionsView, searchSessions, snippetAround } from "../src/renderer/lib/session-view.js";
-import { parseWorktrees } from "../src/main/worktree.ts";
+import { isSafeRef, parseWorktrees } from "../src/main/worktree.ts";
 
 const sessions = [
   { id: "s1", name: "Renderer work", updatedAt: "2026-11-27T08:00:00Z", model: "qwen3:8b", pinned: true, messages: [
@@ -69,4 +69,13 @@ test("parseWorktrees reads the porcelain output", () => {
   assert.equal(rows[1].branch, "experiment");
   assert.equal(rows[1].current, false);
   assert.equal(rows[2].branch, "(detached)");
+});
+
+test("isSafeRef refuses option-shaped and escaping refs", () => {
+  for (const bad of ["--force", "-x", "--help", "", "  ", "a".repeat(121), "HEAD;rm -rf /", "HEAD with space"]) {
+    assert.equal(isSafeRef(bad), false, JSON.stringify(bad) + " must be refused");
+  }
+  for (const good of ["HEAD", "main", "v1.4.2", "feature/panel-order", "HEAD~1", "origin/main"]) {
+    assert.equal(isSafeRef(good), true, JSON.stringify(good) + " must be allowed");
+  }
 });

@@ -104,9 +104,9 @@
 
 ## 四、没做的 / 已知差距（诚实清单）
 
-1. **不是真正的 LSP**：`code.*` 是文本扫描（正则），没有类型推导、不解析 import、会误报同名符号。对外必须叫「符号导航」。
+1. **`code.*` 仍是文本扫描**（正则，无类型推导、不解析 import、会误报同名符号），对外必须叫「符号导航」。**`lsp` 已补齐**（自带 typescript-language-server，支持 definition/references/symbols），`code.*` 现在是它的降级路径。
 2. **子代理不是独立子会话**：DSH 里每个子代理是独立 Session，可切换、可并发；我们的详情只是面板内的历史 + 输入框。
-3. **没有多代理消息/等待/中断**：DSH 有 `send_message` / `wait_agent` / `interrupt_agent`；我们只有同步 `agent.send`。
+3. **多代理控制已补齐**：`agent.send` 改为不阻塞、`agent.wait` 带超时、`agent.interrupt` 会真的 abort 主进程里的 fetch（`gateway:complete-cancel`）。仍缺的是 DSH 那种**跨会话** `send_message`。
 4. **没有 cron / RRULE**：自动化只有 at/every/daily/weekly。
 5. **插件沙箱仍是黑名单**：R10 建议改成白名单驱动的 AST 校验，属架构级重构，未做。
 6. **审批还没统一策略**：DSH 是 per-session ask/never + fail-closed；我们还是网关 TTL + 渲染层 always-allow。
@@ -146,6 +146,10 @@
 > `src/main/lsp.ts` 起 `typescript-language-server`，支持 `definition` / `references` / `symbols`。实测：`symbols` 返回 `dedupe@106`、`hit@109` 这类带名字与行号的条目；`definition` 从 `searchStart` 调用点直达 `src/main/main.ts:1:10`。
 > **为什么单独打包**：应用自己用 `typescript@7`（原生 Go 版 tsgo），它**不再提供** `typescript-language-server` 所需的 `tsserver`。两者装在一起时 LSP 握手成功但每个查询都返回空。所以语言服务器放在仓库根 `lsp-server/`，钉 `typescript@5.6.3` + `typescript-language-server@6.1.0`，自带 `node_modules`，由 `extraResources` 拷到 `resources/lsp-server/`。
 > **代价：约 25 MB**（typescript 5 解包后约 22 MB）。装包前必须先 `cd lsp-server && pnpm install --prod --ignore-workspace`（`--ignore-workspace` 不能省，否则会被当成 desktop 工作区的安装，把 devDependencies 剪掉）。
+> **第七轮审计（2026-11-27 10:27）指出的 4 个 P1 已全部关闭**
+> ① LSP 帧解析改为按 **Buffer 字节**切分（原来拿 JS 字符串长度比 `Content-Length`，中文符号名必超时）；② `lsp` 增加 `resolveInside` 包含校验，绝对路径与 `../` 一律 `out_of_scope`；③ `worktree.create` 的 `from` 拒绝前导 `-` 并加 `--end-of-options`；④ `__hymnixDev.runTool` 只在 `__DEV_BUILD__` 为真时安装，**生产包里没有**（`vite build` 后 grep 确认）。
+> 验证方式改了口径：LSP 现在用**中文文件名 + 中文符号名**（`中文示例.ts` / `计算总数`）活体验证，不再只用 ASCII。
+> **注意**：`__hymnixDev` 的其余基线钩子（`seedPlan` 等）仍在生产包里，这是既有行为、被视觉基线脚本使用；探针需要 `pnpm build:dev` 才能用 `runTool`。
 ## 六、架构与文件地图
 
 ```

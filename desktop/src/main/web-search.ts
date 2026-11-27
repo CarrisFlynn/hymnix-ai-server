@@ -152,7 +152,23 @@ async function fetchPage(url: string, timeoutMs: number): Promise<string> {
     signal: AbortSignal.timeout(timeoutMs),
   });
   if (!response.ok) throw new Error("search_http_" + response.status);
-  return await response.text();
+  // A result page is a few hundred KB at most. Read with a budget so a runaway
+  // or hostile upstream cannot fill memory before we parse anything.
+  const MAX_BYTES = 2 * 1024 * 1024;
+  const reader = response.body?.getReader();
+  if (!reader) return await response.text();
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    const room = MAX_BYTES - received;
+    if (value.byteLength > room) { chunks.push(value.subarray(0, room)); received = MAX_BYTES; await reader.cancel(); break; }
+    chunks.push(value);
+    received += value.byteLength;
+  }
+  return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString("utf8");
 }
 
 /**

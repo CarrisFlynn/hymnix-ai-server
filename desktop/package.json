@@ -19,7 +19,8 @@
     "build:backend": "python -m PyInstaller --noconfirm --clean --distpath ../build/hymnix-orbit2-backend --workpath ../build/work-hymnix-orbit2-backend ../server/hymnix-server.spec",
     "dist": "pnpm build && pnpm build:backend && electron-builder --win --x64",
     "cert:selfsigned": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/make-self-signed-cert.ps1",
-    "dist:sign": "electron-builder --win --x64"
+    "dist:sign": "electron-builder --win --x64",
+    "build:dev": "tsc -p tsconfig.json && vite build --mode development && node scripts/fix-renderer-html.mjs dist/renderer/index.html"
   },
   "dependencies": {
     "react": "latest",

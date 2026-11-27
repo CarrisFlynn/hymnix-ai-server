@@ -1,0 +1,12 @@
+process.env.HYMNIX_LSP_TYPESCRIPT = "C:\\Users\\xiaoy\\AppData\\Local\\Temp\\lsp-probe\\node_modules\\typescript-language-server\\lib\\cli.mjs";
+const { runLspQuery } = await import("../src/main/lsp.ts");
+const root = "C:\\Users\\xiaoy\\AppData\\Local\\Temp\\lsp-cjk";
+const s1 = await runLspQuery({ root, operation: "symbols", file: "中文示例.ts" });
+console.log("CJK_SYMBOLS ok=" + s1.ok + " err=" + (s1.error || "-") + " count=" + (s1.results || []).length);
+for (const r of (s1.results || []).slice(0, 4)) console.log("   " + r.name + " @ line " + r.line);
+const d1 = await runLspQuery({ root, operation: "definition", file: "中文示例.ts", line: 5, character: 15 });
+console.log("CJK_DEFINITION ok=" + d1.ok + " err=" + (d1.error || "-") + " results=" + JSON.stringify(d1.results));
+const outside = await runLspQuery({ root, operation: "symbols", file: "C:\\Windows\\win.ini" });
+console.log("OUT_OF_SCOPE ok=" + outside.ok + " err=" + (outside.error || "-"));
+const escape = await runLspQuery({ root, operation: "symbols", file: "../../README.md" });
+console.log("ESCAPE ok=" + escape.ok + " err=" + (escape.error || "-"));

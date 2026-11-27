@@ -10,8 +10,8 @@
  * Nothing here ships a server: the binary is discovered, never bundled.
  */
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { isAbsolute, join, relative, resolve } from "node:path";
 
 export type LspQuery = {
   root: string;
@@ -56,24 +56,53 @@ export function encodeFrame(payload: unknown): string {
   return "Content-Length: " + Buffer.byteLength(body, "utf8") + "\r\n\r\n" + body;
 }
 
-/** Pull complete messages out of a buffer, returning the rest for the next read. */
-export function decodeFrames(buffer: string): { messages: unknown[]; rest: string } {
+/**
+ * Pull complete messages out of a byte buffer, returning the unconsumed tail.
+ *
+ * Everything here works on Buffer, not string: LSP writes Content-Length in
+ * BYTES, while a JS string is counted in UTF-16 code units. Slicing a string by
+ * a byte count cuts a multi-byte character in half, the JSON fails to parse, and
+ * the message is silently dropped — which is exactly how a symbol named 中文
+ * turned every request into a 12 s timeout.
+ */
+export function decodeFrames(input: Buffer | string): { messages: unknown[]; rest: Buffer } {
+  let rest = Buffer.isBuffer(input) ? input : Buffer.from(input, "utf8");
   const messages: unknown[] = [];
-  let rest = buffer;
   for (;;) {
     const headerEnd = rest.indexOf("\r\n\r\n");
     if (headerEnd < 0) break;
-    const header = rest.slice(0, headerEnd);
-    const match = /content-length:\s*(\d+)/i.exec(header);
-    if (!match) { rest = rest.slice(headerEnd + 4); continue; }
-    const length = Number(match[1]);
+    const header = rest.subarray(0, headerEnd).toString("latin1");
     const start = headerEnd + 4;
+    const match = /content-length:\s*(\d+)/i.exec(header);
+    if (!match) { rest = rest.subarray(start); continue; }
+    const length = Number(match[1]);
     if (rest.length < start + length) break;
-    const body = rest.slice(start, start + length);
-    rest = rest.slice(start + length);
+    const body = rest.subarray(start, start + length).toString("utf8");
+    rest = rest.subarray(start + length);
     try { messages.push(JSON.parse(body)); } catch { /* a frame we cannot read */ }
   }
   return { messages, rest };
+}
+
+/**
+ * Resolve a workspace-relative path and prove it stays inside the root.
+ *
+ * Absolute paths and ..\ escapes are refused here rather than at the caller:
+ * this used to hand any readable file to the language server and report the
+ * outside path back to the model, while the tool description promised a
+ * workspace-relative path.
+ */
+export function resolveInside(root: string, file: string): string | null {
+  const value = String(file || "").trim();
+  if (!value) return null;
+  if (/^[A-Za-z]:[\\/]/.test(value) || value.startsWith("/") || value.startsWith("\\\\")) return null;
+  let rootReal: string;
+  try { rootReal = realpathSync(root); } catch { return null; }
+  let real: string;
+  try { real = realpathSync(resolve(rootReal, value)); } catch { return null; }
+  const rel = relative(rootReal, real);
+  if (!rel || rel.startsWith("..") || isAbsolute(rel)) return null;
+  return real;
 }
 
 const URI_SPLIT = /^file:\/\/([A-Za-z]:)?(.*)$/;
@@ -113,8 +142,8 @@ export function runLspQuery(query: LspQuery, timeoutMs = DEFAULT_TIMEOUT): Promi
       settle({ ok: false, error: "LSP_UNAVAILABLE", hint: "No typescript-language-server found. Install it with npm i -g typescript-language-server typescript, or set HYMNIX_LSP_TYPESCRIPT to the binary." });
       return;
     }
-    const file = resolve(query.root, query.file);
-    if (!existsSync(file)) { settle({ ok: false, error: "file_not_found" }); return; }
+    const file = resolveInside(query.root, query.file);
+    if (!file) { settle({ ok: false, error: "out_of_scope", hint: "Pass a path inside the workspace; absolute paths and ../ are refused." }); return; }
     // A bare .mjs is not executable on any platform; run it through node.
     const script = /\.(?:mjs|cjs|js)$/i.test(binary);
     const child = script
@@ -122,7 +151,7 @@ export function runLspQuery(query: LspQuery, timeoutMs = DEFAULT_TIMEOUT): Promi
       // when ELECTRON_RUN_AS_NODE is set; without it the child exits immediately.
       ? spawn(process.execPath, [binary, "--stdio"], { cwd: query.root, windowsHide: true, env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" } })
       : spawn(binary, ["--stdio"], { cwd: query.root, windowsHide: true, shell: process.platform === "win32" });
-    let buffer = "";
+    let buffer: Buffer = Buffer.alloc(0);
     let settled = false;
     const finish = (answer: LspAnswer) => {
       if (settled) return;
@@ -137,7 +166,7 @@ export function runLspQuery(query: LspQuery, timeoutMs = DEFAULT_TIMEOUT): Promi
 
     const requestedId = 2;
     child.stdout?.on("data", (chunk: Buffer) => {
-      buffer += chunk.toString("utf8");
+      buffer = Buffer.concat([buffer, chunk]);
       const parsed = decodeFrames(buffer);
       buffer = parsed.rest;
       for (const message of parsed.messages) {
